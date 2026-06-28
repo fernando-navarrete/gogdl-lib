@@ -46,11 +46,13 @@ impl GamesManager {
             Ok(owned_games) => owned_games,
             Err(GamesError::Unauthorized) => {
                 // Token refresh logic
-                let lock = self.inner.lock().await;
-                if let Err(_err) = lock.auth.refresh_auth().await {
-                    return Err(GamesError::Unauthorized);
-                }
-                let auth = lock.auth.get_auth().await.unwrap();
+                let auth = {
+                    let lock = self.inner.lock().await;
+                    if let Err(_err) = lock.auth.refresh_auth().await {
+                        return Err(GamesError::Unauthorized);
+                    }
+                    lock.auth.get_auth().await.unwrap()
+                };
                 match self
                     .client
                     .get_json_with_auth::<OwnedGames>(url, &auth.access_token)
@@ -67,6 +69,8 @@ impl GamesManager {
                 return Err(err);
             }
         };
+        let mut lock = self.inner.lock().await;
+        lock.owned_games = owned_games.clone();
         Ok(owned_games)
     }
 }

@@ -4,7 +4,6 @@ use crate::games::{GamesManager, OwnedGames};
 use crate::gogdl::error::GogDlError;
 
 pub struct GogDl {
-    client: HttpClient,
     auth: AuthManager,
     games: GamesManager,
 }
@@ -15,7 +14,6 @@ impl GogDl {
         let auth_manager = AuthManager::new(http_client.clone());
         let games_manager = GamesManager::new(http_client.clone(), auth_manager.clone());
         Self {
-            client: http_client,
             auth: auth_manager,
             games: games_manager,
         }
