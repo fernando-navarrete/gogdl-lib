@@ -1,6 +1,6 @@
 use crate::auth::AuthManager;
 use crate::client::HttpClient;
-use crate::games::GamesManager;
+use crate::games::{GamesManager, OwnedGames};
 use crate::gogdl::error::GogDlError;
 
 pub struct GogDl {
@@ -30,5 +30,9 @@ impl GogDl {
     pub async fn login_with_code(&self, code: &str) -> Result<(), GogDlError> {
         self.auth.login_with_code(code).await?;
         Ok(())
+    }
+    pub async fn get_owned_games(&self) -> Result<OwnedGames, GogDlError> {
+        let owned_games = self.games.get_owned_games().await?;
+        Ok(owned_games)
     }
 }
