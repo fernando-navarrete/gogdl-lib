@@ -5,7 +5,10 @@ use tokio::sync::Mutex;
 use crate::{
     auth::AuthManager,
     client::HttpClient,
-    downloader::{build_metadata::BuildMetadata, depot_info::DepotInfo, error::DownloadError},
+    downloader::{
+        build_metadata::BuildMetadata, depot_info::DepotInfo, error::DownloadError,
+        product_details::ProductDetails,
+    },
 };
 
 pub struct DownloadManager {
@@ -29,6 +32,12 @@ impl DownloadManager {
         game_link: &str,
     ) -> Result<BuildMetadata, DownloadError> {
         BuildMetadata::get_build_metadata(self, game_link).await
+    }
+    pub async fn get_product_details(
+        &self,
+        product_id: &str,
+    ) -> Result<ProductDetails, DownloadError> {
+        ProductDetails::get_product_details(self, product_id).await
     }
     pub async fn get_depot_info(
         &self,
