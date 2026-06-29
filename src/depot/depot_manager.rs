@@ -11,6 +11,7 @@ use crate::{
     },
 };
 
+#[derive(Clone)]
 pub struct DepotManager {
     pub client: HttpClient,
     pub inner: Arc<Mutex<DepotManagerInner>>,

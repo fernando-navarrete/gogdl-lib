@@ -2,6 +2,7 @@ use crate::DepotInfo;
 use crate::auth::AuthManager;
 use crate::client::HttpClient;
 use crate::depot::{BuildMetadata, DepotManager, ProductDetails};
+use crate::downloader::{DownloadManager, DownloadableFiles, DownloadableProduct};
 use crate::games::{GameBuilds, GameDetails, GamesManager, OwnedGames};
 use crate::gogdl::error::GogDlError;
 use crate::secure_links::{SecureLinks, SecureLinksManager};
@@ -11,6 +12,7 @@ pub struct GogDl {
     games: GamesManager,
     depot: DepotManager,
     secure_links: SecureLinksManager,
+    downloader: DownloadManager,
 }
 
 impl GogDl {
@@ -24,12 +26,20 @@ impl GogDl {
             auth_manager.clone(),
             games_manager.clone(),
         );
+        let download_manager = DownloadManager::new(
+            auth_manager.clone(),
+            depot_manager.clone(),
+            secure_links_manager.clone(),
+            games_manager.clone(),
+            http_client.clone(),
+        );
 
         Self {
             auth: auth_manager,
             games: games_manager,
             depot: depot_manager,
             secure_links: secure_links_manager,
+            downloader: download_manager,
         }
     }
     pub fn get_login_url(&self) -> &str {
@@ -73,5 +83,28 @@ impl GogDl {
     pub async fn get_depot_info(&self, depot_manifest: &str) -> Result<DepotInfo, GogDlError> {
         let depot_info = self.depot.get_depot_info(depot_manifest).await?;
         Ok(depot_info)
+    }
+    pub async fn get_downloadable_products(
+        &self,
+        game_id: i32,
+        build_name: &str,
+    ) -> Result<Vec<DownloadableProduct>, GogDlError> {
+        let downloadable_products = self
+            .downloader
+            .get_downloadable_products(game_id, build_name)
+            .await?;
+        Ok(downloadable_products)
+    }
+    pub async fn get_downloadable_files(
+        &self,
+        game_id: i32,
+        build_name: &str,
+        selected_products: &[i32],
+    ) -> Result<Vec<DownloadableFiles>, GogDlError> {
+        let downloadable_files = self
+            .downloader
+            .get_downloadable_files(game_id, build_name, selected_products)
+            .await?;
+        Ok(downloadable_files)
     }
 }

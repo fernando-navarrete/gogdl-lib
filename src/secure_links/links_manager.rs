@@ -9,6 +9,7 @@ use crate::{
     secure_links::{error::SecureLinksError, secure_links::SecureLinks},
 };
 
+#[derive(Clone)]
 pub struct SecureLinksManager {
     pub inner: Arc<Mutex<SecureLinksManagerInner>>,
     pub client: HttpClient,
