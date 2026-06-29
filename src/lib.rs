@@ -4,6 +4,7 @@ mod constants;
 mod depot;
 mod games;
 mod gogdl;
+mod secure_links;
 
 pub use depot::Depot;
 pub use depot::DepotInfo;

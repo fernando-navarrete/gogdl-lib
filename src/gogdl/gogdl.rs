@@ -4,11 +4,13 @@ use crate::client::HttpClient;
 use crate::depot::{BuildMetadata, DepotManager, ProductDetails};
 use crate::games::{GameBuilds, GameDetails, GamesManager, OwnedGames};
 use crate::gogdl::error::GogDlError;
+use crate::secure_links::{SecureLinks, SecureLinksManager};
 
 pub struct GogDl {
     auth: AuthManager,
     games: GamesManager,
     depot: DepotManager,
+    secure_links: SecureLinksManager,
 }
 
 impl GogDl {
@@ -17,10 +19,14 @@ impl GogDl {
         let auth_manager = AuthManager::new(http_client.clone());
         let games_manager = GamesManager::new(http_client.clone(), auth_manager.clone());
         let depot_manager = DepotManager::new(http_client.clone(), auth_manager.clone());
+        let secure_links_manager =
+            SecureLinksManager::new(http_client.clone(), auth_manager.clone());
+
         Self {
             auth: auth_manager,
             games: games_manager,
             depot: depot_manager,
+            secure_links: secure_links_manager,
         }
     }
     pub fn get_login_url(&self) -> &str {
@@ -49,6 +55,10 @@ impl GogDl {
     pub async fn get_build_metadata(&self, game_link: &str) -> Result<BuildMetadata, GogDlError> {
         let build_metadata = self.depot.get_build_metadata(game_link).await?;
         Ok(build_metadata)
+    }
+    pub async fn get_secure_links(&self, game_id: i32) -> Result<SecureLinks, GogDlError> {
+        let secure_links = self.secure_links.get_secure_links(game_id).await?;
+        Ok(secure_links)
     }
     pub async fn get_product_details(
         &self,
