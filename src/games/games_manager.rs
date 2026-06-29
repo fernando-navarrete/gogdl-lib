@@ -9,6 +9,7 @@ use crate::games::game_build::GameBuilds;
 use crate::games::game_details::GameDetails;
 use crate::games::owned_games::{GameId, OwnedGames};
 
+#[derive(Clone)]
 pub struct GamesManager {
     pub inner: Arc<Mutex<GamesManagerInner>>,
     pub client: HttpClient,

@@ -19,8 +19,11 @@ impl GogDl {
         let auth_manager = AuthManager::new(http_client.clone());
         let games_manager = GamesManager::new(http_client.clone(), auth_manager.clone());
         let depot_manager = DepotManager::new(http_client.clone(), auth_manager.clone());
-        let secure_links_manager =
-            SecureLinksManager::new(http_client.clone(), auth_manager.clone());
+        let secure_links_manager = SecureLinksManager::new(
+            http_client.clone(),
+            auth_manager.clone(),
+            games_manager.clone(),
+        );
 
         Self {
             auth: auth_manager,

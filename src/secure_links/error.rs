@@ -3,7 +3,7 @@ use std::io;
 use reqwest::StatusCode;
 use thiserror::Error;
 
-use crate::client::ClientError;
+use crate::{client::ClientError, games::GamesError};
 
 #[derive(Error, Debug)]
 pub enum SecureLinksError {
@@ -27,6 +27,12 @@ pub enum SecureLinksError {
 
     #[error("Deflate error: {0}")]
     DeflateError(#[from] io::Error),
+
+    #[error("Could not get owned games: {0}")]
+    GamesError(#[from] GamesError),
+
+    #[error("Product not owned: {0}")]
+    ProductNotOwned(String),
 }
 
 impl From<ClientError> for SecureLinksError {
