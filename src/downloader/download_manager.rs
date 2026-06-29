@@ -30,7 +30,11 @@ impl DownloadManager {
     ) -> Result<BuildMetadata, DownloadError> {
         BuildMetadata::get_build_metadata(self, game_link).await
     }
-    pub async fn get_depot_info(&self, depot_manifest: &str) -> Result<DepotInfo, DownloadError> {
-        DepotInfo::get_depot_info(self, depot_manifest).await
+    pub async fn get_depot_info(
+        &self,
+        depot_manifest: &str,
+        product_id: &str,
+    ) -> Result<DepotInfo, DownloadError> {
+        DepotInfo::get_depot_info(self, depot_manifest, product_id).await
     }
 }

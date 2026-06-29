@@ -12,7 +12,7 @@ pub struct BuildMetadata {
     pub client_secret: String,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Depot {
     pub manifest: String,
     pub size: u64,

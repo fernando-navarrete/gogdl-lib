@@ -4,6 +4,7 @@ mod download_manager;
 mod error;
 
 pub use build_metadata::BuildMetadata;
+pub use build_metadata::Depot;
 pub use depot_info::DepotInfo;
 pub use download_manager::DownloadManager;
 pub use error::DownloadError;

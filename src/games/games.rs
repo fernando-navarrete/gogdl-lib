@@ -8,6 +8,7 @@ use crate::games::error::GamesError;
 use crate::games::game_build::GameBuilds;
 use crate::games::game_details::GameDetails;
 use crate::games::owned_games::{GameId, OwnedGames};
+use crate::games::product_details::ProductDetails;
 
 pub struct GamesManager {
     pub inner: Arc<Mutex<GamesManagerInner>>,
@@ -37,5 +38,11 @@ impl GamesManager {
     }
     pub async fn get_game_builds(&self, game_id: GameId) -> Result<GameBuilds, GamesError> {
         GameBuilds::get_game_builds(self, game_id).await
+    }
+    pub async fn get_product_details(
+        &self,
+        product_id: &str,
+    ) -> Result<ProductDetails, GamesError> {
+        ProductDetails::get_product_details(self, product_id).await
     }
 }
