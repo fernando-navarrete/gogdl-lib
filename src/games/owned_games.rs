@@ -2,13 +2,62 @@ use std::vec::Vec;
 
 use serde::{Deserialize, Serialize};
 
-use crate::games::game_details::GameDetails;
+use crate::games::{GamesError, GamesManager};
+
+pub type GameId = i32;
 
 #[derive(Serialize, Deserialize, Clone)]
-pub struct OwnedGames(Vec<GameDetails>);
-
+pub struct OwnedGames {
+    pub owned: Vec<GameId>,
+}
 impl OwnedGames {
     pub fn default() -> Self {
-        Self(vec![])
+        Self { owned: Vec::new() }
+    }
+    pub async fn get_owned_games(game_manager: &GamesManager) -> Result<OwnedGames, GamesError> {
+        let auth = {
+            let lock = game_manager.inner.lock().await;
+            if let None = lock.auth.get_auth().await {
+                return Err(GamesError::NotAuthenticated);
+            }
+            lock.auth.get_auth().await.unwrap()
+        };
+        let url = "https://embed.gog.com/user/data/games";
+
+        let owned_games: OwnedGames = match game_manager
+            .client
+            .get_json_with_auth::<OwnedGames>(url, &auth.access_token)
+            .await
+            .map_err(GamesError::from)
+        {
+            Ok(owned_games) => owned_games,
+            Err(GamesError::Unauthorized) => {
+                // Token refresh logic
+                let auth = {
+                    let lock = game_manager.inner.lock().await;
+                    if let Err(_err) = lock.auth.refresh_auth().await {
+                        return Err(GamesError::Unauthorized);
+                    }
+                    lock.auth.get_auth().await.unwrap()
+                };
+                match game_manager
+                    .client
+                    .get_json_with_auth::<OwnedGames>(url, &auth.access_token)
+                    .await
+                    .map_err(GamesError::from)
+                {
+                    Ok(owned_games) => owned_games,
+                    Err(err) => {
+                        return Err(err);
+                    }
+                }
+            }
+            Err(err) => {
+                return Err(err);
+            }
+        };
+        let mut lock = game_manager.inner.lock().await;
+        lock.owned_games = owned_games.clone();
+        Ok(owned_games)
     }
 }
