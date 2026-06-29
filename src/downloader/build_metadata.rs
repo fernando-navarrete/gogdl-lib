@@ -37,7 +37,7 @@ impl BuildMetadata {
 
         let game_details: BuildMetadata = match download_manager
             .client
-            .get_json_with_auth::<BuildMetadata>(&game_link, &auth.access_token)
+            .get_and_decode::<BuildMetadata>(&game_link, &auth.access_token)
             .await
             .map_err(DownloadError::from)
         {
@@ -53,7 +53,7 @@ impl BuildMetadata {
                 };
                 match download_manager
                     .client
-                    .get_json_with_auth::<BuildMetadata>(&game_link, &auth.access_token)
+                    .get_and_decode::<BuildMetadata>(&game_link, &auth.access_token)
                     .await
                     .map_err(DownloadError::from)
                 {
