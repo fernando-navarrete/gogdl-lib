@@ -1,16 +1,10 @@
-use std::collections::HashSet;
-
 use serde::{Deserialize, Serialize};
 
 use crate::downloader::{DownloadError, DownloadManager};
 
-type ProductId = String;
-
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct DepotInfo {
     pub depot: DepotItems,
-    #[serde(skip)]
-    pub products: HashSet<ProductId>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -36,16 +30,12 @@ pub struct DepotFile {
     pub chunks: Option<Vec<Chunk>>,
     #[serde(alias = "type")]
     pub file_type: String,
-    /// The product_id this file belongs to (set during processing)
-    #[serde(skip)]
-    pub product_id: Option<String>,
 }
 
 impl DepotInfo {
     pub async fn get_depot_info(
         download_manager: &DownloadManager,
         depot_manifest: &str,
-        product_id: &str,
     ) -> Result<DepotInfo, DownloadError> {
         let auth = {
             let lock = download_manager.inner.lock().await;
@@ -61,7 +51,7 @@ impl DepotInfo {
             &depot_manifest
         );
 
-        let mut game_details: DepotInfo = match download_manager
+        let game_details: DepotInfo = match download_manager
             .client
             .get_and_decode::<DepotInfo>(&url, &auth.access_token)
             .await
@@ -93,11 +83,6 @@ impl DepotInfo {
                 return Err(err);
             }
         };
-
-        game_details.depot.items.iter_mut().for_each(|item| {
-            game_details.products.insert(product_id.to_string());
-            item.product_id = Some(product_id.to_string());
-        });
 
         Ok(game_details)
     }

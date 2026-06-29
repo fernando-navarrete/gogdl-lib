@@ -1,13 +1,13 @@
 use serde::{Deserialize, Serialize};
 
-use crate::downloader::{DownloadError, DownloadManager, download_manager};
+use crate::downloader::{DownloadError, DownloadManager};
 
 type ProductId = i32;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ProductDetails {
     #[serde(alias = "_embedded")]
-    pub embedded: Embedded,
+    embedded: Embedded,
     #[serde(skip)]
     pub title: String,
 }

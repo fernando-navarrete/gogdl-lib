@@ -1,6 +1,6 @@
 use std::io::Read;
 
-use flate2::{Compression, read::ZlibDecoder, write::GzEncoder};
+use flate2::read::ZlibDecoder;
 use reqwest::Client;
 use serde::de::DeserializeOwned;
 

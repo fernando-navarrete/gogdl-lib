@@ -39,11 +39,7 @@ impl DownloadManager {
     ) -> Result<ProductDetails, DownloadError> {
         ProductDetails::get_product_details(self, product_id).await
     }
-    pub async fn get_depot_info(
-        &self,
-        depot_manifest: &str,
-        product_id: &str,
-    ) -> Result<DepotInfo, DownloadError> {
-        DepotInfo::get_depot_info(self, depot_manifest, product_id).await
+    pub async fn get_depot_info(&self, depot_manifest: &str) -> Result<DepotInfo, DownloadError> {
+        DepotInfo::get_depot_info(self, depot_manifest).await
     }
 }

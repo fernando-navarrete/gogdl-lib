@@ -56,15 +56,8 @@ impl GogDl {
         let product_details = self.downloads.get_product_details(product_id).await?;
         Ok(product_details)
     }
-    pub async fn get_depot_info(
-        &self,
-        depot_manifest: &str,
-        product_id: &str,
-    ) -> Result<DepotInfo, GogDlError> {
-        let depot_info = self
-            .downloads
-            .get_depot_info(depot_manifest, product_id)
-            .await?;
+    pub async fn get_depot_info(&self, depot_manifest: &str) -> Result<DepotInfo, GogDlError> {
+        let depot_info = self.downloads.get_depot_info(depot_manifest).await?;
         Ok(depot_info)
     }
 }
