@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::downloader::{DownloadError, DownloadManager};
+use crate::depot::{depot_manager::DepotManager, error::DepotError};
 
 type ProductId = i32;
 
@@ -27,16 +27,16 @@ struct Product {
 
 impl ProductDetails {
     pub async fn get_product_details(
-        download_manager: &DownloadManager,
+        download_manager: &DepotManager,
         product_id: &str,
-    ) -> Result<ProductDetails, DownloadError> {
+    ) -> Result<ProductDetails, DepotError> {
         let url = format!("https://api.gog.com/v2/games/{}", product_id);
 
         let mut game_details: ProductDetails = match download_manager
             .client
             .get_json::<ProductDetails>(&url)
             .await
-            .map_err(DownloadError::from)
+            .map_err(DepotError::from)
         {
             Ok(game_details) => game_details,
             Err(err) => {

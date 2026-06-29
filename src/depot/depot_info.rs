@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::downloader::{DownloadError, DownloadManager};
+use crate::depot::{depot_manager::DepotManager, error::DepotError};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct DepotInfo {
@@ -34,13 +34,13 @@ pub struct DepotFile {
 
 impl DepotInfo {
     pub async fn get_depot_info(
-        download_manager: &DownloadManager,
+        download_manager: &DepotManager,
         depot_manifest: &str,
-    ) -> Result<DepotInfo, DownloadError> {
+    ) -> Result<DepotInfo, DepotError> {
         let auth = {
             let lock = download_manager.inner.lock().await;
             if let None = lock.auth.get_auth().await {
-                return Err(DownloadError::NotAuthenticated);
+                return Err(DepotError::NotAuthenticated);
             }
             lock.auth.get_auth().await.unwrap()
         };
@@ -55,15 +55,15 @@ impl DepotInfo {
             .client
             .get_and_decode::<DepotInfo>(&url, &auth.access_token)
             .await
-            .map_err(DownloadError::from)
+            .map_err(DepotError::from)
         {
             Ok(game_details) => game_details,
-            Err(DownloadError::Unauthorized) => {
+            Err(DepotError::Unauthorized) => {
                 // Token refresh logic
                 let auth = {
                     let lock = download_manager.inner.lock().await;
                     if let Err(_err) = lock.auth.refresh_auth().await {
-                        return Err(DownloadError::Unauthorized);
+                        return Err(DepotError::Unauthorized);
                     }
                     lock.auth.get_auth().await.unwrap()
                 };
@@ -71,7 +71,7 @@ impl DepotInfo {
                     .client
                     .get_and_decode::<DepotInfo>(&url, &auth.access_token)
                     .await
-                    .map_err(DownloadError::from)
+                    .map_err(DepotError::from)
                 {
                     Ok(game_details) => game_details,
                     Err(err) => {

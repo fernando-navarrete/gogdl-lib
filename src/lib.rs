@@ -1,12 +1,12 @@
 mod auth;
 mod client;
 mod constants;
-mod downloader;
+mod depot;
 mod games;
 mod gogdl;
 
-pub use downloader::Depot;
-pub use downloader::DepotInfo;
+pub use depot::Depot;
+pub use depot::DepotInfo;
 pub use gogdl::GogDl;
 pub use gogdl::GogDlError;
 pub use reqwest::Client;

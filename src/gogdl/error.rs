@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use crate::{auth::AuthError, downloader::DownloadError, games::GamesError};
+use crate::{auth::AuthError, depot::DepotError, games::GamesError};
 
 #[derive(Error, Debug)]
 pub enum GogDlError {
@@ -10,6 +10,6 @@ pub enum GogDlError {
     #[error("Game error: {0}")]
     GameError(#[from] GamesError),
 
-    #[error("Download error: {0}")]
-    DownloadError(#[from] DownloadError),
+    #[error("Depot error: {0}")]
+    DepotError(#[from] DepotError),
 }

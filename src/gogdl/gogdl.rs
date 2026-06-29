@@ -1,13 +1,14 @@
+use crate::DepotInfo;
 use crate::auth::AuthManager;
 use crate::client::HttpClient;
-use crate::downloader::{BuildMetadata, DepotInfo, DownloadManager, ProductDetails};
+use crate::depot::{BuildMetadata, DepotManager, ProductDetails};
 use crate::games::{GameBuilds, GameDetails, GamesManager, OwnedGames};
 use crate::gogdl::error::GogDlError;
 
 pub struct GogDl {
     auth: AuthManager,
     games: GamesManager,
-    downloads: DownloadManager,
+    depot: DepotManager,
 }
 
 impl GogDl {
@@ -15,11 +16,11 @@ impl GogDl {
         let http_client = HttpClient::new_with_client(client);
         let auth_manager = AuthManager::new(http_client.clone());
         let games_manager = GamesManager::new(http_client.clone(), auth_manager.clone());
-        let download_manager = DownloadManager::new(http_client.clone(), auth_manager.clone());
+        let depot_manager = DepotManager::new(http_client.clone(), auth_manager.clone());
         Self {
             auth: auth_manager,
             games: games_manager,
-            downloads: download_manager,
+            depot: depot_manager,
         }
     }
     pub fn get_login_url(&self) -> &str {
@@ -46,18 +47,18 @@ impl GogDl {
         Ok(game_builds)
     }
     pub async fn get_build_metadata(&self, game_link: &str) -> Result<BuildMetadata, GogDlError> {
-        let build_metadata = self.downloads.get_build_metadata(game_link).await?;
+        let build_metadata = self.depot.get_build_metadata(game_link).await?;
         Ok(build_metadata)
     }
     pub async fn get_product_details(
         &self,
         product_id: &str,
     ) -> Result<ProductDetails, GogDlError> {
-        let product_details = self.downloads.get_product_details(product_id).await?;
+        let product_details = self.depot.get_product_details(product_id).await?;
         Ok(product_details)
     }
     pub async fn get_depot_info(&self, depot_manifest: &str) -> Result<DepotInfo, GogDlError> {
-        let depot_info = self.downloads.get_depot_info(depot_manifest).await?;
+        let depot_info = self.depot.get_depot_info(depot_manifest).await?;
         Ok(depot_info)
     }
 }
