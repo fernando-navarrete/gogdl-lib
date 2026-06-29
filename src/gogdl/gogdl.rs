@@ -56,7 +56,7 @@ impl GogDl {
         let build_metadata = self.depot.get_build_metadata(game_link).await?;
         Ok(build_metadata)
     }
-    pub async fn get_secure_links(&self, game_id: i32) -> Result<SecureLinks, GogDlError> {
+    pub async fn get_secure_links(&self, game_id: &str) -> Result<SecureLinks, GogDlError> {
         let secure_links = self.secure_links.get_secure_links(game_id).await?;
         Ok(secure_links)
     }

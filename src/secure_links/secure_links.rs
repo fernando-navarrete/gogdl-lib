@@ -32,7 +32,7 @@ pub struct SecureLinks {
 impl SecureLinks {
     pub async fn get_secure_links(
         secure_links_manager: &SecureLinksManager,
-        game_id: i32,
+        game_id: &str,
     ) -> Result<SecureLinks, SecureLinksError> {
         let auth = {
             let lock = secure_links_manager.inner.lock().await;

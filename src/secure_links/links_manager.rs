@@ -24,7 +24,7 @@ impl SecureLinksManager {
             client,
         }
     }
-    pub async fn get_secure_links(&self, game_id: i32) -> Result<SecureLinks, SecureLinksError> {
+    pub async fn get_secure_links(&self, game_id: &str) -> Result<SecureLinks, SecureLinksError> {
         let secure_links = SecureLinks::get_secure_links(self, game_id).await?;
         Ok(secure_links)
     }
