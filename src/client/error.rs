@@ -1,3 +1,5 @@
+use std::io;
+
 use reqwest::StatusCode;
 use thiserror::Error;
 
@@ -11,4 +13,10 @@ pub enum ClientError {
 
     #[error("Http error: {body}, status: {status}")]
     Http { status: StatusCode, body: String },
+
+    #[error("Decode error: {0}")]
+    DecodeError(#[from] serde_json::Error),
+
+    #[error("Deflate error: {0}")]
+    DeflateError(#[from] io::Error),
 }

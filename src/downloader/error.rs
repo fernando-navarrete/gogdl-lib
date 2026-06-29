@@ -6,10 +6,7 @@ use thiserror::Error;
 use crate::client::ClientError;
 
 #[derive(Error, Debug)]
-pub enum GamesError {
-    #[error("not authenticated")]
-    NotAuthenticated,
-
+pub enum DownloadError {
     #[error("Url parse error: {0}")]
     UrlParseError(#[from] url::ParseError),
 
@@ -22,6 +19,9 @@ pub enum GamesError {
     #[error("Http error: {body}, status: {status}")]
     Http { status: StatusCode, body: String },
 
+    #[error("Not authenticated")]
+    NotAuthenticated,
+
     #[error("Decode error: {0}")]
     DecodeError(#[from] serde_json::Error),
 
@@ -29,17 +29,17 @@ pub enum GamesError {
     DeflateError(#[from] io::Error),
 }
 
-impl From<ClientError> for GamesError {
-    fn from(value: ClientError) -> Self {
-        match value {
-            ClientError::UrlParseError(parse_error) => GamesError::UrlParseError(parse_error),
-            ClientError::NetworkError(error) => GamesError::NetworkError(error),
+impl From<ClientError> for DownloadError {
+    fn from(err: ClientError) -> Self {
+        match err {
+            ClientError::UrlParseError(parse_error) => DownloadError::UrlParseError(parse_error),
+            ClientError::NetworkError(error) => DownloadError::NetworkError(error),
             ClientError::Http { status, body } => match status {
-                StatusCode::UNAUTHORIZED => GamesError::NotAuthenticated,
-                _ => GamesError::Http { status, body },
+                StatusCode::UNAUTHORIZED => DownloadError::Unauthorized,
+                _ => DownloadError::Http { status, body },
             },
-            ClientError::DecodeError(error) => GamesError::DecodeError(error),
-            ClientError::DeflateError(error) => GamesError::DeflateError(error),
+            ClientError::DecodeError(error) => DownloadError::DecodeError(error),
+            ClientError::DeflateError(error) => DownloadError::DeflateError(error),
         }
     }
 }

@@ -1,3 +1,5 @@
+use std::io;
+
 use reqwest::StatusCode;
 use thiserror::Error;
 
@@ -16,6 +18,12 @@ pub enum AuthError {
 
     #[error("Http error: {body}, status: {status}")]
     Http { status: StatusCode, body: String },
+
+    #[error("Decode error: {0}")]
+    DecodeError(#[from] serde_json::Error),
+
+    #[error("Deflate error: {0}")]
+    DeflateError(#[from] io::Error),
 }
 
 impl From<ClientError> for AuthError {
@@ -27,6 +35,8 @@ impl From<ClientError> for AuthError {
                 StatusCode::UNAUTHORIZED => AuthError::Unauthorized,
                 _ => AuthError::Http { status, body },
             },
+            ClientError::DecodeError(error) => AuthError::DecodeError(error),
+            ClientError::DeflateError(error) => AuthError::DeflateError(error),
         }
     }
 }

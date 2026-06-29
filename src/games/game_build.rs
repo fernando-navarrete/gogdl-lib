@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::games::{GamesError, GamesManager, owned_games::GameId};
@@ -6,7 +7,7 @@ use crate::games::{GamesError, GamesManager, owned_games::GameId};
 pub struct GameBuild {
     pub build_id: String,
     pub version_name: String,
-    pub date_published: String,
+    pub date_published: DateTime<Utc>,
     pub link: String,
 }
 

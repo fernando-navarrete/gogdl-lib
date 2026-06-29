@@ -49,7 +49,7 @@ impl AuthManager {
             tokens.unwrap()
         };
         let refresh_token = tokens.refresh_token;
-        let url = format!("{REFRESH_URL}?refresh_token={refresh_token}");
+        let url = format!("{REFRESH_URL}&refresh_token={refresh_token}");
         let mut response = match self.inner.lock().await.client.get_json::<Auth>(&url).await {
             Ok(auth) => auth,
             Err(err) => return Err(AuthError::from(err)),
