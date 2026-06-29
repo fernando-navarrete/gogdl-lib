@@ -1,6 +1,6 @@
 use crate::auth::AuthManager;
 use crate::client::HttpClient;
-use crate::games::{GamesManager, OwnedGames};
+use crate::games::{GameBuilds, GameDetails, GamesManager, OwnedGames};
 use crate::gogdl::error::GogDlError;
 
 pub struct GogDl {
@@ -32,5 +32,13 @@ impl GogDl {
     pub async fn get_owned_games(&self) -> Result<OwnedGames, GogDlError> {
         let owned_games = self.games.get_owned_games().await?;
         Ok(owned_games)
+    }
+    pub async fn get_game_details(&self, game_id: i32) -> Result<GameDetails, GogDlError> {
+        let game_details = self.games.get_game_details(game_id).await?;
+        Ok(game_details)
+    }
+    pub async fn get_game_builds(&self, game_id: i32) -> Result<GameBuilds, GogDlError> {
+        let game_builds = self.games.get_game_builds(game_id).await?;
+        Ok(game_builds)
     }
 }

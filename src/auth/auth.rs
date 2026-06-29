@@ -31,7 +31,7 @@ impl AuthManager {
         LOGIN_URL
     }
     pub async fn login_with_code(&self, code: &str) -> Result<(), AuthError> {
-        let url = format!("{AUTH_URL}?code={code}");
+        let url = format!("{AUTH_URL}&code={code}");
         let mut response = match self.inner.lock().await.client.get_json::<Auth>(&url).await {
             Ok(auth) => auth,
             Err(err) => return Err(AuthError::from(err)),

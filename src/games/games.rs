@@ -5,6 +5,7 @@ use tokio::sync::Mutex;
 use crate::auth::AuthManager;
 use crate::client::HttpClient;
 use crate::games::error::GamesError;
+use crate::games::game_build::GameBuilds;
 use crate::games::game_details::GameDetails;
 use crate::games::owned_games::{GameId, OwnedGames};
 
@@ -33,5 +34,8 @@ impl GamesManager {
     }
     pub async fn get_game_details(&self, game_id: GameId) -> Result<GameDetails, GamesError> {
         GameDetails::get_game_details(self, game_id).await
+    }
+    pub async fn get_game_builds(&self, game_id: GameId) -> Result<GameBuilds, GamesError> {
+        GameBuilds::get_game_builds(self, game_id).await
     }
 }

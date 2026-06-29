@@ -6,3 +6,4 @@ mod gogdl;
 
 pub use gogdl::GogDl;
 pub use gogdl::GogDlError;
+pub use reqwest::Client;
