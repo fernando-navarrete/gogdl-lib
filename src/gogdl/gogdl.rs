@@ -1,6 +1,6 @@
 use crate::auth::AuthManager;
 use crate::client::HttpClient;
-use crate::downloader::{BuildMetadata, DownloadManager};
+use crate::downloader::{BuildMetadata, DepotInfo, DownloadManager};
 use crate::games::{GameBuilds, GameDetails, GamesManager, OwnedGames};
 use crate::gogdl::error::GogDlError;
 
@@ -48,5 +48,9 @@ impl GogDl {
     pub async fn get_build_metadata(&self, game_link: &str) -> Result<BuildMetadata, GogDlError> {
         let build_metadata = self.downloads.get_build_metadata(game_link).await?;
         Ok(build_metadata)
+    }
+    pub async fn get_depot_info(&self, depot_manifest: &str) -> Result<DepotInfo, GogDlError> {
+        let depot_info = self.downloads.get_depot_info(depot_manifest).await?;
+        Ok(depot_info)
     }
 }
