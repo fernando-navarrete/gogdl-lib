@@ -1,8 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    Depot,
-    depot::DepotFile,
+    depot::{Depot, DepotFile},
     downloader::{DownloadError, DownloadManager},
 };
 

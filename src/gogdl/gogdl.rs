@@ -1,7 +1,6 @@
-use crate::DepotInfo;
 use crate::auth::AuthManager;
 use crate::client::HttpClient;
-use crate::depot::{BuildMetadata, DepotManager, ProductDetails};
+use crate::depot::{DepotManager, ProductDetails};
 use crate::downloader::{DownloadManager, DownloadableFiles, DownloadableProduct};
 use crate::games::{GameBuilds, GameDetails, GamesManager, OwnedGames};
 use crate::gogdl::error::GogDlError;
@@ -65,10 +64,6 @@ impl GogDl {
         let game_builds = self.games.get_game_builds(game_id).await?;
         Ok(game_builds)
     }
-    pub async fn get_build_metadata(&self, game_link: &str) -> Result<BuildMetadata, GogDlError> {
-        let build_metadata = self.depot.get_build_metadata(game_link).await?;
-        Ok(build_metadata)
-    }
     pub async fn get_secure_links(&self, game_id: &str) -> Result<SecureLinks, GogDlError> {
         let secure_links = self.secure_links.get_secure_links(game_id).await?;
         Ok(secure_links)
@@ -79,10 +74,6 @@ impl GogDl {
     ) -> Result<ProductDetails, GogDlError> {
         let product_details = self.depot.get_product_details(product_id).await?;
         Ok(product_details)
-    }
-    pub async fn get_depot_info(&self, depot_manifest: &str) -> Result<DepotInfo, GogDlError> {
-        let depot_info = self.depot.get_depot_info(depot_manifest).await?;
-        Ok(depot_info)
     }
     pub async fn get_downloadable_products(
         &self,
