@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use url::Url;
 
 use crate::secure_links::{SecureLinksManager, error::SecureLinksError};
 
@@ -78,5 +79,54 @@ impl SecureLinks {
             }
         };
         Ok(secure_links)
+    }
+}
+
+impl UrlFormat {
+    pub fn parse_url_redist(&self, chunk_hash: &str) -> String {
+        let url = format!(
+            "https://gog-cdn-fastly.gog.com/content-system/v2/dependencies/store/{}/{}/{}",
+            &chunk_hash[0..2],
+            &chunk_hash[2..4],
+            chunk_hash
+        );
+        url
+    }
+    pub fn parse_url(&self, chunk_hash: &str) -> String {
+        let mut url = self.url_format.clone();
+        url = url.replace("{path}", &self.parameters.path);
+        url = url.replace("{token}", &self.parameters.token);
+        url = url.replace("{base_url}", &self.parameters.base_url);
+
+        if let Some(expires_at) = self.parameters.expires_at {
+            url = url.replace("{expires_at}", &expires_at.to_string());
+        }
+        if let Some(dirs) = self.parameters.dirs {
+            url = url.replace("{dirs}", &dirs.to_string());
+        }
+        if let Some(ttl) = self.parameters.ttl {
+            url = url.replace("{ttl}", &ttl.to_string());
+        }
+        if let Some(source) = &self.parameters.source {
+            url = url.replace("{source}", source);
+        }
+        if let Some(gog_token) = &self.parameters.gog_token {
+            url = url.replace("{gog_token}", gog_token);
+        }
+        if let Some(l) = &self.parameters.l {
+            url = url.replace("{l}", l);
+        }
+        let galaxy_path = format!("{}/{}/{}", &chunk_hash[0..2], &chunk_hash[2..4], chunk_hash);
+
+        // Properly insert chunk path into URL path component (before query string)
+        if let Ok(mut parsed_url) = Url::parse(&url) {
+            let current_path = parsed_url.path().trim_end_matches('/');
+            let new_path = format!("{}/{}", current_path, galaxy_path);
+            parsed_url.set_path(&new_path);
+            parsed_url.to_string()
+        } else {
+            // Fallback to simple concatenation if URL parsing fails
+            format!("{}/{}", url.trim_end_matches('/'), galaxy_path)
+        }
     }
 }
