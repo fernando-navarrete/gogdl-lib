@@ -41,16 +41,20 @@ impl GogDl {
             downloader: download_manager,
         }
     }
+    pub async fn restore_auth(&self, json_str: &str) -> Result<(), GogDlError> {
+        self.auth.restore_from_string(json_str).await?;
+        Ok(())
+    }
     pub fn get_login_url(&self) -> &str {
         self.auth.get_login_url()
     }
-    pub async fn refresh_auth(&self) -> Result<(), GogDlError> {
-        self.auth.refresh_auth().await?;
-        Ok(())
+    pub async fn refresh_auth(&self) -> Result<String, GogDlError> {
+        let auth_string = self.auth.refresh_auth().await?;
+        Ok(auth_string)
     }
-    pub async fn login_with_code(&self, code: &str) -> Result<(), GogDlError> {
-        self.auth.login_with_code(code).await?;
-        Ok(())
+    pub async fn login_with_code(&self, code: &str) -> Result<String, GogDlError> {
+        let auth_string = self.auth.login_with_code(code).await?;
+        Ok(auth_string)
     }
     pub async fn get_owned_games(&self) -> Result<OwnedGames, GogDlError> {
         let owned_games = self.games.get_owned_games().await?;

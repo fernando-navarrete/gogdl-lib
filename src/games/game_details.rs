@@ -14,6 +14,13 @@ impl GameDetails {
         games_manager: &GamesManager,
         game_id: GameId,
     ) -> Result<GameDetails, GamesError> {
+        {
+            let lock = games_manager.inner.lock().await;
+            if let Some(game_details) = lock.game_details.get(&game_id) {
+                return Ok(game_details.clone());
+            }
+        }
+
         let auth = {
             let lock = games_manager.inner.lock().await;
             if let None = lock.auth.get_auth().await {
@@ -55,6 +62,10 @@ impl GameDetails {
                 return Err(err);
             }
         };
+
+        let mut lock = games_manager.inner.lock().await;
+        lock.game_details.insert(game_id, game_details.clone());
+
         Ok(game_details)
     }
 }

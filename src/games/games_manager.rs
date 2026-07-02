@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use tokio::sync::Mutex;
@@ -17,6 +18,7 @@ pub struct GamesManager {
 
 pub struct GamesManagerInner {
     pub owned_games: OwnedGames,
+    pub game_details: HashMap<GameId, GameDetails>,
     pub auth: AuthManager,
 }
 
@@ -25,6 +27,7 @@ impl GamesManager {
         Self {
             inner: Arc::new(Mutex::new(GamesManagerInner {
                 owned_games: OwnedGames::default(),
+                game_details: HashMap::new(),
                 auth,
             })),
             client,

@@ -30,17 +30,23 @@ impl AuthManager {
     pub fn get_login_url(&self) -> &str {
         LOGIN_URL
     }
-    pub async fn login_with_code(&self, code: &str) -> Result<(), AuthError> {
+    pub async fn login_with_code(&self, code: &str) -> Result<String, AuthError> {
         let url = format!("{AUTH_URL}&code={code}");
         let mut response = match self.inner.lock().await.client.get_json::<Auth>(&url).await {
             Ok(auth) => auth,
             Err(err) => return Err(AuthError::from(err)),
         };
         response.valid_until = Some(response.expires_in as i64 + chrono::Utc::now().timestamp());
+        let json_str = response.to_string()?;
         self.inner.lock().await.tokens = Some(response);
+        Ok(json_str)
+    }
+    pub async fn restore_from_string(&self, json_str: &str) -> Result<(), AuthError> {
+        let tokens = Auth::from_string(json_str)?;
+        self.inner.lock().await.tokens = Some(tokens);
         Ok(())
     }
-    pub async fn refresh_auth(&self) -> Result<(), AuthError> {
+    pub async fn refresh_auth(&self) -> Result<String, AuthError> {
         let tokens = {
             let tokens = self.inner.lock().await.tokens.clone();
             if tokens.is_none() {
@@ -54,9 +60,10 @@ impl AuthManager {
             Ok(auth) => auth,
             Err(err) => return Err(AuthError::from(err)),
         };
+        let json_str = response.to_string()?;
         response.valid_until = Some(response.expires_in as i64 + chrono::Utc::now().timestamp());
         self.inner.lock().await.tokens = Some(response);
-        Ok(())
+        Ok(json_str)
     }
     pub async fn get_auth(&self) -> Option<Auth> {
         self.inner.lock().await.tokens.clone()
