@@ -15,7 +15,7 @@ impl DownloadableFiles {
         download_manager: &DownloadManager,
         game_id: i32,
         build_name: &str,
-        selected_products: &[i32],
+        selected_products: &[&str],
     ) -> Result<Vec<DownloadableFiles>, DownloadError> {
         let game_builds = {
             let inner = download_manager.inner.lock().await;
@@ -49,7 +49,7 @@ impl DownloadableFiles {
 
         let filtered_products = products
             .iter()
-            .filter(|(product_id, _)| selected_products.contains(&product_id.parse().unwrap_or(0)))
+            .filter(|(product_id, _)| selected_products.contains(&product_id))
             .collect::<Vec<_>>();
 
         let mut downloadable_files: Vec<DownloadableFiles> = Vec::new();

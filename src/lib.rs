@@ -9,6 +9,7 @@ mod secure_links;
 
 pub use downloader::DownloadableFiles;
 pub use downloader::DownloadableProduct;
+pub use downloader::VerifyEvent;
 pub use gogdl::GogDl;
 pub use gogdl::GogDlError;
 pub use reqwest::Client;

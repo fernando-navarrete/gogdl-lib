@@ -1,3 +1,6 @@
+use tokio::sync::mpsc;
+
+use crate::VerifyEvent;
 use crate::auth::AuthManager;
 use crate::client::HttpClient;
 use crate::depot::{DepotManager, ProductDetails};
@@ -86,6 +89,15 @@ impl GogDl {
         let secure_links = self.secure_links.get_secure_links(game_id).await?;
         Ok(secure_links)
     }
+    pub async fn verify_files(
+        &self,
+        files: Vec<DownloadableFiles>,
+        path: &str,
+        tx: mpsc::UnboundedSender<VerifyEvent>,
+    ) -> Result<(), GogDlError> {
+        self.downloader.verify_download(path, files, tx).await?;
+        Ok(())
+    }
     pub async fn get_product_details(
         &self,
         product_id: &str,
@@ -108,7 +120,7 @@ impl GogDl {
         &self,
         game_id: i32,
         build_name: &str,
-        selected_products: &[i32],
+        selected_products: &[&str],
     ) -> Result<Vec<DownloadableFiles>, GogDlError> {
         let downloadable_files = self
             .downloader
