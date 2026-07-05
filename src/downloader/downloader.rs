@@ -40,29 +40,44 @@ impl Downloader {
         let hash_concurrency = thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(4);
-        println!("Hash concurrency: {}", hash_concurrency);
         stream::iter(files)
             .map(|file| {
                 let resolver = resolver.clone();
                 let tx = tx.clone();
                 async move {
-                    let final_path = resolver.resolve_path(&file.path).await?;
+                    let final_path = match resolver.resolve_path(&file.path).await {
+                        Ok(path) => path,
+                        Err(e) => {
+                            tx.send(VerifyEvent::FileNotFound(file.path.clone())).ok();
+                            return Err(DownloadError::from(e));
+                        }
+                    };
+
                     let (algo, expected_checksum) = {
                         if let Some(sha256) = &file.sha256 {
                             (ChecksumAlgorithm::Sha256, sha256.clone())
                         } else if let Some(md5) = &file.md5 {
                             (ChecksumAlgorithm::Md5, md5.clone())
                         } else {
-                            tx.send(VerifyEvent::FileOk).ok();
-                            return Ok::<(), DownloadError>(());
+                            // Single chunk file, verifying with chunk checksum
+                            let chunk_checksum = file
+                                .chunks
+                                .as_ref()
+                                .and_then(|c| c.first())
+                                .map(|c| c.md5.clone());
+                            if let Some(chunk_checksum) = chunk_checksum {
+                                (ChecksumAlgorithm::Md5, chunk_checksum)
+                            } else {
+                                // No chunk checksum, assuming file is OK
+                                tx.send(VerifyEvent::FileOk).ok();
+                                return Ok::<(), DownloadError>(());
+                            }
                         }
                     };
 
                     let actual_checksum = match compute_checksum(final_path.clone(), algo).await {
                         Ok(checksum) => checksum,
-                        Err(e) => {
-                            println!("Error: {}", e);
-                            println!("Checksum error for file: {}", file.path);
+                        Err(_e) => {
                             tx.send(VerifyEvent::FileChecksumMismatch(
                                 final_path
                                     .file_name()
@@ -76,7 +91,6 @@ impl Downloader {
                     };
 
                     if actual_checksum != expected_checksum {
-                        println!("Checksum mismatch for file: {}", file.path);
                         tx.send(VerifyEvent::FileChecksumMismatch(
                             final_path
                                 .file_name()
@@ -88,7 +102,6 @@ impl Downloader {
                         return Ok::<(), DownloadError>(());
                     }
 
-                    println!("File: {}: OK", final_path.to_str().unwrap_or("default"));
                     tx.send(VerifyEvent::FileOk).ok();
                     Ok::<(), DownloadError>(())
                 }
@@ -96,7 +109,6 @@ impl Downloader {
             .buffer_unordered(hash_concurrency)
             .collect::<Vec<_>>()
             .await;
-        println!("Verification completed.");
         Ok(())
     }
 }
@@ -104,4 +116,5 @@ impl Downloader {
 pub enum VerifyEvent {
     FileOk,
     FileChecksumMismatch(String),
+    FileNotFound(String),
 }
