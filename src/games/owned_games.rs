@@ -15,6 +15,13 @@ impl OwnedGames {
         Self { owned: Vec::new() }
     }
     pub async fn get_owned_games(game_manager: &GamesManager) -> Result<OwnedGames, GamesError> {
+        let owned_games = {
+            let lock = game_manager.inner.lock().await;
+            lock.owned_games.clone()
+        };
+        if !owned_games.owned.is_empty() {
+            return Ok(owned_games);
+        }
         let auth = {
             let lock = game_manager.inner.lock().await;
             if let None = lock.auth.get_auth().await {

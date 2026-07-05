@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::games::{GamesError, GamesManager, owned_games::GameId};
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct GameBuild {
     pub build_id: String,
     pub version_name: String,
@@ -11,7 +11,7 @@ pub struct GameBuild {
     pub link: String,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct GameBuilds {
     #[serde(skip)]
     pub game_title: String,
@@ -24,6 +24,12 @@ impl GameBuilds {
         games_manager: &GamesManager,
         game_id: GameId,
     ) -> Result<Self, GamesError> {
+        {
+            let lock = games_manager.inner.lock().await;
+            if let Some(game_details) = lock.game_builds.get(&game_id) {
+                return Ok(game_details.clone());
+            }
+        }
         let auth = {
             let lock = games_manager.inner.lock().await;
             if let None = lock.auth.get_auth().await {
@@ -68,6 +74,8 @@ impl GameBuilds {
                 return Err(err);
             }
         };
+        let mut lock = games_manager.inner.lock().await;
+        lock.game_builds.insert(game_id, game_details.clone());
         Ok(game_details)
     }
 }

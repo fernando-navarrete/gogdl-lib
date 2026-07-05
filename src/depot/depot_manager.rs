@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use tokio::sync::Mutex;
 
@@ -19,13 +19,17 @@ pub struct DepotManager {
 
 pub struct DepotManagerInner {
     pub auth: AuthManager,
+    pub product_details: HashMap<String, ProductDetails>,
 }
 
 impl DepotManager {
     pub fn new(client: HttpClient, auth: AuthManager) -> Self {
         Self {
             client,
-            inner: Arc::new(Mutex::new(DepotManagerInner { auth })),
+            inner: Arc::new(Mutex::new(DepotManagerInner {
+                auth,
+                product_details: HashMap::new(),
+            })),
         }
     }
     pub async fn get_build_metadata(&self, game_link: &str) -> Result<BuildMetadata, DepotError> {

@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use tokio::sync::Mutex;
 
@@ -25,6 +25,7 @@ pub struct DownloadManagerInner {
     pub depot: DepotManager,
     pub secure_links: SecureLinksManager,
     pub games: GamesManager,
+    pub downloadable_products: HashMap<(i32, String), Vec<DownloadableProduct>>,
 }
 
 impl DownloadManager {
@@ -41,6 +42,7 @@ impl DownloadManager {
                 depot,
                 secure_links,
                 games,
+                downloadable_products: HashMap::new(),
             })),
             client,
         }

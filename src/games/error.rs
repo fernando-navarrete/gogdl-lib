@@ -27,6 +27,9 @@ pub enum GamesError {
 
     #[error("Deflate error: {0}")]
     DeflateError(#[from] io::Error),
+
+    #[error("Product not a game")]
+    ProductNotAGame,
 }
 
 impl From<ClientError> for GamesError {

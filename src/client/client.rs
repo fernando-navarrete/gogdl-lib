@@ -28,7 +28,8 @@ impl HttpClient {
                 body: response_text,
             });
         }
-        let result: T = response.json::<T>().await?;
+        let response_text = response.text().await?;
+        let result: T = serde_json::from_str(&response_text)?;
         Ok(result)
     }
     pub async fn get_and_decode<T: DeserializeOwned>(
@@ -78,7 +79,8 @@ impl HttpClient {
                 body: response_text,
             });
         }
-        let result: T = response.json::<T>().await?;
+        let response_text = response.text().await?;
+        let result: T = serde_json::from_str(&response_text)?;
         Ok(result)
     }
 }

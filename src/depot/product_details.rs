@@ -30,6 +30,12 @@ impl ProductDetails {
         download_manager: &DepotManager,
         product_id: &str,
     ) -> Result<ProductDetails, DepotError> {
+        {
+            let lock = download_manager.inner.lock().await;
+            if let Some(product_details) = lock.product_details.get(product_id) {
+                return Ok(product_details.clone());
+            }
+        }
         let url = format!("https://api.gog.com/v2/games/{}", product_id);
 
         let mut game_details: ProductDetails = match download_manager
@@ -44,6 +50,14 @@ impl ProductDetails {
             }
         };
         game_details.title = game_details.embedded.product.title.clone();
+        {
+            let mut lock = download_manager.inner.lock().await;
+            lock.product_details
+                .insert(product_id.to_string(), game_details.clone());
+        }
         Ok(game_details)
+    }
+    pub fn get_product_type(&self) -> String {
+        self.embedded.product_type.clone()
     }
 }

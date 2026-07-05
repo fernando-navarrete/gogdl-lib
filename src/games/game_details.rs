@@ -17,7 +17,10 @@ impl GameDetails {
         {
             let lock = games_manager.inner.lock().await;
             if let Some(game_details) = lock.game_details.get(&game_id) {
-                return Ok(game_details.clone());
+                match game_details {
+                    Some(game_details) => return Ok(game_details.clone()),
+                    None => return Err(GamesError::ProductNotAGame),
+                }
             }
         }
 
@@ -58,13 +61,19 @@ impl GameDetails {
                     }
                 }
             }
+            Err(GamesError::DecodeError(_err)) => {
+                let mut lock = games_manager.inner.lock().await;
+                lock.game_details.insert(game_id, None);
+                return Err(GamesError::ProductNotAGame);
+            }
             Err(err) => {
                 return Err(err);
             }
         };
 
         let mut lock = games_manager.inner.lock().await;
-        lock.game_details.insert(game_id, game_details.clone());
+        lock.game_details
+            .insert(game_id, Some(game_details.clone()));
 
         Ok(game_details)
     }

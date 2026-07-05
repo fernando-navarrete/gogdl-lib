@@ -1,0 +1,57 @@
+use serde::Deserialize;
+
+use crate::games::{GamesError, GamesManager, owned_games::GameId};
+
+#[derive(Deserialize, Clone)]
+pub struct GameLinks {
+    #[serde(alias = "_links")]
+    pub links: Links,
+}
+
+#[derive(Deserialize, Clone)]
+pub struct Links {
+    #[serde(alias = "boxArtImage")]
+    pub box_art_image: GogImage,
+    #[serde(alias = "backgroundImage")]
+    pub background_image: GogImage,
+    #[serde(alias = "galaxyBackgroundImage")]
+    pub galaxy_background_image: GogImage,
+}
+
+#[derive(Deserialize, Clone)]
+pub struct GogImage {
+    pub href: String,
+}
+
+impl GameLinks {
+    pub async fn get_game_links(
+        games_manager: &GamesManager,
+        game_id: GameId,
+    ) -> Result<GameLinks, GamesError> {
+        {
+            let lock = games_manager.inner.lock().await;
+            if let Some(game_details) = lock.game_links.get(&game_id) {
+                return Ok(game_details.clone());
+            }
+        }
+
+        let url = format!("https://api.gog.com/v2/games/{}", game_id);
+
+        let game_details: GameLinks = match games_manager
+            .client
+            .get_json::<GameLinks>(&url)
+            .await
+            .map_err(GamesError::from)
+        {
+            Ok(game_details) => game_details,
+            Err(err) => {
+                return Err(err);
+            }
+        };
+
+        let mut lock = games_manager.inner.lock().await;
+        lock.game_links.insert(game_id, game_details.clone());
+
+        Ok(game_details)
+    }
+}
