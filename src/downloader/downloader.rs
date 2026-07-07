@@ -5,7 +5,7 @@ use crate::{
     client::HttpClient,
     downloader::{
         DownloadError,
-        util::{ChecksumAlgorithm, PathResolver, compute_checksum},
+        util::{ChecksumAlgorithm, PathResolver, compute_chunk_checksum},
     },
     secure_links::SecureLinksManager,
 };
@@ -31,90 +31,89 @@ impl Downloader {
     ) -> Result<(), DownloadError> {
         let resolver = Arc::new(PathResolver::new(PathBuf::from(path)).await?);
 
+        let concurrency = thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4);
+
         let files = files
             .iter()
             .map(|files| files.product_files.clone())
             .flatten()
             .collect::<Vec<_>>();
 
-        let hash_concurrency = thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(4);
-        stream::iter(files)
-            .map(|file| {
+        let chunks = files
+            .iter()
+            .map(|chunk| chunk.get_download_units())
+            .flatten()
+            .collect::<Vec<_>>();
+
+        stream::iter(chunks)
+            .map(|chunk| {
                 let resolver = resolver.clone();
                 let tx = tx.clone();
                 async move {
-                    let final_path = match resolver.resolve_path(&file.path).await {
-                        Ok(path) => path,
-                        Err(e) => {
-                            tx.send(VerifyEvent::FileNotFound(file.path.clone())).ok();
-                            return Err(DownloadError::from(e));
-                        }
-                    };
-
-                    let (algo, expected_checksum) = {
-                        if let Some(sha256) = &file.sha256 {
-                            (ChecksumAlgorithm::Sha256, sha256.clone())
-                        } else if let Some(md5) = &file.md5 {
-                            (ChecksumAlgorithm::Md5, md5.clone())
-                        } else {
-                            // Single chunk file, verifying with chunk checksum
-                            let chunk_checksum = file
-                                .chunks
-                                .as_ref()
-                                .and_then(|c| c.first())
-                                .map(|c| c.md5.clone());
-                            if let Some(chunk_checksum) = chunk_checksum {
-                                (ChecksumAlgorithm::Md5, chunk_checksum)
-                            } else {
-                                // No chunk checksum, assuming file is OK
-                                tx.send(VerifyEvent::FileOk).ok();
-                                return Ok::<(), DownloadError>(());
+                    let final_path = match resolver.resolve_existing_path(&chunk.path).await {
+                        Ok(path) => match path {
+                            Some(path) => path,
+                            None => {
+                                tx.send(VerifyEvent::FileNotFound(chunk.path.clone())).ok();
+                                println!("ERROR: {}: FILE NOT FOUND", chunk.path.clone());
+                                return Some(chunk.path.clone());
                             }
+                        },
+                        Err(e) => {
+                            tx.send(VerifyEvent::FileNotFound(chunk.path.clone())).ok();
+                            println!("ERROR: {}: {}", chunk.path.clone(), e);
+                            return Some(chunk.path.clone());
                         }
                     };
 
-                    let actual_checksum = match compute_checksum(final_path.clone(), algo).await {
+                    let algo = ChecksumAlgorithm::Md5;
+                    let expected_checksum = chunk.md5.clone();
+
+                    let actual_checksum = match compute_chunk_checksum(
+                        final_path.clone(),
+                        chunk.offset,
+                        chunk.size,
+                        algo,
+                    )
+                    .await
+                    {
                         Ok(checksum) => checksum,
-                        Err(_e) => {
-                            tx.send(VerifyEvent::FileChecksumMismatch(
-                                final_path
-                                    .file_name()
-                                    .unwrap_or_default()
-                                    .to_string_lossy()
-                                    .to_string(),
+                        Err(e) => {
+                            tx.send(VerifyEvent::ChunkChecksumMismatch(
+                                final_path.to_string_lossy().to_string(),
                             ))
                             .ok();
-                            return Ok::<(), DownloadError>(());
+                            println!("ERROR: {}: {}", chunk.path.clone(), e);
+                            return Some(chunk.path.clone());
                         }
                     };
 
                     if actual_checksum != expected_checksum {
-                        tx.send(VerifyEvent::FileChecksumMismatch(
-                            final_path
-                                .file_name()
-                                .unwrap_or_default()
-                                .to_string_lossy()
-                                .to_string(),
+                        tx.send(VerifyEvent::ChunkChecksumMismatch(
+                            final_path.to_string_lossy().to_string(),
                         ))
                         .ok();
-                        return Ok::<(), DownloadError>(());
+                        println!("ERROR: {} CHECKSUM MISMATCH", chunk.path.clone());
+                        return Some(chunk.path.clone());
                     }
 
-                    tx.send(VerifyEvent::FileOk).ok();
-                    Ok::<(), DownloadError>(())
+                    tx.send(VerifyEvent::ChunkOk).ok();
+                    return None;
                 }
             })
-            .buffer_unordered(hash_concurrency)
+            .buffer_unordered(concurrency)
             .collect::<Vec<_>>()
             .await;
+
         Ok(())
     }
 }
 
 pub enum VerifyEvent {
-    FileOk,
-    FileChecksumMismatch(String),
+    ChunkOk,
+    ChunkChecksumMismatch(String),
     FileNotFound(String),
 }
+pub enum DownloadEvent {}

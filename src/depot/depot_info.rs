@@ -27,9 +27,41 @@ pub struct DepotFile {
     pub md5: Option<String>,
     pub sha256: Option<String>,
     pub path: String,
-    pub chunks: Option<Vec<Chunk>>,
+    pub chunks: Vec<Chunk>,
     #[serde(alias = "type")]
     pub file_type: String,
+}
+
+#[derive(Clone)]
+pub struct DownloadUnit {
+    pub md5: String,
+    pub size: u64,
+    pub compressed_md5: String,
+    pub compressed_size: u64,
+    pub path: String,
+    pub offset: u64,
+}
+
+impl DepotFile {
+    pub fn get_download_units(&self) -> Vec<DownloadUnit> {
+        let mut offset = 0;
+        let mut units: Vec<DownloadUnit> = Vec::new();
+        for chunk in self.chunks.iter() {
+            units.push(DownloadUnit {
+                md5: chunk.md5.clone(),
+                size: chunk.size,
+                compressed_md5: chunk.compressed_md5.clone(),
+                compressed_size: chunk.compressed_size,
+                path: self.path.clone(),
+                offset,
+            });
+            offset += chunk.size;
+        }
+        units
+    }
+    pub fn get_file_size(&self) -> u64 {
+        self.chunks.iter().map(|c| c.size).sum()
+    }
 }
 
 impl DepotInfo {

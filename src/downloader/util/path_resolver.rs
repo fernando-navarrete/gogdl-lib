@@ -38,6 +38,52 @@ impl PathResolver {
             dir_cache: DashMap::new(),
         })
     }
+    /// Returns the actual on-disk size of a file at `raw_relative_path`,
+    /// or `Ok(None)` if it doesn't exist — mirrors `resolve_existing_path`'s
+    /// "missing is a normal outcome, not an error" behavior, so callers
+    /// doing resume verification can distinguish "never allocated" from
+    /// "allocated but wrong size" without matching on `io::ErrorKind`.
+    ///
+    /// Does NOT create directories (uses `resolve_existing_path` under the
+    /// hood), since this is a read-only check meant for verification, not
+    /// part of the allocate/download path.
+    pub async fn get_file_size(&self, raw_relative_path: &str) -> io::Result<Option<u64>> {
+        let Some(path) = self.resolve_existing_path(raw_relative_path).await? else {
+            return Ok(None);
+        };
+        let metadata = fs::metadata(&path).await?;
+        Ok(Some(metadata.len()))
+    }
+
+    /// Resolves a file's path (creating parent directories as needed,
+    /// same as `resolve_path`) and preallocates it on disk at
+    /// `total_size` bytes via `set_len`, without writing any actual
+    /// byte content.
+    ///
+    /// Safe to call before download starts (fresh install) or when
+    /// resuming: opens with `create(true)` + `truncate(false)`, so an
+    /// existing partial file is neither wiped nor re-zeroed — only its
+    /// length is adjusted (up or down) to match `total_size`. Individual
+    /// `DownloadUnit` writes can then land at their offsets via
+    /// positional writes (`write_at`/`seek_write`) once this returns.
+    ///
+    /// Returns the resolved path so callers don't need a second
+    /// `resolve_path` call before dispatching download tasks.
+    pub async fn allocate_file(
+        &self,
+        raw_relative_path: &str,
+        total_size: u64,
+    ) -> io::Result<PathBuf> {
+        let path = self.resolve_path(raw_relative_path).await?;
+        let file = fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(&path)
+            .await?;
+        file.set_len(total_size).await?;
+        Ok(path)
+    }
 
     /// Resolves a single file's full path given its raw directory and
     /// filename strings as they appear in the manifest. Safe to call

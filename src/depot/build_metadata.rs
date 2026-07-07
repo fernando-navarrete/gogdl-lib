@@ -20,6 +20,7 @@ pub struct Depot {
     pub compressed_size: u64,
     #[serde(alias = "productId")]
     pub product_id: String,
+    pub languages: Vec<String>,
 }
 
 impl BuildMetadata {
@@ -35,7 +36,7 @@ impl BuildMetadata {
             lock.auth.get_auth().await.unwrap()
         };
 
-        let game_details: BuildMetadata = match download_manager
+        let mut game_details: BuildMetadata = match download_manager
             .client
             .get_and_decode::<BuildMetadata>(&game_link, &auth.access_token)
             .await
@@ -67,6 +68,22 @@ impl BuildMetadata {
                 return Err(err);
             }
         };
+        game_details.filter_languages("en-US");
+        for depot in &mut game_details.depots {
+            println!("{:?}", depot);
+        }
         Ok(game_details)
+    }
+    pub fn filter_languages(&mut self, language: &str) {
+        let filtered_depots = self
+            .depots
+            .iter()
+            .filter(|&depot| {
+                depot.languages.contains(&language.to_string())
+                    || depot.languages.contains(&"*".to_string())
+            })
+            .map(|depot| depot.clone())
+            .collect::<Vec<_>>();
+        self.depots = filtered_depots;
     }
 }
