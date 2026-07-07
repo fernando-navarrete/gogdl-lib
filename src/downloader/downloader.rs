@@ -1,4 +1,4 @@
-use std::{collections::HashSet, path::PathBuf, sync::Arc, thread};
+use std::{collections::HashSet, io::SeekFrom, path::PathBuf, sync::Arc, thread};
 
 use crate::{
     DownloadableFiles,
@@ -12,7 +12,11 @@ use crate::{
     secure_links::SecureLinksManager,
 };
 use futures::{StreamExt, stream};
-use tokio::{fs, sync::mpsc};
+use tokio::{
+    fs,
+    io::{AsyncSeekExt, AsyncWriteExt},
+    sync::mpsc,
+};
 
 pub struct Downloader {
     pub client: HttpClient,
@@ -35,6 +39,7 @@ impl Downloader {
         &self,
         files: Vec<DownloadableFiles>,
         path: &str,
+        tx: mpsc::UnboundedSender<RepairEvent>,
     ) -> Result<(), DownloadError> {
         let all_files = files
             .clone()
@@ -42,36 +47,34 @@ impl Downloader {
             .flat_map(|f| f.product_files)
             .collect::<Vec<_>>();
 
-        let (tx, mut rx) = mpsc::unbounded_channel::<FileVerifyEvent>();
-
-        let broken_files_future = self.verify_files(all_files.clone(), path, tx);
-        let receive_future = async {
-            while let Some(event) = rx.recv().await {
-                match event {
-                    FileVerifyEvent::FileNotFound(_) => todo!(),
-                    FileVerifyEvent::CouldNotResolvePath(_) => todo!(),
-                    FileVerifyEvent::CouldNotReadFileSize(_) => todo!(),
-                    FileVerifyEvent::SizeMismatch(_, _, _) => todo!(),
-                    FileVerifyEvent::ChecksumMismatch(_) => todo!(),
-                    FileVerifyEvent::FileOk => todo!(),
-                }
+        let (stage_tx, mut stage_rx) = mpsc::unbounded_channel::<FileVerifyEvent>();
+        let out_tx = tx.clone();
+        let broken_files_future = self.verify_files(all_files.clone(), path, stage_tx);
+        let receive_future = async move {
+            while let Some(event) = stage_rx.recv().await {
+                out_tx
+                    .send(RepairEvent {
+                        stage: RepairStage::VerifyingFiles,
+                        detail: RepairDetail::FileVerify(event),
+                    })
+                    .ok();
             }
         };
         let (verify_result, ()) = tokio::join!(broken_files_future, receive_future);
 
         let verify_result = verify_result?;
 
-        let (tx, mut rx) = mpsc::unbounded_channel::<FileAllocationEvent>();
-        let allocate_files_future = self.allocate_files(verify_result.clone(), path, tx);
-        let receive_future = async {
-            while let Some(event) = rx.recv().await {
-                match event {
-                    FileAllocationEvent::PathResolveError(_) => todo!(),
-                    FileAllocationEvent::FileAllocated(_) => todo!(),
-                    FileAllocationEvent::AllocationError(_) => todo!(),
-                    FileAllocationEvent::FileSizeError(_) => todo!(),
-                    FileAllocationEvent::FileOk => todo!(),
-                }
+        let (stage_tx, mut stage_rx) = mpsc::unbounded_channel::<FileAllocationEvent>();
+        let out_tx = tx.clone();
+        let allocate_files_future = self.allocate_files(verify_result.clone(), path, stage_tx);
+        let receive_future = async move {
+            while let Some(event) = stage_rx.recv().await {
+                out_tx
+                    .send(RepairEvent {
+                        stage: RepairStage::Allocating,
+                        detail: RepairDetail::Allocation(event),
+                    })
+                    .ok();
             }
         };
         let (allocate_result, ()) = tokio::join!(allocate_files_future, receive_future);
@@ -91,17 +94,18 @@ impl Downloader {
             .flat_map(|depot_file| depot_file.get_download_units())
             .collect::<Vec<_>>();
 
-        let (tx, mut rx) = mpsc::unbounded_channel::<VerifyChunksEvent>();
-        let verify_chunks_future = self.verify_chunks(path, download_units, tx);
+        let (stage_tx, mut stage_rx) = mpsc::unbounded_channel::<VerifyChunksEvent>();
+        let out_tx = tx.clone();
+        let verify_chunks_future = self.verify_chunks(path, download_units, stage_tx);
 
-        let receive_future = async {
-            while let Some(event) = rx.recv().await {
-                match event {
-                    VerifyChunksEvent::PathResolveError(_) => todo!(),
-                    VerifyChunksEvent::FileNotFound(_) => todo!(),
-                    VerifyChunksEvent::ChecksumCalculationError(_) => todo!(),
-                    VerifyChunksEvent::ChunkChecksumMismatch(_) => todo!(),
-                }
+        let receive_future = async move {
+            while let Some(event) = stage_rx.recv().await {
+                out_tx
+                    .send(RepairEvent {
+                        stage: RepairStage::VerifyingChunks,
+                        detail: RepairDetail::ChunkVerify(event),
+                    })
+                    .ok();
             }
         };
         let (errored_units_result, ()) = tokio::join!(verify_chunks_future, receive_future);
@@ -117,6 +121,32 @@ impl Downloader {
         let needs_download_map: HashSet<&str> =
             errored_units.iter().map(|f| f.path.as_str()).collect();
 
+        let (stage_tx, mut stage_rx) = mpsc::unbounded_channel::<DownloadEvent>();
+        let out_tx = tx.clone();
+        let receive_future = async move {
+            while let Some(event) = stage_rx.recv().await {
+                out_tx
+                    .send(RepairEvent {
+                        stage: RepairStage::Downloading,
+                        detail: RepairDetail::Download(event),
+                    })
+                    .ok();
+            }
+        };
+
+        let (total_bytes, total_chunks) = files
+            .iter()
+            .flat_map(|f| f.product_files.iter())
+            .flat_map(|df| df.get_download_units())
+            .filter(|u| needs_download_map.contains(&u.path.as_str()))
+            .fold((0u64, 0usize), |(bytes, chunks), u| (bytes + u.size, chunks + 1));
+        stage_tx
+            .send(DownloadEvent::Total {
+                bytes: total_bytes,
+                chunks: total_chunks,
+            })
+            .ok();
+
         let mut download_futures = Vec::new();
         let number_of_products = files.len();
         for file in files {
@@ -127,64 +157,144 @@ impl Downloader {
                 .filter(|unit| needs_download_map.contains(&unit.path.as_str()))
                 .collect::<Vec<_>>();
             if !filtered_files.is_empty() {
+                let stage_tx = stage_tx.clone();
                 download_futures.push(async move {
-                    self.download_chunk(filtered_files, path, &file.product_id, number_of_products)
-                        .await
+                    self.download_chunk(
+                        filtered_files,
+                        path,
+                        &file.product_id,
+                        number_of_products,
+                        stage_tx,
+                    )
+                    .await
                 });
             }
         }
+        // Drop our own handle so the channel closes (and `receive_future`
+        // returns) once every spawned download future has finished and
+        // dropped its cloned sender.
+        drop(stage_tx);
 
-        let results = futures::future::join_all(download_futures).await;
-        // todo: actual download step
-        todo!()
+        let (results, ()) =
+            tokio::join!(futures::future::join_all(download_futures), receive_future);
+
+        for result in results {
+            result?;
+        }
+
+        Ok(())
     }
     async fn download_chunk(
         &self,
-        unit: Vec<DownloadUnit>,
+        units: Vec<DownloadUnit>,
         path: &str,
         product_id: &str,
         number_of_products: usize,
+        tx: mpsc::UnboundedSender<DownloadEvent>,
     ) -> Result<(), DownloadError> {
         let resolver = Arc::new(PathResolver::new(PathBuf::from(path)).await?);
 
-        let concurrency = thread::available_parallelism()
+        let concurrency = (thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(4)
-            / number_of_products;
+            / number_of_products.max(1))
+        .max(1);
 
         let secure_links = self.secure_links.get_secure_links(product_id).await?;
 
-        stream::iter(unit)
+        stream::iter(units)
             .map(|unit| {
                 let resolver = resolver.clone();
                 let secure_links = secure_links.clone();
                 let auth = self.auth.clone();
                 let client = self.client.clone();
+                let tx = tx.clone();
                 async move {
                     let url = match secure_links
                         .get_highest_priority_url()
                         .ok_or(DownloadError::BuildNotFound)
                     {
                         Ok(url) => url,
-                        Err(err) => {
-                            panic!("{:?}", err);
+                        Err(_err) => {
+                            println!("ERROR: {}: no secure link available", unit.path.clone());
+                            tx.send(DownloadEvent::SecureLinkError(unit.path.clone()))
+                                .ok();
+                            return;
                         }
                     };
                     let url = url.parse_url(&unit.compressed_md5);
 
-                    let mut rx = client
-                        .fetch_chunk_stream(&url, auth.get_auth().await.unwrap().access_token);
+                    let access_token = match auth.get_auth().await {
+                        Some(auth) => auth.access_token,
+                        None => {
+                            println!("ERROR: {}: not authenticated", unit.path.clone());
+                            tx.send(DownloadEvent::DownloadError(unit.path.clone()))
+                                .ok();
+                            return;
+                        }
+                    };
 
-                    if let Some(result) = rx.recv().await {
-                        let decoded = result?;
-                        // write to file at offset
+                    let file_path = match resolver.resolve_path(&unit.path).await {
+                        Ok(file_path) => file_path,
+                        Err(e) => {
+                            println!("ERROR: {}: {}", unit.path.clone(), e);
+                            tx.send(DownloadEvent::PathResolveError(unit.path.clone()))
+                                .ok();
+                            return;
+                        }
+                    };
+
+                    let mut file = match fs::OpenOptions::new().write(true).open(&file_path).await
+                    {
+                        Ok(file) => file,
+                        Err(e) => {
+                            println!("ERROR: {}: {}", unit.path.clone(), e);
+                            tx.send(DownloadEvent::WriteError(unit.path.clone())).ok();
+                            return;
+                        }
+                    };
+                    if let Err(e) = file.seek(SeekFrom::Start(unit.offset)).await {
+                        println!("ERROR: {}: {}", unit.path.clone(), e);
+                        tx.send(DownloadEvent::WriteError(unit.path.clone())).ok();
+                        return;
                     }
+
+                    let mut rx = client.fetch_chunk_stream(&url, access_token);
+
+                    loop {
+                        match rx.recv().await {
+                            Some(Ok(bytes)) => {
+                                if let Err(e) = file.write_all(&bytes).await {
+                                    println!("ERROR: {}: {}", unit.path.clone(), e);
+                                    tx.send(DownloadEvent::WriteError(unit.path.clone())).ok();
+                                    return;
+                                }
+                                tx.send(DownloadEvent::Progress {
+                                    bytes: bytes.len() as u64,
+                                })
+                                .ok();
+                            }
+                            Some(Err(err)) => {
+                                println!("ERROR: {}: {}", unit.path.clone(), err);
+                                tx.send(DownloadEvent::DownloadError(unit.path.clone()))
+                                    .ok();
+                                return;
+                            }
+                            None => break,
+                        }
+                    }
+                    file.flush().await.ok();
+
+                    tx.send(DownloadEvent::ChunkDownloaded {
+                        path: unit.path.clone(),
+                    })
+                    .ok();
                 }
             })
             .buffer_unordered(concurrency)
             .collect::<Vec<_>>()
             .await;
-        todo!()
+        Ok(())
     }
     async fn verify_chunks(
         &self,
@@ -517,19 +627,14 @@ impl Downloader {
     }
 }
 
-struct DownloadableBundle {
-    product_id: String,
-    product_files: Vec<DownloadUnit>,
-}
-
-enum VerifyChunksEvent {
+pub enum VerifyChunksEvent {
     PathResolveError(String),
     FileNotFound(String),
     ChecksumCalculationError(String),
     ChunkChecksumMismatch(String),
 }
 
-enum FileAllocationEvent {
+pub enum FileAllocationEvent {
     PathResolveError(String),
     FileAllocated(String),
     AllocationError(String),
@@ -537,7 +642,7 @@ enum FileAllocationEvent {
     FileOk,
 }
 
-enum FileVerifyEvent {
+pub enum FileVerifyEvent {
     FileNotFound(String),
     CouldNotResolvePath(String),
     CouldNotReadFileSize(String),
@@ -551,4 +656,50 @@ pub enum VerifyEvent {
     FileNotFound(String),
     ChunkChecksumMismatch(String),
     ChunkOk,
+}
+
+/// Emitted by the download stage of `repair_download`.
+pub enum DownloadEvent {
+    /// Sent once at the start of the download stage: the total decoded
+    /// bytes and chunk count queued for download. Clients can track
+    /// progress as `downloaded = Σ Progress.bytes` and
+    /// `remaining = Total.bytes - downloaded`.
+    Total { bytes: u64, chunks: usize },
+    /// An incremental delta of decoded bytes written for a chunk still in
+    /// flight. Sent as each network read is decoded and written to disk.
+    Progress { bytes: u64 },
+    /// A chunk was downloaded and written successfully in full.
+    ChunkDownloaded { path: String },
+    /// No usable secure link was available for this chunk's product.
+    SecureLinkError(String),
+    /// The chunk failed to download (network error, stream closed, or not authenticated).
+    DownloadError(String),
+    /// The chunk downloaded but couldn't be written to disk at its offset.
+    WriteError(String),
+    /// The destination path for the chunk couldn't be resolved.
+    PathResolveError(String),
+}
+
+/// Which stage of `repair_download` a `RepairEvent` originated from.
+pub enum RepairStage {
+    VerifyingFiles,
+    Allocating,
+    VerifyingChunks,
+    Downloading,
+}
+
+/// The stage-specific event wrapped by a `RepairEvent`.
+pub enum RepairDetail {
+    FileVerify(FileVerifyEvent),
+    Allocation(FileAllocationEvent),
+    ChunkVerify(VerifyChunksEvent),
+    Download(DownloadEvent),
+}
+
+/// A single status update from `repair_download`, tagged with the stage it
+/// came from so callers tracking a multi-stage repair can tell them apart
+/// on one channel.
+pub struct RepairEvent {
+    pub stage: RepairStage,
+    pub detail: RepairDetail,
 }

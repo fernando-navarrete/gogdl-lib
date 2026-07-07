@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{Mutex, mpsc};
 
 use crate::{
-    VerifyEvent,
+    RepairEvent, VerifyEvent,
     auth::AuthManager,
     client::HttpClient,
     depot::DepotManager,
@@ -64,6 +64,22 @@ impl DownloadManager {
         };
         let downloader = Downloader::new(self.client.clone(), links, auth).await;
         downloader.verify(files, path, tx).await?;
+        Ok(())
+    }
+    pub async fn repair_download(
+        &self,
+        path: &str,
+        files: Vec<DownloadableFiles>,
+        tx: mpsc::UnboundedSender<RepairEvent>,
+    ) -> Result<(), DownloadError> {
+        let (auth, links) = {
+            let inner = self.inner.lock().await;
+            let auth = inner.auth.clone();
+            let links = inner.secure_links.clone();
+            (auth, links)
+        };
+        let downloader = Downloader::new(self.client.clone(), links, auth).await;
+        downloader.repair_download(files, path, tx).await?;
         Ok(())
     }
     pub async fn get_downloadable_products(

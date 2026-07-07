@@ -7,8 +7,15 @@ mod games;
 mod gogdl;
 mod secure_links;
 
+pub use downloader::DownloadEvent;
 pub use downloader::DownloadableFiles;
 pub use downloader::DownloadableProduct;
+pub use downloader::FileAllocationEvent;
+pub use downloader::FileVerifyEvent;
+pub use downloader::RepairDetail;
+pub use downloader::RepairEvent;
+pub use downloader::RepairStage;
+pub use downloader::VerifyChunksEvent;
 pub use downloader::VerifyEvent;
 pub use gogdl::GogDl;
 pub use gogdl::GogDlError;

@@ -1,6 +1,7 @@
-use std::io::Read;
+use std::io::{Read, Write};
 
 use flate2::read::ZlibDecoder;
+use flate2::write::ZlibDecoder as ZlibStreamDecoder;
 use futures::StreamExt;
 use reqwest::Client;
 use serde::de::DeserializeOwned;
@@ -35,6 +36,12 @@ impl HttpClient {
         let result: T = serde_json::from_str(&response_text)?;
         Ok(result)
     }
+    /// Streams and decodes a chunk incrementally: as each network-level piece
+    /// of the (zlib-compressed) response body arrives, it is fed through a
+    /// streaming decoder and the decoded output produced so far is sent
+    /// immediately, so neither side needs to hold the whole chunk in memory
+    /// at once. The receiver may get zero or more `Ok(bytes)` messages
+    /// followed by channel closure (success) or an `Err(...)` (failure).
     pub fn fetch_chunk_stream(
         &self,
         url: &str,
@@ -46,40 +53,72 @@ impl HttpClient {
 
         let client = self.client.clone();
         tokio::spawn(async move {
-            let result: Result<Vec<u8>, ClientError> = async {
-                let url = Url::parse(&url)?;
-                let mut request = client.get(url);
-                if !auth.is_empty() {
-                    request = request.bearer_auth(&auth);
+            let parsed_url = match Url::parse(&url) {
+                Ok(url) => url,
+                Err(e) => {
+                    tx.send(Err(e.into())).ok();
+                    return;
                 }
-                let response = request.send().await?;
+            };
+            let mut request = client.get(parsed_url);
+            if !auth.is_empty() {
+                request = request.bearer_auth(&auth);
+            }
 
-                let status = response.status();
-                if !status.is_success() {
-                    let response_text = response.text().await?;
-                    return Err(ClientError::Http {
-                        status,
-                        body: response_text,
-                    });
+            let response = match request.send().await {
+                Ok(response) => response,
+                Err(e) => {
+                    tx.send(Err(e.into())).ok();
+                    return;
+                }
+            };
+
+            let status = response.status();
+            if !status.is_success() {
+                let response_text = response.text().await.unwrap_or_default();
+                tx.send(Err(ClientError::Http {
+                    status,
+                    body: response_text,
+                }))
+                .ok();
+                return;
+            }
+
+            let mut stream = response.bytes_stream();
+            let mut decoder = ZlibStreamDecoder::new(Vec::new());
+            while let Some(chunk) = stream.next().await {
+                let downloaded_bytes = match chunk {
+                    Ok(bytes) => bytes,
+                    Err(_err) => {
+                        tx.send(Err(ClientError::StreamError())).ok();
+                        return;
+                    }
+                };
+
+                if let Err(e) = decoder.write_all(&downloaded_bytes) {
+                    tx.send(Err(e.into())).ok();
+                    return;
                 }
 
-                let mut stream = response.bytes_stream();
-                let mut buffer: Vec<u8> = Vec::new();
-                while let Some(chunk) = stream.next().await {
-                    match chunk {
-                        Ok(downloaded_bytes) => buffer.extend_from_slice(&downloaded_bytes),
-                        Err(_err) => return Err(ClientError::StreamError()),
+                // Drain whatever the decoder has produced so far without
+                // waiting for the rest of the response.
+                let produced = std::mem::take(decoder.get_mut());
+                if !produced.is_empty() && tx.send(Ok(produced)).is_err() {
+                    // Receiver dropped; no point continuing.
+                    return;
+                }
+            }
+
+            match decoder.finish() {
+                Ok(remaining) => {
+                    if !remaining.is_empty() {
+                        tx.send(Ok(remaining)).ok();
                     }
                 }
-
-                let mut decoded_buffer = Vec::new();
-                let mut z = ZlibDecoder::new(&buffer[..]);
-                z.read_to_end(&mut decoded_buffer)?;
-                Ok(decoded_buffer)
+                Err(e) => {
+                    tx.send(Err(e.into())).ok();
+                }
             }
-            .await;
-
-            tx.send(result).ok();
         });
 
         rx
