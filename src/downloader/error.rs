@@ -3,7 +3,9 @@ use std::io;
 use reqwest::StatusCode;
 use thiserror::Error;
 
-use crate::{client::ClientError, depot::DepotError, games::GamesError};
+use crate::{
+    client::ClientError, depot::DepotError, games::GamesError, secure_links::SecureLinksError,
+};
 
 #[derive(Error, Debug)]
 pub enum DownloadError {
@@ -36,6 +38,9 @@ pub enum DownloadError {
 
     #[error("Disk allocation error")]
     DiskAllocationError,
+
+    #[error("Secure links error: {0}")]
+    SecureLinksError(#[from] SecureLinksError),
 }
 
 impl From<ClientError> for DownloadError {

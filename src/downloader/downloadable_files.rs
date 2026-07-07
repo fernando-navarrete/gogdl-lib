@@ -5,6 +5,7 @@ use crate::{
     downloader::{DownloadError, DownloadManager},
 };
 
+#[derive(Clone)]
 pub struct DownloadableFiles {
     pub product_id: String,
     pub product_files: Vec<DepotFile>,

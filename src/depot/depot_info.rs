@@ -43,6 +43,16 @@ pub struct DownloadUnit {
 }
 
 impl DepotFile {
+    pub fn from_download_unit(unit: &DownloadUnit) -> Self {
+        DepotFile {
+            md5: Some(unit.md5.clone()),
+            sha256: None,
+            path: unit.path.clone(),
+            chunks: Vec::new(),
+            file_type: "".to_string(),
+        }
+    }
+
     pub fn get_download_units(&self) -> Vec<DownloadUnit> {
         let mut offset = 0;
         let mut units: Vec<DownloadUnit> = Vec::new();
