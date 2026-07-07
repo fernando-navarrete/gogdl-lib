@@ -41,7 +41,7 @@ impl From<ClientError> for GamesError {
             ClientError::UrlParseError(parse_error) => GamesError::UrlParseError(parse_error),
             ClientError::NetworkError(error) => GamesError::NetworkError(error),
             ClientError::Http { status, body } => match status {
-                StatusCode::UNAUTHORIZED => GamesError::NotAuthenticated,
+                StatusCode::UNAUTHORIZED => GamesError::Unauthorized,
                 _ => GamesError::Http { status, body },
             },
             ClientError::DecodeError(error) => GamesError::DecodeError(error),
