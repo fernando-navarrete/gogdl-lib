@@ -33,6 +33,9 @@ pub enum DownloadError {
 
     #[error("Build not found")]
     BuildNotFound,
+
+    #[error("Disk allocation error")]
+    DiskAllocationError,
 }
 
 impl From<ClientError> for DownloadError {

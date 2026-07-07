@@ -38,21 +38,13 @@ impl PathResolver {
             dir_cache: DashMap::new(),
         })
     }
-    /// Returns the actual on-disk size of a file at `raw_relative_path`,
-    /// or `Ok(None)` if it doesn't exist — mirrors `resolve_existing_path`'s
-    /// "missing is a normal outcome, not an error" behavior, so callers
-    /// doing resume verification can distinguish "never allocated" from
-    /// "allocated but wrong size" without matching on `io::ErrorKind`.
-    ///
-    /// Does NOT create directories (uses `resolve_existing_path` under the
-    /// hood), since this is a read-only check meant for verification, not
-    /// part of the allocate/download path.
-    pub async fn get_file_size(&self, raw_relative_path: &str) -> io::Result<Option<u64>> {
-        let Some(path) = self.resolve_existing_path(raw_relative_path).await? else {
-            return Ok(None);
-        };
-        let metadata = fs::metadata(&path).await?;
-        Ok(Some(metadata.len()))
+    /// Returns the actual on-disk size of a file at an already-resolved
+    /// path. Callers that have already run `resolve_existing_path` (and
+    /// so already handled the "does it exist" / traversal checks) should
+    /// use this directly instead of re-resolving.
+    pub async fn get_file_size(&self, path: &Path) -> io::Result<u64> {
+        let metadata = fs::metadata(path).await?;
+        Ok(metadata.len())
     }
 
     /// Resolves a file's path (creating parent directories as needed,
