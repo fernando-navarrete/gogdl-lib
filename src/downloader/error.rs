@@ -41,6 +41,9 @@ pub enum DownloadError {
 
     #[error("Secure links error: {0}")]
     SecureLinksError(#[from] SecureLinksError),
+
+    #[error("Stream error")]
+    StreamError(),
 }
 
 impl From<ClientError> for DownloadError {
@@ -54,6 +57,7 @@ impl From<ClientError> for DownloadError {
             },
             ClientError::DecodeError(error) => DownloadError::DecodeError(error),
             ClientError::DeflateError(error) => DownloadError::DeflateError(error),
+            ClientError::StreamError() => DownloadError::StreamError(),
         }
     }
 }

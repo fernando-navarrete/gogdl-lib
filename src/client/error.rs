@@ -19,4 +19,7 @@ pub enum ClientError {
 
     #[error("Deflate error: {0}")]
     DeflateError(#[from] io::Error),
+
+    #[error("Stream error")]
+    StreamError(),
 }

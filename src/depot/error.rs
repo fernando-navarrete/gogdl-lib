@@ -27,6 +27,9 @@ pub enum DepotError {
 
     #[error("Deflate error: {0}")]
     DeflateError(#[from] io::Error),
+
+    #[error("Stream error")]
+    StreamError(),
 }
 
 impl From<ClientError> for DepotError {
@@ -40,6 +43,7 @@ impl From<ClientError> for DepotError {
             },
             ClientError::DecodeError(error) => DepotError::DecodeError(error),
             ClientError::DeflateError(error) => DepotError::DeflateError(error),
+            ClientError::StreamError() => DepotError::StreamError(),
         }
     }
 }

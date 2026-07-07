@@ -56,11 +56,13 @@ impl DownloadManager {
         files: Vec<DownloadableFiles>,
         tx: mpsc::UnboundedSender<VerifyEvent>,
     ) -> Result<(), DownloadError> {
-        let links = {
+        let (auth, links) = {
             let inner = self.inner.lock().await;
-            inner.secure_links.clone()
+            let auth = inner.auth.clone();
+            let links = inner.secure_links.clone();
+            (auth, links)
         };
-        let downloader = Downloader::new(self.client.clone(), links).await;
+        let downloader = Downloader::new(self.client.clone(), links, auth).await;
         downloader.verify(files, path, tx).await?;
         Ok(())
     }

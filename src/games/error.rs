@@ -30,6 +30,9 @@ pub enum GamesError {
 
     #[error("Product not a game")]
     ProductNotAGame,
+
+    #[error("Stream error")]
+    StreamError(),
 }
 
 impl From<ClientError> for GamesError {
@@ -43,6 +46,7 @@ impl From<ClientError> for GamesError {
             },
             ClientError::DecodeError(error) => GamesError::DecodeError(error),
             ClientError::DeflateError(error) => GamesError::DeflateError(error),
+            ClientError::StreamError() => GamesError::StreamError(),
         }
     }
 }

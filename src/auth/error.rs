@@ -24,6 +24,9 @@ pub enum AuthError {
 
     #[error("Deflate error: {0}")]
     DeflateError(#[from] io::Error),
+
+    #[error("Stream error")]
+    StreamError(),
 }
 
 impl From<ClientError> for AuthError {
@@ -37,6 +40,7 @@ impl From<ClientError> for AuthError {
             },
             ClientError::DecodeError(error) => AuthError::DecodeError(error),
             ClientError::DeflateError(error) => AuthError::DeflateError(error),
+            ClientError::StreamError() => AuthError::StreamError(),
         }
     }
 }

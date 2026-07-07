@@ -2,6 +2,7 @@ use std::{collections::HashSet, path::PathBuf, sync::Arc, thread};
 
 use crate::{
     DownloadableFiles,
+    auth::AuthManager,
     client::HttpClient,
     depot::{DepotFile, DownloadUnit},
     downloader::{
@@ -16,12 +17,18 @@ use tokio::{fs, sync::mpsc};
 pub struct Downloader {
     pub client: HttpClient,
     pub secure_links: SecureLinksManager,
+    pub auth: AuthManager,
 }
 impl Downloader {
-    pub async fn new(client: HttpClient, secure_links: SecureLinksManager) -> Self {
+    pub async fn new(
+        client: HttpClient,
+        secure_links: SecureLinksManager,
+        auth: AuthManager,
+    ) -> Self {
         Self {
             client,
             secure_links,
+            auth,
         }
     }
     pub async fn repair_download(
@@ -151,8 +158,28 @@ impl Downloader {
             .map(|unit| {
                 let resolver = resolver.clone();
                 let secure_links = secure_links.clone();
+                let auth = self.auth.clone();
                 let client = self.client.clone();
-                async move {}
+                async move {
+                    let url = match secure_links
+                        .get_highest_priority_url()
+                        .ok_or(DownloadError::BuildNotFound)
+                    {
+                        Ok(url) => url,
+                        Err(err) => {
+                            panic!("{:?}", err);
+                        }
+                    };
+                    let url = url.parse_url(&unit.compressed_md5);
+
+                    let mut rx = client
+                        .fetch_chunk_stream(&url, auth.get_auth().await.unwrap().access_token);
+
+                    if let Some(result) = rx.recv().await {
+                        let decoded = result?;
+                        // write to file at offset
+                    }
+                }
             })
             .buffer_unordered(concurrency)
             .collect::<Vec<_>>()

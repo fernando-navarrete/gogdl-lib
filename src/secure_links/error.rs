@@ -33,6 +33,9 @@ pub enum SecureLinksError {
 
     #[error("Product not owned: {0}")]
     ProductNotOwned(String),
+
+    #[error("Stream error")]
+    StreamError(),
 }
 
 impl From<ClientError> for SecureLinksError {
@@ -46,6 +49,7 @@ impl From<ClientError> for SecureLinksError {
             },
             ClientError::DecodeError(error) => SecureLinksError::DecodeError(error),
             ClientError::DeflateError(error) => SecureLinksError::DeflateError(error),
+            ClientError::StreamError() => SecureLinksError::StreamError(),
         }
     }
 }

@@ -1,8 +1,11 @@
 use std::io::Read;
 
 use flate2::read::ZlibDecoder;
+use futures::StreamExt;
 use reqwest::Client;
 use serde::de::DeserializeOwned;
+use tokio::sync::mpsc;
+use url::Url;
 
 use crate::client::error::ClientError;
 
@@ -31,6 +34,55 @@ impl HttpClient {
         let response_text = response.text().await?;
         let result: T = serde_json::from_str(&response_text)?;
         Ok(result)
+    }
+    pub fn fetch_chunk_stream(
+        &self,
+        url: &str,
+        auth: String,
+    ) -> mpsc::UnboundedReceiver<Result<Vec<u8>, ClientError>> {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let url = url.to_string();
+        let auth = auth;
+
+        let client = self.client.clone();
+        tokio::spawn(async move {
+            let result: Result<Vec<u8>, ClientError> = async {
+                let url = Url::parse(&url)?;
+                let mut request = client.get(url);
+                if !auth.is_empty() {
+                    request = request.bearer_auth(&auth);
+                }
+                let response = request.send().await?;
+
+                let status = response.status();
+                if !status.is_success() {
+                    let response_text = response.text().await?;
+                    return Err(ClientError::Http {
+                        status,
+                        body: response_text,
+                    });
+                }
+
+                let mut stream = response.bytes_stream();
+                let mut buffer: Vec<u8> = Vec::new();
+                while let Some(chunk) = stream.next().await {
+                    match chunk {
+                        Ok(downloaded_bytes) => buffer.extend_from_slice(&downloaded_bytes),
+                        Err(_err) => return Err(ClientError::StreamError()),
+                    }
+                }
+
+                let mut decoded_buffer = Vec::new();
+                let mut z = ZlibDecoder::new(&buffer[..]);
+                z.read_to_end(&mut decoded_buffer)?;
+                Ok(decoded_buffer)
+            }
+            .await;
+
+            tx.send(result).ok();
+        });
+
+        rx
     }
     pub async fn get_and_decode<T: DeserializeOwned>(
         &self,
