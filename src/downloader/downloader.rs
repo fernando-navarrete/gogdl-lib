@@ -94,6 +94,7 @@ impl Downloader {
                             .ok();
                         return None;
                     }
+                    tx.send(FileAllocationEvent::FileOk).ok();
                     None
                 }
             })
@@ -102,6 +103,9 @@ impl Downloader {
             .await;
 
         let errors = results.into_iter().flatten().collect::<Vec<_>>();
+        for file in &errors {
+            println!("FAILED TO ALLOCATE: {}", file.path);
+        }
         if !errors.is_empty() {
             return Err(DownloadError::DiskAllocationError);
         }
@@ -124,20 +128,21 @@ impl Downloader {
                 let resolver = resolver.clone();
                 let tx = tx.clone();
                 async move {
-                    let final_path = match resolver.resolve_existing_path(&file.path).await {
-                        Ok(path) => match path {
-                            Some(path) => path,
-                            None => {
-                                tx.send(FileVerifyEvent::FileNotFound(file.path.clone()))
-                                    .ok();
-                                println!("ERROR: {}: FILE NOT FOUND", file.path.clone());
-                                return Some(file.clone());
-                            }
-                        },
-                        Err(e) => {
+                    let opt_path = match resolver.resolve_existing_path(&file.path).await {
+                        Ok(opt) => opt,
+                        Err(err) => {
+                            tx.send(FileVerifyEvent::CouldNotResolvePath(file.path.clone()))
+                                .ok();
+                            println!("ERROR: {}: {}", file.path.clone(), err);
+                            return Some(file.clone());
+                        }
+                    };
+                    let final_path = match opt_path {
+                        Some(path) => path,
+                        None => {
                             tx.send(FileVerifyEvent::FileNotFound(file.path.clone()))
                                 .ok();
-                            println!("ERROR: {}: {}", file.path.clone(), e);
+                            println!("ERROR: {}: FILE NOT FOUND", file.path.clone());
                             return Some(file.clone());
                         }
                     };
@@ -145,7 +150,7 @@ impl Downloader {
                     let size = match resolver.get_file_size(&final_path).await {
                         Ok(size) => size,
                         Err(e) => {
-                            tx.send(FileVerifyEvent::FileNotFound(file.path.clone()))
+                            tx.send(FileVerifyEvent::CouldNotReadFileSize(file.path.clone()))
                                 .ok();
                             println!("ERROR: {}: {}", file.path.clone(), e);
                             return Some(file.clone());
@@ -167,6 +172,7 @@ impl Downloader {
                         );
                         return Some(file.clone());
                     }
+                    tx.send(FileVerifyEvent::FileOk).ok();
                     None
                 }
             })
@@ -211,18 +217,21 @@ impl Downloader {
                 let resolver = resolver.clone();
                 let tx = tx.clone();
                 async move {
-                    let final_path = match resolver.resolve_existing_path(&chunk.path).await {
-                        Ok(path) => match path {
-                            Some(path) => path,
-                            None => {
-                                tx.send(VerifyEvent::FileNotFound(chunk.path.clone())).ok();
-                                println!("ERROR: {}: FILE NOT FOUND", chunk.path.clone());
-                                return Some(chunk.path.clone());
-                            }
-                        },
+                    let opt_path = match resolver.resolve_existing_path(&chunk.path).await {
+                        Ok(path) => path,
                         Err(e) => {
-                            tx.send(VerifyEvent::FileNotFound(chunk.path.clone())).ok();
+                            tx.send(VerifyEvent::CouldNotResolvePath(chunk.path.clone()))
+                                .ok();
                             println!("ERROR: {}: {}", chunk.path.clone(), e);
+                            return Some(chunk.path.clone());
+                        }
+                    };
+
+                    let final_path = match opt_path {
+                        Some(path) => path,
+                        None => {
+                            tx.send(VerifyEvent::FileNotFound(chunk.path.clone())).ok();
+                            println!("ERROR: {}: FILE NOT FOUND", chunk.path.clone());
                             return Some(chunk.path.clone());
                         }
                     };
@@ -275,16 +284,21 @@ pub enum FileAllocationEvent {
     FileAllocated(String),
     AllocationError(String),
     FileSizeError(String),
+    FileOk,
 }
 
 pub enum FileVerifyEvent {
     FileNotFound(String),
+    CouldNotResolvePath(String),
+    CouldNotReadFileSize(String),
     SizeMismatch(String, u64, u64),
     ChecksumMismatch(String),
+    FileOk,
 }
 
 pub enum VerifyEvent {
-    ChunkOk,
-    ChunkChecksumMismatch(String),
+    CouldNotResolvePath(String),
     FileNotFound(String),
+    ChunkChecksumMismatch(String),
+    ChunkOk,
 }
