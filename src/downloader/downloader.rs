@@ -248,6 +248,93 @@ impl Downloader {
 
         Ok(())
     }
+    /// Downloads every file in `files` into `path` from scratch: allocates
+    /// all files on disk, then downloads every chunk. Unlike
+    /// `repair_download`, there is no existing install to diff against, so
+    /// no verification stages run — every file is allocated and every chunk
+    /// is downloaded unconditionally.
+    pub async fn download(
+        &self,
+        files: Vec<DownloadableFiles>,
+        path: &str,
+        tx: mpsc::UnboundedSender<DownloadJobEvent>,
+    ) -> Result<(), DownloadError> {
+        let all_files = files
+            .iter()
+            .flat_map(|f| f.product_files.clone())
+            .collect::<Vec<_>>();
+
+        let (stage_tx, mut stage_rx) = mpsc::unbounded_channel::<FileAllocationEvent>();
+        let out_tx = tx.clone();
+        let allocate_files_future = self.allocate_files(all_files, path, stage_tx);
+        let receive_future = async move {
+            while let Some(event) = stage_rx.recv().await {
+                out_tx
+                    .send(DownloadJobEvent {
+                        stage: DownloadStage::Allocating,
+                        detail: DownloadDetail::Allocation(event),
+                    })
+                    .ok();
+            }
+        };
+        let (allocate_result, ()) = tokio::join!(allocate_files_future, receive_future);
+        allocate_result?;
+
+        let (stage_tx, mut stage_rx) = mpsc::unbounded_channel::<DownloadEvent>();
+        let out_tx = tx.clone();
+        let receive_future = async move {
+            while let Some(event) = stage_rx.recv().await {
+                out_tx
+                    .send(DownloadJobEvent {
+                        stage: DownloadStage::Downloading,
+                        detail: DownloadDetail::Download(event),
+                    })
+                    .ok();
+            }
+        };
+
+        let (total_bytes, total_chunks) = files
+            .iter()
+            .flat_map(|f| f.product_files.iter())
+            .flat_map(|df| df.get_download_units())
+            .fold((0u64, 0usize), |(bytes, chunks), u| (bytes + u.size, chunks + 1));
+        stage_tx
+            .send(DownloadEvent::Total {
+                bytes: total_bytes,
+                chunks: total_chunks,
+            })
+            .ok();
+
+        let mut download_futures = Vec::new();
+        let number_of_products = files.len();
+        for file in files {
+            let units = file
+                .product_files
+                .iter()
+                .flat_map(|depot_file| depot_file.get_download_units())
+                .collect::<Vec<_>>();
+            if !units.is_empty() {
+                let stage_tx = stage_tx.clone();
+                download_futures.push(async move {
+                    self.download_chunk(units, path, &file.product_id, number_of_products, stage_tx)
+                        .await
+                });
+            }
+        }
+        // Drop our own handle so the channel closes (and `receive_future`
+        // returns) once every spawned download future has finished and
+        // dropped its cloned sender.
+        drop(stage_tx);
+
+        let (results, ()) =
+            tokio::join!(futures::future::join_all(download_futures), receive_future);
+
+        for result in results {
+            result?;
+        }
+
+        Ok(())
+    }
     async fn download_chunk(
         &self,
         units: Vec<DownloadUnit>,
@@ -830,4 +917,24 @@ pub enum RepairDetail {
 pub struct RepairEvent {
     pub stage: RepairStage,
     pub detail: RepairDetail,
+}
+
+/// Which stage of `Downloader::download` a `DownloadJobEvent` originated from.
+pub enum DownloadStage {
+    Allocating,
+    Downloading,
+}
+
+/// The stage-specific event wrapped by a `DownloadJobEvent`.
+pub enum DownloadDetail {
+    Allocation(FileAllocationEvent),
+    Download(DownloadEvent),
+}
+
+/// A single status update from `Downloader::download`, tagged with the
+/// stage it came from so callers tracking a multi-stage download can tell
+/// them apart on one channel.
+pub struct DownloadJobEvent {
+    pub stage: DownloadStage,
+    pub detail: DownloadDetail,
 }

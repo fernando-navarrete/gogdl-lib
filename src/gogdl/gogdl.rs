@@ -1,5 +1,6 @@
 use tokio::sync::mpsc;
 
+use crate::DownloadJobEvent;
 use crate::RepairEvent;
 use crate::VerifyEvent;
 use crate::auth::AuthManager;
@@ -106,6 +107,15 @@ impl GogDl {
         tx: mpsc::UnboundedSender<RepairEvent>,
     ) -> Result<(), GogDlError> {
         self.downloader.repair_download(path, files, tx).await?;
+        Ok(())
+    }
+    pub async fn download_files(
+        &self,
+        files: Vec<DownloadableFiles>,
+        path: &str,
+        tx: mpsc::UnboundedSender<DownloadJobEvent>,
+    ) -> Result<(), GogDlError> {
+        self.downloader.download(path, files, tx).await?;
         Ok(())
     }
     pub async fn get_product_details(

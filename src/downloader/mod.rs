@@ -9,7 +9,7 @@ pub use download_manager::DownloadManager;
 pub use downloadable_files::DownloadableFiles;
 pub use downloadable_product::DownloadableProduct;
 pub use downloader::{
-    DownloadEvent, FileAllocationEvent, FileVerifyEvent, RepairDetail, RepairEvent, RepairStage,
-    VerifyChunksEvent, VerifyEvent,
+    DownloadDetail, DownloadEvent, DownloadJobEvent, DownloadStage, FileAllocationEvent,
+    FileVerifyEvent, RepairDetail, RepairEvent, RepairStage, VerifyChunksEvent, VerifyEvent,
 };
 pub use error::DownloadError;
