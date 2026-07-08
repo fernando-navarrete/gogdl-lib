@@ -3,7 +3,7 @@ use std::{collections::HashSet, io::SeekFrom, path::PathBuf, sync::Arc, thread};
 use crate::{
     DownloadableFiles,
     auth::AuthManager,
-    client::HttpClient,
+    client::{ClientError, HttpClient},
     depot::{DepotFile, DownloadUnit},
     downloader::{
         DownloadError,
@@ -17,6 +17,70 @@ use tokio::{
     io::{AsyncSeekExt, AsyncWriteExt},
     sync::mpsc,
 };
+
+/// The outcome of a single fetch-and-write attempt for one chunk, made by
+/// `stream_unit_to_file`. Distinguishes a CDN/stream failure (worth retrying
+/// against the redist store) from a local disk failure (not worth retrying,
+/// since the same disk is used for any fallback attempt too).
+enum UnitAttemptError {
+    Download(ClientError),
+    Write(std::io::Error),
+}
+
+impl std::fmt::Display for UnitAttemptError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            UnitAttemptError::Download(e) => write!(f, "{e}"),
+            UnitAttemptError::Write(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+/// Streams `url`'s (decoded) bytes into `file` starting at `offset`, emitting
+/// a `DownloadEvent::Progress` for each byte range not yet credited.
+///
+/// `counted` is a per-unit high-water-mark of how many decoded bytes have
+/// already been credited via `Progress` for this chunk, shared across a
+/// primary attempt and a possible redist-fallback retry: if a first attempt
+/// streams `w` bytes before failing, the retry only emits `Progress` for
+/// bytes beyond `w`, so the two attempts together credit exactly the chunk's
+/// size once, never double-counting the re-streamed prefix.
+async fn stream_unit_to_file(
+    client: &HttpClient,
+    url: &str,
+    access_token: String,
+    file: &mut fs::File,
+    offset: u64,
+    counted: &mut u64,
+    tx: &mpsc::UnboundedSender<DownloadEvent>,
+) -> Result<(), UnitAttemptError> {
+    file.seek(SeekFrom::Start(offset))
+        .await
+        .map_err(UnitAttemptError::Write)?;
+
+    let mut rx = client.fetch_chunk_stream(url, access_token);
+    let mut pos: u64 = 0;
+
+    loop {
+        match rx.recv().await {
+            Some(Ok(bytes)) => {
+                file.write_all(&bytes).await.map_err(UnitAttemptError::Write)?;
+                pos += bytes.len() as u64;
+                if pos > *counted {
+                    tx.send(DownloadEvent::Progress {
+                        bytes: pos - *counted,
+                    })
+                    .ok();
+                    *counted = pos;
+                }
+            }
+            Some(Err(err)) => return Err(UnitAttemptError::Download(err)),
+            None => break,
+        }
+    }
+    file.flush().await.ok();
+    Ok(())
+}
 
 pub struct Downloader {
     pub client: HttpClient,
@@ -216,18 +280,22 @@ impl Downloader {
                     {
                         Ok(url) => url,
                         Err(_err) => {
-                            println!("ERROR: {}: no secure link available", unit.path.clone());
+                            println!(
+                                "[SECURE_LINK_MISSING] {}: no secure link available",
+                                unit.path.clone()
+                            );
                             tx.send(DownloadEvent::SecureLinkError(unit.path.clone()))
                                 .ok();
                             return;
                         }
                     };
-                    let url = url.parse_url(&unit.compressed_md5);
+                    let primary_url = url.parse_url(&unit.compressed_md5);
+                    let redist_url = url.parse_url_redist(&unit.compressed_md5);
 
                     let access_token = match auth.get_auth().await {
                         Some(auth) => auth.access_token,
                         None => {
-                            println!("ERROR: {}: not authenticated", unit.path.clone());
+                            println!("[NOT_AUTHENTICATED] {}", unit.path.clone());
                             tx.send(DownloadEvent::DownloadError(unit.path.clone()))
                                 .ok();
                             return;
@@ -237,7 +305,7 @@ impl Downloader {
                     let file_path = match resolver.resolve_path(&unit.path).await {
                         Ok(file_path) => file_path,
                         Err(e) => {
-                            println!("ERROR: {}: {}", unit.path.clone(), e);
+                            println!("[PATH_RESOLVE_ERROR] {}: {}", unit.path.clone(), e);
                             tx.send(DownloadEvent::PathResolveError(unit.path.clone()))
                                 .ok();
                             return;
@@ -248,47 +316,107 @@ impl Downloader {
                     {
                         Ok(file) => file,
                         Err(e) => {
-                            println!("ERROR: {}: {}", unit.path.clone(), e);
+                            println!("[FILE_OPEN_ERROR] {}: {}", unit.path.clone(), e);
                             tx.send(DownloadEvent::WriteError(unit.path.clone())).ok();
                             return;
                         }
                     };
-                    if let Err(e) = file.seek(SeekFrom::Start(unit.offset)).await {
-                        println!("ERROR: {}: {}", unit.path.clone(), e);
-                        tx.send(DownloadEvent::WriteError(unit.path.clone())).ok();
-                        return;
-                    }
+                    println!(
+                        "[PRIMARY_ATTEMPT_START] {}: {}",
+                        unit.path.clone(),
+                        primary_url
+                    );
+                    let mut counted: u64 = 0;
+                    let primary_result = stream_unit_to_file(
+                        &client,
+                        &primary_url,
+                        access_token.clone(),
+                        &mut file,
+                        unit.offset,
+                        &mut counted,
+                        &tx,
+                    )
+                    .await;
 
-                    let mut rx = client.fetch_chunk_stream(&url, access_token);
-
-                    loop {
-                        match rx.recv().await {
-                            Some(Ok(bytes)) => {
-                                if let Err(e) = file.write_all(&bytes).await {
-                                    println!("ERROR: {}: {}", unit.path.clone(), e);
-                                    tx.send(DownloadEvent::WriteError(unit.path.clone())).ok();
-                                    return;
+                    let result = match primary_result {
+                        Ok(()) => {
+                            println!("[PRIMARY_ATTEMPT_OK] {}", unit.path.clone());
+                            Ok(())
+                        }
+                        Err(UnitAttemptError::Write(e)) => {
+                            println!(
+                                "[PRIMARY_ATTEMPT_WRITE_ERROR] {}: {}",
+                                unit.path.clone(),
+                                e
+                            );
+                            Err(UnitAttemptError::Write(e))
+                        }
+                        Err(UnitAttemptError::Download(err)) => {
+                            // The primary secure-link CDN failed for this chunk (e.g. a
+                            // redist/dependency chunk it doesn't serve) — retry once
+                            // against the redist store, which hosts the same content
+                            // under a different path.
+                            println!(
+                                "[PRIMARY_ATTEMPT_DOWNLOAD_ERROR] {}: {} (falling back to redist store)",
+                                unit.path.clone(),
+                                err
+                            );
+                            println!(
+                                "[REDIST_ATTEMPT_START] {}: {}",
+                                unit.path.clone(),
+                                redist_url
+                            );
+                            let redist_result = stream_unit_to_file(
+                                &client,
+                                &redist_url,
+                                access_token,
+                                &mut file,
+                                unit.offset,
+                                &mut counted,
+                                &tx,
+                            )
+                            .await;
+                            match &redist_result {
+                                Ok(()) => {
+                                    println!("[REDIST_ATTEMPT_OK] {}", unit.path.clone());
                                 }
-                                tx.send(DownloadEvent::Progress {
-                                    bytes: bytes.len() as u64,
-                                })
+                                Err(UnitAttemptError::Write(e)) => {
+                                    println!(
+                                        "[REDIST_ATTEMPT_WRITE_ERROR] {}: {}",
+                                        unit.path.clone(),
+                                        e
+                                    );
+                                }
+                                Err(UnitAttemptError::Download(e)) => {
+                                    println!(
+                                        "[REDIST_ATTEMPT_DOWNLOAD_ERROR] {}: {}",
+                                        unit.path.clone(),
+                                        e
+                                    );
+                                }
+                            }
+                            redist_result
+                        }
+                    };
+
+                    match result {
+                        Ok(()) => {
+                            println!("[CHUNK_DOWNLOADED] {}", unit.path.clone());
+                            tx.send(DownloadEvent::ChunkDownloaded {
+                                path: unit.path.clone(),
+                            })
+                            .ok();
+                        }
+                        Err(UnitAttemptError::Write(e)) => {
+                            println!("[FINAL_WRITE_ERROR] {}: {}", unit.path.clone(), e);
+                            tx.send(DownloadEvent::WriteError(unit.path.clone())).ok();
+                        }
+                        Err(UnitAttemptError::Download(err)) => {
+                            println!("[FINAL_DOWNLOAD_ERROR] {}: {}", unit.path.clone(), err);
+                            tx.send(DownloadEvent::DownloadError(unit.path.clone()))
                                 .ok();
-                            }
-                            Some(Err(err)) => {
-                                println!("ERROR: {}: {}", unit.path.clone(), err);
-                                tx.send(DownloadEvent::DownloadError(unit.path.clone()))
-                                    .ok();
-                                return;
-                            }
-                            None => break,
                         }
                     }
-                    file.flush().await.ok();
-
-                    tx.send(DownloadEvent::ChunkDownloaded {
-                        path: unit.path.clone(),
-                    })
-                    .ok();
                 }
             })
             .buffer_unordered(concurrency)
