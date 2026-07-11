@@ -3,6 +3,7 @@ use std::io;
 use reqwest::StatusCode;
 use thiserror::Error;
 
+use crate::auth::AuthorizedFetchError;
 use crate::client::ClientError;
 
 #[derive(Error, Debug)]
@@ -47,6 +48,15 @@ impl From<ClientError> for GamesError {
             ClientError::DecodeError(error) => GamesError::DecodeError(error),
             ClientError::DeflateError(error) => GamesError::DeflateError(error),
             ClientError::StreamError() => GamesError::StreamError(),
+        }
+    }
+}
+
+impl From<AuthorizedFetchError> for GamesError {
+    fn from(err: AuthorizedFetchError) -> Self {
+        match err {
+            AuthorizedFetchError::NotAuthenticated => GamesError::NotAuthenticated,
+            AuthorizedFetchError::Client(err) => GamesError::from(err),
         }
     }
 }

@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::depot::{depot_manager::DepotManager, error::DepotError};
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct BuildMetadata {
     pub dependencies: Option<Vec<String>>,
     pub depots: Vec<Depot>,
@@ -28,50 +28,29 @@ impl BuildMetadata {
         download_manager: &DepotManager,
         game_link: &str,
     ) -> Result<Self, DepotError> {
+        {
+            let lock = download_manager.inner.lock().await;
+            if let Some(build_metadata) = lock.build_metadata.get(game_link) {
+                return Ok(build_metadata.clone());
+            }
+        }
+
         let auth = {
             let lock = download_manager.inner.lock().await;
-            if let None = lock.auth.get_auth().await {
-                return Err(DepotError::NotAuthenticated);
-            }
-            lock.auth.get_auth().await.unwrap()
+            lock.auth.clone()
         };
 
-        let mut game_details: BuildMetadata = match download_manager
-            .client
-            .get_and_decode::<BuildMetadata>(&game_link, &auth.access_token)
-            .await
-            .map_err(DepotError::from)
-        {
-            Ok(game_details) => game_details,
-            Err(DepotError::Unauthorized) => {
-                // Token refresh logic
-                let auth = {
-                    let lock = download_manager.inner.lock().await;
-                    if let Err(_err) = lock.auth.refresh_auth().await {
-                        return Err(DepotError::Unauthorized);
-                    }
-                    lock.auth.get_auth().await.unwrap()
-                };
-                match download_manager
-                    .client
-                    .get_and_decode::<BuildMetadata>(&game_link, &auth.access_token)
-                    .await
-                    .map_err(DepotError::from)
-                {
-                    Ok(game_details) => game_details,
-                    Err(err) => {
-                        return Err(err);
-                    }
-                }
-            }
-            Err(err) => {
-                return Err(err);
-            }
-        };
+        let mut game_details: BuildMetadata = auth
+            .authorized_get_and_decode(&download_manager.client, game_link)
+            .await?;
         game_details.filter_languages("en-US");
         for depot in &mut game_details.depots {
             println!("{:?}", depot);
         }
+
+        let mut lock = download_manager.inner.lock().await;
+        lock.build_metadata
+            .insert(game_link.to_string(), game_details.clone());
         Ok(game_details)
     }
     pub fn filter_languages(&mut self, language: &str) {

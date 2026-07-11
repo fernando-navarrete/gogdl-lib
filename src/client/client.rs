@@ -19,19 +19,32 @@ impl HttpClient {
     pub fn new_with_client(client: Client) -> Self {
         Self { client }
     }
-    pub async fn get_json<T: DeserializeOwned>(&self, url: &str) -> Result<T, ClientError> {
+    /// Shared GET path for every non-streaming request below: parses
+    /// `url`, attaches a bearer token if one is given, sends the request,
+    /// and turns a non-2xx response into `ClientError::Http`. Callers
+    /// decode the successful response body however they need (plain text
+    /// vs. zlib-compressed bytes).
+    async fn send_get(
+        &self,
+        url: &str,
+        auth_token: Option<&str>,
+    ) -> Result<reqwest::Response, ClientError> {
         let url = reqwest::Url::parse(url)?;
-        let request = self.client.get(url);
+        let mut request = self.client.get(url);
+        if let Some(token) = auth_token {
+            request = request.bearer_auth(token);
+        }
         let response = request.send().await?;
 
         if !response.status().is_success() {
-            let response_status = response.status();
-            let response_text = response.text().await?;
-            return Err(ClientError::Http {
-                status: response_status,
-                body: response_text,
-            });
+            let status = response.status();
+            let body = response.text().await?;
+            return Err(ClientError::Http { status, body });
         }
+        Ok(response)
+    }
+    pub async fn get_json<T: DeserializeOwned>(&self, url: &str) -> Result<T, ClientError> {
+        let response = self.send_get(url, None).await?;
         let response_text = response.text().await?;
         let result: T = serde_json::from_str(&response_text)?;
         Ok(result)
@@ -128,21 +141,7 @@ impl HttpClient {
         url: &str,
         auth_token: &str,
     ) -> Result<T, ClientError> {
-        let url = reqwest::Url::parse(url)?;
-        let mut request = self.client.get(url);
-        request = request.bearer_auth(auth_token);
-
-        let response = request.send().await?;
-
-        if !response.status().is_success() {
-            let response_status = response.status();
-            let response_text = response.text().await?;
-            return Err(ClientError::Http {
-                status: response_status,
-                body: response_text,
-            });
-        }
-
+        let response = self.send_get(url, Some(auth_token)).await?;
         let response_bytes = response.bytes().await?;
         let mut z = ZlibDecoder::new(&response_bytes[..]);
         let mut s = String::new();
@@ -156,20 +155,7 @@ impl HttpClient {
         url: &str,
         auth_token: &str,
     ) -> Result<T, ClientError> {
-        let url = reqwest::Url::parse(url)?;
-        let mut request = self.client.get(url);
-        request = request.bearer_auth(auth_token);
-
-        let response = request.send().await?;
-
-        if !response.status().is_success() {
-            let response_status = response.status();
-            let response_text = response.text().await?;
-            return Err(ClientError::Http {
-                status: response_status,
-                body: response_text,
-            });
-        }
+        let response = self.send_get(url, Some(auth_token)).await?;
         let response_text = response.text().await?;
         let result: T = serde_json::from_str(&response_text)?;
         Ok(result)

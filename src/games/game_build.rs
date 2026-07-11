@@ -32,48 +32,16 @@ impl GameBuilds {
         }
         let auth = {
             let lock = games_manager.inner.lock().await;
-            if let None = lock.auth.get_auth().await {
-                return Err(GamesError::NotAuthenticated);
-            }
-            lock.auth.get_auth().await.unwrap()
+            lock.auth.clone()
         };
         let url = format!(
             "https://content-system.gog.com/products/{}/os/windows/builds?generation=2",
             game_id
         );
 
-        let game_details: GameBuilds = match games_manager
-            .client
-            .get_json_with_auth::<GameBuilds>(&url, &auth.access_token)
-            .await
-            .map_err(GamesError::from)
-        {
-            Ok(game_details) => game_details,
-            Err(GamesError::Unauthorized) => {
-                // Token refresh logic
-                let auth = {
-                    let lock = games_manager.inner.lock().await;
-                    if let Err(_err) = lock.auth.refresh_auth().await {
-                        return Err(GamesError::Unauthorized);
-                    }
-                    lock.auth.get_auth().await.unwrap()
-                };
-                match games_manager
-                    .client
-                    .get_json_with_auth::<GameBuilds>(&url, &auth.access_token)
-                    .await
-                    .map_err(GamesError::from)
-                {
-                    Ok(game_details) => game_details,
-                    Err(err) => {
-                        return Err(err);
-                    }
-                }
-            }
-            Err(err) => {
-                return Err(err);
-            }
-        };
+        let game_details: GameBuilds = auth
+            .authorized_get_json(&games_manager.client, &url)
+            .await?;
         let mut lock = games_manager.inner.lock().await;
         lock.game_builds.insert(game_id, game_details.clone());
         Ok(game_details)

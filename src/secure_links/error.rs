@@ -3,7 +3,7 @@ use std::io;
 use reqwest::StatusCode;
 use thiserror::Error;
 
-use crate::{client::ClientError, games::GamesError};
+use crate::{auth::AuthorizedFetchError, client::ClientError, games::GamesError};
 
 #[derive(Error, Debug)]
 pub enum SecureLinksError {
@@ -50,6 +50,15 @@ impl From<ClientError> for SecureLinksError {
             ClientError::DecodeError(error) => SecureLinksError::DecodeError(error),
             ClientError::DeflateError(error) => SecureLinksError::DeflateError(error),
             ClientError::StreamError() => SecureLinksError::StreamError(),
+        }
+    }
+}
+
+impl From<AuthorizedFetchError> for SecureLinksError {
+    fn from(err: AuthorizedFetchError) -> Self {
+        match err {
+            AuthorizedFetchError::NotAuthenticated => SecureLinksError::NotAuthenticated,
+            AuthorizedFetchError::Client(err) => SecureLinksError::from(err),
         }
     }
 }

@@ -20,6 +20,12 @@ pub struct DepotManager {
 pub struct DepotManagerInner {
     pub auth: AuthManager,
     pub product_details: HashMap<String, ProductDetails>,
+    /// Keyed by the build's manifest link. Safe to cache indefinitely:
+    /// each build's link is a distinct, immutable manifest.
+    pub build_metadata: HashMap<String, BuildMetadata>,
+    /// Keyed by depot manifest hash. Safe to cache indefinitely: depot
+    /// manifests are content-addressed and never change under one hash.
+    pub depot_info: HashMap<String, DepotInfo>,
 }
 
 impl DepotManager {
@@ -29,6 +35,8 @@ impl DepotManager {
             inner: Arc::new(Mutex::new(DepotManagerInner {
                 auth,
                 product_details: HashMap::new(),
+                build_metadata: HashMap::new(),
+                depot_info: HashMap::new(),
             })),
         }
     }

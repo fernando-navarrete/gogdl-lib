@@ -18,6 +18,21 @@ impl DownloadableFiles {
         build_name: &str,
         selected_products: &[&str],
     ) -> Result<Vec<DownloadableFiles>, DownloadError> {
+        let cache_key = (
+            game_id,
+            build_name.to_string(),
+            selected_products
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>(),
+        );
+        {
+            let lock = download_manager.inner.lock().await;
+            if let Some(downloadable_files) = lock.downloadable_files.get(&cache_key) {
+                return Ok(downloadable_files.clone());
+            }
+        }
+
         let game_builds = {
             let inner = download_manager.inner.lock().await;
             inner.games.get_game_builds(game_id).await?
@@ -70,6 +85,9 @@ impl DownloadableFiles {
             }
         }
 
+        let mut lock = download_manager.inner.lock().await;
+        lock.downloadable_files
+            .insert(cache_key, downloadable_files.clone());
         Ok(downloadable_files)
     }
 }

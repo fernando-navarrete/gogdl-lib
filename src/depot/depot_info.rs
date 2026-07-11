@@ -79,12 +79,16 @@ impl DepotInfo {
         download_manager: &DepotManager,
         depot_manifest: &str,
     ) -> Result<DepotInfo, DepotError> {
+        {
+            let lock = download_manager.inner.lock().await;
+            if let Some(depot_info) = lock.depot_info.get(depot_manifest) {
+                return Ok(depot_info.clone());
+            }
+        }
+
         let auth = {
             let lock = download_manager.inner.lock().await;
-            if let None = lock.auth.get_auth().await {
-                return Err(DepotError::NotAuthenticated);
-            }
-            lock.auth.get_auth().await.unwrap()
+            lock.auth.clone()
         };
         let url = format!(
             "https://cdn.gog.com/content-system/v2/meta/{}/{}/{}",
@@ -93,39 +97,13 @@ impl DepotInfo {
             &depot_manifest
         );
 
-        let game_details: DepotInfo = match download_manager
-            .client
-            .get_and_decode::<DepotInfo>(&url, &auth.access_token)
-            .await
-            .map_err(DepotError::from)
-        {
-            Ok(game_details) => game_details,
-            Err(DepotError::Unauthorized) => {
-                // Token refresh logic
-                let auth = {
-                    let lock = download_manager.inner.lock().await;
-                    if let Err(_err) = lock.auth.refresh_auth().await {
-                        return Err(DepotError::Unauthorized);
-                    }
-                    lock.auth.get_auth().await.unwrap()
-                };
-                match download_manager
-                    .client
-                    .get_and_decode::<DepotInfo>(&url, &auth.access_token)
-                    .await
-                    .map_err(DepotError::from)
-                {
-                    Ok(game_details) => game_details,
-                    Err(err) => {
-                        return Err(err);
-                    }
-                }
-            }
-            Err(err) => {
-                return Err(err);
-            }
-        };
+        let game_details: DepotInfo = auth
+            .authorized_get_and_decode(&download_manager.client, &url)
+            .await?;
 
+        let mut lock = download_manager.inner.lock().await;
+        lock.depot_info
+            .insert(depot_manifest.to_string(), game_details.clone());
         Ok(game_details)
     }
 }

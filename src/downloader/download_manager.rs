@@ -27,7 +27,7 @@ pub struct DownloadManagerInner {
     pub secure_links: SecureLinksManager,
     pub games: GamesManager,
     pub downloadable_products: HashMap<(i32, String), Vec<DownloadableProduct>>,
-    pub downloader: HashMap<i32, Downloader>,
+    pub downloadable_files: HashMap<(i32, String, Vec<String>), Vec<DownloadableFiles>>,
 }
 
 impl DownloadManager {
@@ -45,7 +45,7 @@ impl DownloadManager {
                 secure_links,
                 games,
                 downloadable_products: HashMap::new(),
-                downloader: HashMap::new(),
+                downloadable_files: HashMap::new(),
             })),
             client,
         }
@@ -62,7 +62,7 @@ impl DownloadManager {
             let links = inner.secure_links.clone();
             (auth, links)
         };
-        let downloader = Downloader::new(self.client.clone(), links, auth).await;
+        let downloader = Downloader::new(self.client.clone(), links, auth);
         downloader.verify(files, path, tx).await?;
         Ok(())
     }
@@ -78,7 +78,7 @@ impl DownloadManager {
             let links = inner.secure_links.clone();
             (auth, links)
         };
-        let downloader = Downloader::new(self.client.clone(), links, auth).await;
+        let downloader = Downloader::new(self.client.clone(), links, auth);
         downloader.repair_download(files, path, tx).await?;
         Ok(())
     }
@@ -94,7 +94,7 @@ impl DownloadManager {
             let links = inner.secure_links.clone();
             (auth, links)
         };
-        let downloader = Downloader::new(self.client.clone(), links, auth).await;
+        let downloader = Downloader::new(self.client.clone(), links, auth);
         downloader.download(files, path, tx).await?;
         Ok(())
     }
