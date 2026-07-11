@@ -27,7 +27,7 @@ pub struct DepotFile {
     pub md5: Option<String>,
     pub sha256: Option<String>,
     pub path: String,
-    pub chunks: Vec<Chunk>,
+    pub chunks: Option<Vec<Chunk>>,
     #[serde(alias = "type")]
     pub file_type: String,
 }
@@ -48,7 +48,7 @@ impl DepotFile {
             md5: Some(unit.md5.clone()),
             sha256: None,
             path: unit.path.clone(),
-            chunks: Vec::new(),
+            chunks: None,
             file_type: "".to_string(),
         }
     }
@@ -56,21 +56,27 @@ impl DepotFile {
     pub fn get_download_units(&self) -> Vec<DownloadUnit> {
         let mut offset = 0;
         let mut units: Vec<DownloadUnit> = Vec::new();
-        for chunk in self.chunks.iter() {
-            units.push(DownloadUnit {
-                md5: chunk.md5.clone(),
-                size: chunk.size,
-                compressed_md5: chunk.compressed_md5.clone(),
-                compressed_size: chunk.compressed_size,
-                path: self.path.clone(),
-                offset,
-            });
-            offset += chunk.size;
+        if let Some(chunks) = &self.chunks {
+            for chunk in chunks.iter() {
+                units.push(DownloadUnit {
+                    md5: chunk.md5.clone(),
+                    size: chunk.size,
+                    compressed_md5: chunk.compressed_md5.clone(),
+                    compressed_size: chunk.compressed_size,
+                    path: self.path.clone(),
+                    offset,
+                });
+                offset += chunk.size;
+            }
         }
         units
     }
     pub fn get_file_size(&self) -> u64 {
-        self.chunks.iter().map(|c| c.size).sum()
+        if let Some(chunks) = &self.chunks {
+            chunks.iter().map(|c| c.size).sum()
+        } else {
+            0
+        }
     }
 }
 

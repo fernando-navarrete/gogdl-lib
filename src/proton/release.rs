@@ -55,25 +55,22 @@ fn verify_sha256(data: &[u8], expected_digest: &str) -> Result<(), ProtonError> 
 }
 
 impl Release {
-    /// The Proton-GE tarball is the one asset named `*.gz`; releases also
-    /// carry other assets (e.g. a detached checksum file) that aren't it.
-    pub fn get_download_link(&self) -> Option<&str> {
+    /// The Proton-GE tarball we want is the `*.tar.gz` asset for x86_64 —
+    /// releases also carry an `-aarch64.tar.gz` build (for ARM hosts) and a
+    /// detached checksum file, neither of which we want here.
+    fn tarball_asset(&self) -> Option<&Asset> {
         self.assets
             .iter()
-            .find(|asset| asset.name.ends_with(".gz"))
-            .map(|asset| asset.browser_download_url.as_str())
+            .find(|asset| asset.name.ends_with(".tar.gz") && !asset.name.contains("aarch64"))
+    }
+    pub fn get_download_link(&self) -> Option<&str> {
+        self.tarball_asset().map(|asset| asset.browser_download_url.as_str())
     }
     pub fn get_download_size(&self) -> Option<u64> {
-        self.assets
-            .iter()
-            .find(|asset| asset.name.ends_with(".gz"))
-            .map(|asset| asset.size)
+        self.tarball_asset().map(|asset| asset.size)
     }
     pub fn get_checksum(&self) -> Option<&str> {
-        self.assets
-            .iter()
-            .find(|asset| asset.name.ends_with(".gz"))
-            .and_then(|asset| asset.digest.as_deref())
+        self.tarball_asset().and_then(|asset| asset.digest.as_deref())
     }
     /// Lists Proton-GE releases from GitHub, one page at a time. GitHub
     /// rejects unauthenticated requests without a `User-Agent`, so both that
@@ -162,6 +159,18 @@ mod tests {
     #[test]
     fn get_download_link_picks_the_gz_asset() {
         let release = release_with_assets(vec![
+            ("GE-Proton1-1.sha512sum", "https://example.com/sha512sum", None),
+            ("GE-Proton1-1.tar.gz", "https://example.com/tarball", Some("sha256:abc")),
+        ]);
+        assert_eq!(release.get_download_link(), Some("https://example.com/tarball"));
+        assert_eq!(release.get_checksum(), Some("sha256:abc"));
+    }
+
+    #[test]
+    fn get_download_link_skips_the_aarch64_tarball() {
+        let release = release_with_assets(vec![
+            ("GE-Proton1-1-aarch64.sha512sum", "https://example.com/aarch64-sha512sum", None),
+            ("GE-Proton1-1-aarch64.tar.gz", "https://example.com/aarch64-tarball", Some("sha256:aarch64")),
             ("GE-Proton1-1.sha512sum", "https://example.com/sha512sum", None),
             ("GE-Proton1-1.tar.gz", "https://example.com/tarball", Some("sha256:abc")),
         ]);
