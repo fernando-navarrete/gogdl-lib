@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use tokio::sync::mpsc;
 
 use crate::DownloadJobEvent;
@@ -11,6 +13,7 @@ use crate::games::{
     GameBuilds, GameDetails, GameLinks, GameScreenshots, GameSummary, GamesManager, OwnedGames,
 };
 use crate::gogdl::error::GogDlError;
+use crate::saves::{RemoteConfig, SaveFile, SaveProgress, SavesManager};
 use crate::secure_links::{SecureLinks, SecureLinksManager};
 
 pub struct GogDl {
@@ -19,6 +22,7 @@ pub struct GogDl {
     depot: DepotManager,
     secure_links: SecureLinksManager,
     downloader: DownloadManager,
+    saves: SavesManager,
 }
 
 impl GogDl {
@@ -39,6 +43,12 @@ impl GogDl {
             games_manager.clone(),
             http_client.clone(),
         );
+        let saves_manager = SavesManager::new(
+            http_client.clone(),
+            auth_manager.clone(),
+            games_manager.clone(),
+            depot_manager.clone(),
+        );
 
         Self {
             auth: auth_manager,
@@ -46,6 +56,7 @@ impl GogDl {
             depot: depot_manager,
             secure_links: secure_links_manager,
             downloader: download_manager,
+            saves: saves_manager,
         }
     }
     pub async fn restore_auth(&self, json_str: &str) -> Result<(), GogDlError> {
@@ -147,5 +158,61 @@ impl GogDl {
             .get_downloadable_files(game_id, build_name, selected_products)
             .await?;
         Ok(downloadable_files)
+    }
+    pub async fn get_remote_config(&self, client_id: &str) -> Result<RemoteConfig, GogDlError> {
+        let remote_config = self.saves.get_remote_config(client_id).await?;
+        Ok(remote_config)
+    }
+    pub async fn get_save_auth_ids(&self, game_id: i32) -> Result<(String, String), GogDlError> {
+        let auth_ids = self.saves.get_auth_ids(game_id).await?;
+        Ok(auth_ids)
+    }
+    pub async fn get_save_file_list(
+        &self,
+        client_id: &str,
+        client_secret: &str,
+    ) -> Result<Vec<SaveFile>, GogDlError> {
+        let save_files = self
+            .saves
+            .get_save_file_list(client_id, client_secret)
+            .await?;
+        Ok(save_files)
+    }
+    pub async fn download_save_file(
+        &self,
+        save_file: &SaveFile,
+        client_id: &str,
+        client_secret: &str,
+        path: &Path,
+        tx: mpsc::UnboundedSender<SaveProgress>,
+    ) -> Result<(), GogDlError> {
+        self.saves
+            .download_save_file(save_file, client_id, client_secret, path, tx)
+            .await?;
+        Ok(())
+    }
+    pub async fn upload_save_file(
+        &self,
+        client_id: &str,
+        client_secret: &str,
+        path: &Path,
+        url_path: &str,
+        tx: mpsc::UnboundedSender<SaveProgress>,
+    ) -> Result<(), GogDlError> {
+        self.saves
+            .upload_save_file(client_id, client_secret, path, url_path, tx)
+            .await?;
+        Ok(())
+    }
+    pub async fn delete_save_file(
+        &self,
+        save_file: &SaveFile,
+        client_id: &str,
+        client_secret: &str,
+    ) -> Result<(), GogDlError> {
+        self.saves
+            .delete_save_file(save_file, client_id, client_secret)
+            .await?;
+        Ok(())
     }
 }

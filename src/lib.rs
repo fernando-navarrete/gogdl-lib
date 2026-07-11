@@ -5,6 +5,7 @@ mod depot;
 mod downloader;
 mod games;
 mod gogdl;
+mod saves;
 mod secure_links;
 
 pub use depot::ProductDetails;
@@ -30,15 +31,20 @@ pub use games::OwnedGames;
 pub use gogdl::GogDl;
 pub use gogdl::GogDlError;
 pub use reqwest::Client;
+pub use saves::RemoteConfig;
+pub use saves::SaveFile;
+pub use saves::SaveProgress;
 pub use secure_links::SecureLinks;
 
 /// The event types emitted on the channels passed into `GogDl`'s
-/// `download_files`, `repair_files`, and `verify_files` methods, grouped
-/// under one path. The same types remain available individually at the
-/// crate root (e.g. `gogdl_lib2::DownloadEvent`) for existing callers.
+/// `download_files`, `repair_files`, `verify_files`, `download_save_file`,
+/// and `upload_save_file` methods, grouped under one path. The same types
+/// remain available individually at the crate root (e.g.
+/// `gogdl_lib2::DownloadEvent`) for existing callers.
 pub mod events {
     pub use crate::downloader::{
         DownloadDetail, DownloadEvent, DownloadJobEvent, DownloadStage, FileAllocationEvent,
         FileVerifyEvent, RepairDetail, RepairEvent, RepairStage, VerifyChunksEvent, VerifyEvent,
     };
+    pub use crate::saves::SaveProgress;
 }

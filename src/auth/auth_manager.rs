@@ -6,7 +6,7 @@ use serde::de::DeserializeOwned;
 use tokio::sync::Mutex;
 
 use crate::{
-    auth::{error::AuthError, model::Auth},
+    auth::{error::AuthError, model::Auth, saves_auth::SavesAuth},
     client::{ClientError, HttpClient},
     constants::{AUTH_URL, LOGIN_URL, REFRESH_URL},
 };
@@ -89,6 +89,34 @@ impl AuthManager {
     }
     pub async fn set_auth(&self, auth: Auth) {
         self.inner.lock().await.tokens = Some(auth);
+    }
+    /// Exchanges the stored refresh token for a save-scoped `SavesAuth`,
+    /// using the given game's own cloud-save `client_id`/`client_secret`
+    /// (from that game's build metadata) instead of the Galaxy client
+    /// credentials used everywhere else. `SavesAuth` authenticates against
+    /// `cloudstorage.gog.com`, not the rest of the GOG API, so it's minted
+    /// separately and not cached here — callers mint a fresh one per job.
+    pub async fn get_cloud_saves_tokens(
+        &self,
+        client_id: &str,
+        client_secret: &str,
+    ) -> Result<SavesAuth, AuthError> {
+        let (client, refresh_token) = {
+            let lock = self.inner.lock().await;
+            let refresh_token = lock
+                .tokens
+                .as_ref()
+                .ok_or(AuthError::Unauthorized)?
+                .refresh_token
+                .clone();
+            (lock.client.clone(), refresh_token)
+        };
+        let url = format!(
+            "https://auth.gog.com/token?client_id={client_id}&client_secret={client_secret}&grant_type=refresh_token&refresh_token={refresh_token}"
+        );
+        let mut saves_auth = client.get_json::<SavesAuth>(&url).await?;
+        saves_auth.client_id = client_id.to_owned();
+        Ok(saves_auth)
     }
     /// Runs `try_once` with the current access token; if it comes back
     /// `Unauthorized` (401), refreshes the token once and retries `try_once`
