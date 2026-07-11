@@ -5,6 +5,7 @@ mod depot;
 mod downloader;
 mod games;
 mod gogdl;
+mod proton;
 mod saves;
 mod secure_links;
 
@@ -30,6 +31,9 @@ pub use games::GameSummary;
 pub use games::OwnedGames;
 pub use gogdl::GogDl;
 pub use gogdl::GogDlError;
+pub use proton::Asset;
+pub use proton::ProtonProgress;
+pub use proton::Release;
 pub use reqwest::Client;
 pub use saves::RemoteConfig;
 pub use saves::SaveFile;
@@ -38,13 +42,14 @@ pub use secure_links::SecureLinks;
 
 /// The event types emitted on the channels passed into `GogDl`'s
 /// `download_files`, `repair_files`, `verify_files`, `download_save_file`,
-/// and `upload_save_file` methods, grouped under one path. The same types
-/// remain available individually at the crate root (e.g.
-/// `gogdl_lib2::DownloadEvent`) for existing callers.
+/// `upload_save_file`, and `download_proton_release` methods, grouped under
+/// one path. The same types remain available individually at the crate root
+/// (e.g. `gogdl_lib2::DownloadEvent`) for existing callers.
 pub mod events {
     pub use crate::downloader::{
         DownloadDetail, DownloadEvent, DownloadJobEvent, DownloadStage, FileAllocationEvent,
         FileVerifyEvent, RepairDetail, RepairEvent, RepairStage, VerifyChunksEvent, VerifyEvent,
     };
+    pub use crate::proton::ProtonProgress;
     pub use crate::saves::SaveProgress;
 }

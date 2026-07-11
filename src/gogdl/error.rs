@@ -2,7 +2,7 @@ use thiserror::Error;
 
 use crate::{
     auth::AuthError, depot::DepotError, downloader::DownloadError, games::GamesError,
-    saves::SavesError, secure_links::SecureLinksError,
+    proton::ProtonError, saves::SavesError, secure_links::SecureLinksError,
 };
 
 #[derive(Error, Debug)]
@@ -24,4 +24,7 @@ pub enum GogDlError {
 
     #[error("Saves error: {0}")]
     SavesError(#[from] SavesError),
+
+    #[error("Proton error: {0}")]
+    ProtonError(#[from] ProtonError),
 }

@@ -13,6 +13,7 @@ use crate::games::{
     GameBuilds, GameDetails, GameLinks, GameScreenshots, GameSummary, GamesManager, OwnedGames,
 };
 use crate::gogdl::error::GogDlError;
+use crate::proton::{ProtonManager, ProtonProgress, Release};
 use crate::saves::{RemoteConfig, SaveFile, SaveProgress, SavesManager};
 use crate::secure_links::{SecureLinks, SecureLinksManager};
 
@@ -23,6 +24,7 @@ pub struct GogDl {
     secure_links: SecureLinksManager,
     downloader: DownloadManager,
     saves: SavesManager,
+    proton: ProtonManager,
 }
 
 impl GogDl {
@@ -49,6 +51,7 @@ impl GogDl {
             games_manager.clone(),
             depot_manager.clone(),
         );
+        let proton_manager = ProtonManager::new(http_client.clone());
 
         Self {
             auth: auth_manager,
@@ -57,6 +60,7 @@ impl GogDl {
             secure_links: secure_links_manager,
             downloader: download_manager,
             saves: saves_manager,
+            proton: proton_manager,
         }
     }
     pub async fn restore_auth(&self, json_str: &str) -> Result<(), GogDlError> {
@@ -213,6 +217,19 @@ impl GogDl {
         self.saves
             .delete_save_file(save_file, client_id, client_secret)
             .await?;
+        Ok(())
+    }
+    pub async fn get_proton_releases(&self, page: i32) -> Result<Vec<Release>, GogDlError> {
+        let releases = self.proton.get_releases(page).await?;
+        Ok(releases)
+    }
+    pub async fn download_proton_release(
+        &self,
+        release: &Release,
+        path: &Path,
+        tx: mpsc::UnboundedSender<ProtonProgress>,
+    ) -> Result<(), GogDlError> {
+        self.proton.download_release(release, path, tx).await?;
         Ok(())
     }
 }

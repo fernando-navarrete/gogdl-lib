@@ -74,6 +74,75 @@ impl HttpClient {
         let result: T = serde_json::from_str(&response_text)?;
         Ok(result)
     }
+    /// Like `get_json`, but attaches caller-supplied headers instead of a
+    /// bearer token. GitHub's API rejects unauthenticated requests that don't
+    /// identify a `User-Agent`, which isn't a concern any other caller of
+    /// this client has had to handle.
+    pub async fn get_json_with_headers<T: DeserializeOwned>(
+        &self,
+        url: &str,
+        headers: &[(&str, &str)],
+    ) -> Result<T, ClientError> {
+        let url = reqwest::Url::parse(url)?;
+        let mut request = self.client.get(url);
+        for (name, value) in headers {
+            request = request.header(*name, *value);
+        }
+        let response = request.send().await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await?;
+            return Err(ClientError::Http { status, body });
+        }
+        let response_text = response.text().await?;
+        let result: T = serde_json::from_str(&response_text)?;
+        Ok(result)
+    }
+    /// Downloads a plain (uncompressed-at-the-HTTP-layer) file into memory,
+    /// reporting cumulative progress as `on_progress(downloaded, total)`
+    /// after each network-level chunk. `total` is the `Content-Length`
+    /// header, or 0 if absent. Unlike `download_save`, this doesn't assume
+    /// gzip content or any GOG-specific headers, so it suits any plain file
+    /// download (e.g. a GitHub release asset).
+    pub async fn download_bytes(
+        &self,
+        url: &str,
+        headers: &[(&str, &str)],
+        on_progress: impl Fn(u64, u64),
+    ) -> Result<Vec<u8>, ClientError> {
+        let parsed_url = reqwest::Url::parse(url)?;
+        let mut request = self.client.get(parsed_url);
+        for (name, value) in headers {
+            request = request.header(*name, *value);
+        }
+        let response = request.send().await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await?;
+            return Err(ClientError::Http { status, body });
+        }
+
+        let total = response
+            .headers()
+            .get(CONTENT_LENGTH)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(0);
+
+        let mut stream = response.bytes_stream();
+        let mut buffer = Vec::new();
+        let mut downloaded: u64 = 0;
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk?;
+            downloaded += chunk.len() as u64;
+            on_progress(downloaded, total);
+            buffer.extend_from_slice(&chunk);
+        }
+
+        Ok(buffer)
+    }
     /// Streams and decodes a chunk incrementally: as each network-level piece
     /// of the (zlib-compressed) response body arrives, it is fed through a
     /// streaming decoder and the decoded output produced so far is sent
