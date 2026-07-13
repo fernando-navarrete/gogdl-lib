@@ -33,6 +33,9 @@ pub enum ProtonError {
 
     #[error("Hash mismatch: expected {expected}, got {actual}")]
     HashMismatch { expected: String, actual: String },
+
+    #[error("Request timed out")]
+    Timeout,
 }
 
 impl From<ClientError> for ProtonError {
@@ -47,6 +50,7 @@ impl From<ClientError> for ProtonError {
             ClientError::DecodeError(error) => ProtonError::DecodeError(error),
             ClientError::DeflateError(error) => ProtonError::Io(error),
             ClientError::StreamError() => ProtonError::StreamError(),
+            ClientError::Timeout => ProtonError::Timeout,
         }
     }
 }

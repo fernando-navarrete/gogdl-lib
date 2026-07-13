@@ -14,6 +14,8 @@ pub struct CdnUrlParams {
     pub source: Option<String>,
     pub gog_token: Option<String>,
     pub l: Option<String>,
+    pub time: Option<String>,
+    pub prefix: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -51,6 +53,17 @@ impl SecureLinks {
     pub fn get_highest_priority_url(&self) -> Option<&UrlFormat> {
         self.urls.iter().max_by_key(|url| url.priority)
     }
+
+    /// All CDN endpoints GOG offered for this product, highest-priority
+    /// first. Concurrent chunk downloads round-robin across this list (see
+    /// `Downloader::download_chunk`) instead of every chunk hitting the same
+    /// single endpoint, spreading load across CDN hosts so one host's
+    /// per-connection throttling doesn't cap the whole job's throughput.
+    pub fn get_prioritized_urls(&self) -> Vec<&UrlFormat> {
+        let mut urls: Vec<&UrlFormat> = self.urls.iter().collect();
+        urls.sort_by_key(|url| std::cmp::Reverse(url.priority));
+        urls
+    }
 }
 
 impl UrlFormat {
@@ -86,6 +99,12 @@ impl UrlFormat {
         }
         if let Some(l) = &self.parameters.l {
             url = url.replace("{l}", l);
+        }
+        if let Some(time) = &self.parameters.time {
+            url = url.replace("{time}", time);
+        }
+        if let Some(prefix) = &self.parameters.prefix {
+            url = url.replace("{prefix}", prefix);
         }
         let galaxy_path = format!("{}/{}/{}", &chunk_hash[0..2], &chunk_hash[2..4], chunk_hash);
 

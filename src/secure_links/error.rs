@@ -36,6 +36,9 @@ pub enum SecureLinksError {
 
     #[error("Stream error")]
     StreamError(),
+
+    #[error("Request timed out")]
+    Timeout,
 }
 
 impl From<ClientError> for SecureLinksError {
@@ -50,6 +53,7 @@ impl From<ClientError> for SecureLinksError {
             ClientError::DecodeError(error) => SecureLinksError::DecodeError(error),
             ClientError::DeflateError(error) => SecureLinksError::DeflateError(error),
             ClientError::StreamError() => SecureLinksError::StreamError(),
+            ClientError::Timeout => SecureLinksError::Timeout,
         }
     }
 }

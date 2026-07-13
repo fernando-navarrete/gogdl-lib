@@ -20,3 +20,10 @@ hex = "0.4.3"
 filetime = "0.2"
 uuid = { version = "1", features = ["v4"] }
 tar = "0.4.44"
+
+[dev-dependencies]
+# Adds virtual-time control (`tokio::time::pause`/`advance`) on top of the
+# main `tokio` dependency's "full" features, so the adaptive-controller
+# tests can drive its internal timers deterministically instead of racing
+# real wall-clock sleeps.
+tokio = { version = "1.52.3", features = ["test-util"] }

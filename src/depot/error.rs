@@ -31,6 +31,9 @@ pub enum DepotError {
 
     #[error("Stream error")]
     StreamError(),
+
+    #[error("Request timed out")]
+    Timeout,
 }
 
 impl From<ClientError> for DepotError {
@@ -45,6 +48,7 @@ impl From<ClientError> for DepotError {
             ClientError::DecodeError(error) => DepotError::DecodeError(error),
             ClientError::DeflateError(error) => DepotError::DeflateError(error),
             ClientError::StreamError() => DepotError::StreamError(),
+            ClientError::Timeout => DepotError::Timeout,
         }
     }
 }

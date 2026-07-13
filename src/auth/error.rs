@@ -27,6 +27,9 @@ pub enum AuthError {
 
     #[error("Stream error")]
     StreamError(),
+
+    #[error("Request timed out")]
+    Timeout,
 }
 
 impl From<ClientError> for AuthError {
@@ -41,6 +44,7 @@ impl From<ClientError> for AuthError {
             ClientError::DecodeError(error) => AuthError::DecodeError(error),
             ClientError::DeflateError(error) => AuthError::DeflateError(error),
             ClientError::StreamError() => AuthError::StreamError(),
+            ClientError::Timeout => AuthError::Timeout,
         }
     }
 }

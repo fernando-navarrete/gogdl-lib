@@ -4,7 +4,7 @@
 //! `downloader.rs`, which build one `PathResolver` per job and share it
 //! across every stage call here.
 
-use std::{sync::Arc, thread};
+use std::{sync::Arc, thread, time::Duration};
 
 use futures::{StreamExt, stream};
 use tokio::{fs, sync::mpsc};
@@ -13,6 +13,8 @@ use crate::{
     depot::{DepotFile, DownloadUnit},
     downloader::{
         DownloadError,
+        adaptive::{AdaptiveLimiter, ThroughputMeter},
+        config::DownloadConfig,
         downloader::Downloader,
         events::{DownloadEvent, FileAllocationEvent, FileVerifyEvent, VerifyChunksEvent},
         stream::{UnitAttemptError, stream_unit_to_file},
@@ -20,52 +22,97 @@ use crate::{
     },
 };
 
-/// The default fan-out for per-file/per-chunk stage work: the number of
-/// logical CPUs, falling back to 4 if that can't be determined.
+/// The default fan-out for the CPU-bound verification/allocation stages: the
+/// number of logical CPUs, falling back to 4 if that can't be determined.
+/// The network-bound chunk-download stage does **not** use this — see
+/// `downloader::adaptive` for why CPU count is the wrong proxy for network
+/// parallelism.
 pub(crate) fn default_concurrency() -> usize {
     thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(4)
 }
 
+/// Returns a pseudo-random jitter in `[0, max_ms)`, used to spread out retry
+/// attempts across concurrently-retrying chunks so they don't all hammer the
+/// CDN again at exactly the same instant (thundering herd). Not
+/// cryptographic — just needs to vary run to run, so the current time's
+/// sub-second component is enough and avoids pulling in a `rand` dependency.
+fn jitter_ms(max_ms: u64) -> u64 {
+    if max_ms == 0 {
+        return 0;
+    }
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
+    nanos as u64 % max_ms
+}
+
+/// Computes the delay before retry attempt `attempt` (1-based: the delay
+/// before the 2nd, 3rd, ... try). Exponential backoff off `config.base_backoff`,
+/// capped at 30s, plus up to 50% jitter.
+fn backoff_delay(config: &DownloadConfig, attempt: usize) -> Duration {
+    let exponent = (attempt - 1).min(16) as u32;
+    let base_ms = (config.base_backoff.as_millis() as u64).saturating_mul(1u64 << exponent);
+    let capped_ms = base_ms.min(30_000);
+    let jitter = jitter_ms(capped_ms / 2 + 1);
+    Duration::from_millis(capped_ms + jitter)
+}
+
 impl Downloader {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn download_chunk(
         &self,
         units: Vec<DownloadUnit>,
         resolver: Arc<PathResolver>,
         product_id: &str,
-        number_of_products: usize,
+        limiter: Arc<AdaptiveLimiter>,
+        meter: Arc<ThroughputMeter>,
+        config: Arc<DownloadConfig>,
         tx: mpsc::UnboundedSender<DownloadEvent>,
     ) -> Result<(), DownloadError> {
-        let concurrency = (default_concurrency() / number_of_products.max(1)).max(1);
-
         let secure_links = self.secure_links.get_secure_links(product_id).await?;
+        // Every known CDN endpoint for this product, highest-priority first.
+        // Cloned once up front (cheap: a handful of small structs) so units
+        // below round-robin across them without re-fetching secure links.
+        let endpoints = secure_links
+            .get_prioritized_urls()
+            .into_iter()
+            .cloned()
+            .collect::<Vec<_>>();
 
-        stream::iter(units)
-            .map(|unit| {
+        // This only bounds how many units are *polled* at once; the actual,
+        // adaptive concurrency limit is `limiter`, acquired per-unit below.
+        // It needs to be at least `config.max_concurrency` so the limiter is
+        // never the thing left idle waiting for more units to poll.
+        let poll_bound = config.max_concurrency.max(1);
+
+        stream::iter(units.into_iter().enumerate())
+            .map(|(index, unit)| {
                 let resolver = resolver.clone();
-                let secure_links = secure_links.clone();
+                let endpoints = endpoints.clone();
                 let auth = self.auth.clone();
                 let client = self.client.clone();
                 let tx = tx.clone();
+                let limiter = limiter.clone();
+                let meter = meter.clone();
+                let config = config.clone();
                 async move {
-                    let url = match secure_links
-                        .get_highest_priority_url()
-                        .ok_or(DownloadError::BuildNotFound)
-                    {
-                        Ok(url) => url,
-                        Err(_err) => {
-                            println!(
-                                "[SECURE_LINK_MISSING] {}: no secure link available",
-                                unit.path.clone()
-                            );
-                            tx.send(DownloadEvent::SecureLinkError(unit.path.clone()))
-                                .ok();
-                            return;
-                        }
-                    };
-                    let primary_url = url.parse_url(&unit.compressed_md5);
-                    let redist_url = url.parse_url_redist(&unit.compressed_md5);
+                    // Acquired before any I/O so a chunk waiting on a full
+                    // limiter doesn't hold a file handle or auth token while
+                    // parked.
+                    let _permit = limiter.acquire().await;
+
+                    if endpoints.is_empty() {
+                        println!(
+                            "[SECURE_LINK_MISSING] {}: no secure link available",
+                            unit.path.clone()
+                        );
+                        tx.send(DownloadEvent::SecureLinkError(unit.path.clone()))
+                            .ok();
+                        return;
+                    }
 
                     let access_token = match auth.get_auth().await {
                         Some(auth) => auth.access_token,
@@ -96,105 +143,146 @@ impl Downloader {
                             return;
                         }
                     };
-                    println!(
-                        "[PRIMARY_ATTEMPT_START] {}: {}",
-                        unit.path.clone(),
-                        primary_url
-                    );
+
                     let mut counted: u64 = 0;
-                    let primary_result = stream_unit_to_file(
-                        &client,
-                        &primary_url,
-                        access_token.clone(),
-                        &mut file,
-                        unit.offset,
-                        &mut counted,
-                        &tx,
-                    )
-                    .await;
+                    let mut download_err: Option<Box<dyn std::fmt::Display + Send>> = None;
+                    let max_attempts = config.max_retries.max(1);
 
-                    let result = match primary_result {
-                        Ok(()) => {
-                            println!("[PRIMARY_ATTEMPT_OK] {}", unit.path.clone());
-                            Ok(())
+                    'attempts: for attempt in 1..=max_attempts {
+                        if attempt > 1 {
+                            tokio::time::sleep(backoff_delay(&config, attempt - 1)).await;
                         }
-                        Err(UnitAttemptError::Write(e)) => {
-                            println!(
-                                "[PRIMARY_ATTEMPT_WRITE_ERROR] {}: {}",
-                                unit.path.clone(),
-                                e
-                            );
-                            Err(UnitAttemptError::Write(e))
-                        }
-                        Err(UnitAttemptError::Download(err)) => {
-                            // The primary secure-link CDN failed for this chunk (e.g. a
-                            // redist/dependency chunk it doesn't serve) — retry once
-                            // against the redist store, which hosts the same content
-                            // under a different path.
-                            println!(
-                                "[PRIMARY_ATTEMPT_DOWNLOAD_ERROR] {}: {} (falling back to redist store)",
-                                unit.path.clone(),
-                                err
-                            );
-                            println!(
-                                "[REDIST_ATTEMPT_START] {}: {}",
-                                unit.path.clone(),
-                                redist_url
-                            );
-                            let redist_result = stream_unit_to_file(
-                                &client,
-                                &redist_url,
-                                access_token,
-                                &mut file,
-                                unit.offset,
-                                &mut counted,
-                                &tx,
-                            )
-                            .await;
-                            match &redist_result {
-                                Ok(()) => {
-                                    println!("[REDIST_ATTEMPT_OK] {}", unit.path.clone());
-                                }
-                                Err(UnitAttemptError::Write(e)) => {
-                                    println!(
-                                        "[REDIST_ATTEMPT_WRITE_ERROR] {}: {}",
-                                        unit.path.clone(),
-                                        e
-                                    );
-                                }
-                                Err(UnitAttemptError::Download(e)) => {
-                                    println!(
-                                        "[REDIST_ATTEMPT_DOWNLOAD_ERROR] {}: {}",
-                                        unit.path.clone(),
-                                        e
-                                    );
-                                }
+
+                        // Round-robin across known CDN endpoints (by unit
+                        // index and attempt number) so concurrent chunks, and
+                        // successive retries of the same chunk, spread across
+                        // hosts instead of all hammering one.
+                        let endpoint = &endpoints[(index + attempt - 1) % endpoints.len()];
+                        let primary_url = endpoint.parse_url(&unit.compressed_md5);
+                        let redist_url = endpoint.parse_url_redist(&unit.compressed_md5);
+
+                        println!(
+                            "[PRIMARY_ATTEMPT_START] {} (try {}/{}): {}",
+                            unit.path, attempt, max_attempts, primary_url
+                        );
+                        let primary_result = stream_unit_to_file(
+                            &client,
+                            &primary_url,
+                            access_token.clone(),
+                            &mut file,
+                            unit.offset,
+                            &mut counted,
+                            &tx,
+                            &meter,
+                            config.response_timeout,
+                            config.idle_timeout,
+                        )
+                        .await;
+
+                        let result = match primary_result {
+                            Ok(()) => {
+                                println!("[PRIMARY_ATTEMPT_OK] {}", unit.path.clone());
+                                Ok(())
                             }
-                            redist_result
-                        }
-                    };
+                            Err(UnitAttemptError::Write(e)) => Err(UnitAttemptError::Write(e)),
+                            Err(UnitAttemptError::Download(err)) => {
+                                // The primary secure-link CDN failed for this chunk
+                                // (e.g. a redist/dependency chunk it doesn't serve,
+                                // or a transient network error) — try the redist
+                                // store, which hosts the same content under a
+                                // different path, before deciding whether the whole
+                                // attempt failed.
+                                println!(
+                                    "[PRIMARY_ATTEMPT_DOWNLOAD_ERROR] {}: {} (falling back to redist store)",
+                                    unit.path.clone(),
+                                    err
+                                );
+                                println!(
+                                    "[REDIST_ATTEMPT_START] {}: {}",
+                                    unit.path.clone(),
+                                    redist_url
+                                );
+                                let redist_result = stream_unit_to_file(
+                                    &client,
+                                    &redist_url,
+                                    access_token.clone(),
+                                    &mut file,
+                                    unit.offset,
+                                    &mut counted,
+                                    &tx,
+                                    &meter,
+                                    config.response_timeout,
+                                    config.idle_timeout,
+                                )
+                                .await;
+                                match &redist_result {
+                                    Ok(()) => {
+                                        println!("[REDIST_ATTEMPT_OK] {}", unit.path.clone());
+                                    }
+                                    Err(UnitAttemptError::Write(e)) => {
+                                        println!(
+                                            "[REDIST_ATTEMPT_WRITE_ERROR] {}: {}",
+                                            unit.path.clone(),
+                                            e
+                                        );
+                                    }
+                                    Err(UnitAttemptError::Download(e)) => {
+                                        println!(
+                                            "[REDIST_ATTEMPT_DOWNLOAD_ERROR] {}: {}",
+                                            unit.path.clone(),
+                                            e
+                                        );
+                                    }
+                                }
+                                redist_result
+                            }
+                        };
 
-                    match result {
-                        Ok(()) => {
-                            println!("[CHUNK_DOWNLOADED] {}", unit.path.clone());
-                            tx.send(DownloadEvent::ChunkDownloaded {
-                                path: unit.path.clone(),
-                            })
-                            .ok();
-                        }
-                        Err(UnitAttemptError::Write(e)) => {
-                            println!("[FINAL_WRITE_ERROR] {}: {}", unit.path.clone(), e);
-                            tx.send(DownloadEvent::WriteError(unit.path.clone())).ok();
-                        }
-                        Err(UnitAttemptError::Download(err)) => {
-                            println!("[FINAL_DOWNLOAD_ERROR] {}: {}", unit.path.clone(), err);
-                            tx.send(DownloadEvent::DownloadError(unit.path.clone()))
+                        match result {
+                            Ok(()) => {
+                                println!("[CHUNK_DOWNLOADED] {}", unit.path.clone());
+                                tx.send(DownloadEvent::ChunkDownloaded {
+                                    path: unit.path.clone(),
+                                })
                                 .ok();
+                                break 'attempts;
+                            }
+                            Err(UnitAttemptError::Write(e)) => {
+                                // Disk errors aren't retried: every attempt
+                                // (primary or redist) writes to the same local
+                                // file, so a disk-side failure will recur.
+                                println!("[FINAL_WRITE_ERROR] {}: {}", unit.path.clone(), e);
+                                tx.send(DownloadEvent::WriteError(unit.path.clone())).ok();
+                                return;
+                            }
+                            Err(UnitAttemptError::Download(err)) => {
+                                let transient = err.is_transient();
+                                if transient {
+                                    meter.add_transient_error();
+                                }
+                                let is_last = attempt == max_attempts;
+                                if !transient || is_last {
+                                    download_err = Some(Box::new(err));
+                                    break 'attempts;
+                                }
+                                println!(
+                                    "[RETRYABLE_ERROR] {} (try {}/{}): {}",
+                                    unit.path, attempt, max_attempts, err
+                                );
+                                // else: transient and attempts remain — loop
+                                // around, backing off before the next try.
+                            }
                         }
+                    }
+
+                    if let Some(err) = download_err {
+                        println!("[FINAL_DOWNLOAD_ERROR] {}: {}", unit.path.clone(), err);
+                        tx.send(DownloadEvent::DownloadError(unit.path.clone()))
+                            .ok();
                     }
                 }
             })
-            .buffer_unordered(concurrency)
+            .buffer_unordered(poll_bound)
             .collect::<Vec<_>>()
             .await;
         Ok(())

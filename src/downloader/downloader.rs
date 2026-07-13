@@ -10,7 +10,8 @@ use crate::{
     auth::AuthManager,
     client::HttpClient,
     downloader::{
-        DownloadError,
+        DownloadConfig, DownloadError,
+        adaptive::{AdaptiveLimiter, ThroughputMeter, spawn_controller},
         events::{
             DownloadDetail, DownloadEvent, DownloadJobEvent, DownloadStage, RepairDetail,
             RepairEvent, RepairStage, VerifyEvent,
@@ -27,13 +28,25 @@ pub struct Downloader {
     pub client: HttpClient,
     pub secure_links: SecureLinksManager,
     pub auth: AuthManager,
+    pub config: DownloadConfig,
 }
 impl Downloader {
-    pub fn new(client: HttpClient, secure_links: SecureLinksManager, auth: AuthManager) -> Self {
+    /// Builds a `Downloader` with caller-supplied network tuning
+    /// (concurrency bounds, timeouts, retry policy) — see `DownloadConfig`.
+    /// `DownloadManager` (the only caller) always has a config on hand
+    /// (defaulted or overridden via `set_download_config`), so there's no
+    /// separate `new` that assumes `DownloadConfig::default()`.
+    pub fn new_with_config(
+        client: HttpClient,
+        secure_links: SecureLinksManager,
+        auth: AuthManager,
+        config: DownloadConfig,
+    ) -> Self {
         Self {
             client,
             secure_links,
             auth,
+            config,
         }
     }
     pub async fn repair_download(
@@ -111,7 +124,15 @@ impl Downloader {
             .filter(|u| needs_download_map.contains(&u.path.as_str()))
             .fold((0u64, 0usize), |(bytes, chunks), u| (bytes + u.size, chunks + 1));
 
-        let number_of_products = files.len();
+        // One adaptive concurrency limit shared by every product's chunks in
+        // this job — not a fixed, CPU-derived number per product (see
+        // `downloader::adaptive`). The controller hill-climbs it against
+        // measured throughput for the lifetime of the download stage below.
+        let meter = ThroughputMeter::new();
+        let limiter = AdaptiveLimiter::new(self.config.min_concurrency);
+        let controller = spawn_controller(meter.clone(), limiter.clone(), self.config.clone());
+        let config = Arc::new(self.config.clone());
+
         let results = run_stage(
             &tx,
             |event| RepairEvent {
@@ -137,12 +158,17 @@ impl Downloader {
                     if !filtered_files.is_empty() {
                         let stage_tx = stage_tx.clone();
                         let resolver = resolver.clone();
+                        let limiter = limiter.clone();
+                        let meter = meter.clone();
+                        let config = config.clone();
                         download_futures.push(async move {
                             self.download_chunk(
                                 filtered_files,
                                 resolver,
                                 &file.product_id,
-                                number_of_products,
+                                limiter,
+                                meter,
+                                config,
                                 stage_tx,
                             )
                             .await
@@ -157,6 +183,7 @@ impl Downloader {
             },
         )
         .await;
+        controller.abort();
 
         for result in results {
             result?;
@@ -198,7 +225,14 @@ impl Downloader {
             .flat_map(|df| df.get_download_units())
             .fold((0u64, 0usize), |(bytes, chunks), u| (bytes + u.size, chunks + 1));
 
-        let number_of_products = files.len();
+        // See the comment in `repair_download`: one adaptive concurrency
+        // limit shared by every product's chunks in this job, hill-climbed
+        // against measured throughput rather than a fixed CPU-derived split.
+        let meter = ThroughputMeter::new();
+        let limiter = AdaptiveLimiter::new(self.config.min_concurrency);
+        let controller = spawn_controller(meter.clone(), limiter.clone(), self.config.clone());
+        let config = Arc::new(self.config.clone());
+
         let results = run_stage(
             &tx,
             |event| DownloadJobEvent {
@@ -223,12 +257,17 @@ impl Downloader {
                     if !units.is_empty() {
                         let stage_tx = stage_tx.clone();
                         let resolver = resolver.clone();
+                        let limiter = limiter.clone();
+                        let meter = meter.clone();
+                        let config = config.clone();
                         download_futures.push(async move {
                             self.download_chunk(
                                 units,
                                 resolver,
                                 &file.product_id,
-                                number_of_products,
+                                limiter,
+                                meter,
+                                config,
                                 stage_tx,
                             )
                             .await
@@ -242,6 +281,7 @@ impl Downloader {
             },
         )
         .await;
+        controller.abort();
 
         for result in results {
             result?;

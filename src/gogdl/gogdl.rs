@@ -8,7 +8,7 @@ use crate::VerifyEvent;
 use crate::auth::AuthManager;
 use crate::client::HttpClient;
 use crate::depot::{DepotManager, ProductDetails};
-use crate::downloader::{DownloadManager, DownloadableFiles, DownloadableProduct};
+use crate::downloader::{DownloadConfig, DownloadManager, DownloadableFiles, DownloadableProduct};
 use crate::games::{
     GameBuilds, GameDetails, GameLinks, GameScreenshots, GameSummary, GamesManager, OwnedGames,
 };
@@ -132,6 +132,13 @@ impl GogDl {
     ) -> Result<(), GogDlError> {
         self.downloader.download(path, files, tx).await?;
         Ok(())
+    }
+    /// Overrides the network tuning (concurrency bounds, timeouts, retry
+    /// policy) used by subsequent `download_files`, `repair_files`, and
+    /// `verify_files` calls. See `DownloadConfig` for the individual knobs
+    /// and their network-tuned defaults.
+    pub async fn set_download_config(&self, config: DownloadConfig) {
+        self.downloader.set_download_config(config).await;
     }
     pub async fn get_product_details(
         &self,

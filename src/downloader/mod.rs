@@ -1,3 +1,5 @@
+mod adaptive;
+mod config;
 mod download_manager;
 mod downloadable_files;
 mod downloadable_product;
@@ -8,6 +10,7 @@ mod stages;
 mod stream;
 mod util;
 
+pub use config::DownloadConfig;
 pub use download_manager::DownloadManager;
 pub use downloadable_files::DownloadableFiles;
 pub use downloadable_product::DownloadableProduct;

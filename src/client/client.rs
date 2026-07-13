@@ -1,4 +1,5 @@
 use std::io::{Read, Write};
+use std::time::Duration;
 
 use flate2::Compression;
 use flate2::read::ZlibDecoder;
@@ -149,10 +150,20 @@ impl HttpClient {
     /// immediately, so neither side needs to hold the whole chunk in memory
     /// at once. The receiver may get zero or more `Ok(bytes)` messages
     /// followed by channel closure (success) or an `Err(...)` (failure).
+    ///
+    /// `response_timeout` bounds how long the initial request may take to
+    /// receive a response (guards against a CDN host that never answers);
+    /// `idle_timeout` bounds each individual read of the body stream (guards
+    /// against a connection that answered but then stalled mid-transfer,
+    /// which a response-only timeout would never catch). Without both of
+    /// these a single wedged connection would occupy its concurrency slot
+    /// forever.
     pub fn fetch_chunk_stream(
         &self,
         url: &str,
         auth: String,
+        response_timeout: Duration,
+        idle_timeout: Duration,
     ) -> mpsc::UnboundedReceiver<Result<Vec<u8>, ClientError>> {
         let (tx, rx) = mpsc::unbounded_channel();
         let url = url.to_string();
@@ -167,7 +178,7 @@ impl HttpClient {
                     return;
                 }
             };
-            let mut request = client.get(parsed_url);
+            let mut request = client.get(parsed_url).timeout(response_timeout);
             if !auth.is_empty() {
                 request = request.bearer_auth(&auth);
             }
@@ -175,7 +186,12 @@ impl HttpClient {
             let response = match request.send().await {
                 Ok(response) => response,
                 Err(e) => {
-                    tx.send(Err(e.into())).ok();
+                    let err = if e.is_timeout() {
+                        ClientError::Timeout
+                    } else {
+                        e.into()
+                    };
+                    tx.send(Err(err)).ok();
                     return;
                 }
             };
@@ -193,7 +209,18 @@ impl HttpClient {
 
             let mut stream = response.bytes_stream();
             let mut decoder = ZlibStreamDecoder::new(Vec::new());
-            while let Some(chunk) = stream.next().await {
+            loop {
+                let next = match tokio::time::timeout(idle_timeout, stream.next()).await {
+                    Ok(next) => next,
+                    Err(_elapsed) => {
+                        tx.send(Err(ClientError::Timeout)).ok();
+                        return;
+                    }
+                };
+                let chunk = match next {
+                    Some(chunk) => chunk,
+                    None => break,
+                };
                 let downloaded_bytes = match chunk {
                     Ok(bytes) => bytes,
                     Err(_err) => {
@@ -376,5 +403,115 @@ impl HttpClient {
             return Err(ClientError::Http { status, body });
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Verifies the timeout behavior added to `fetch_chunk_stream`: a
+    //! stalled CDN connection used to occupy its download slot forever
+    //! (nothing in the old code ever gave up on it). These tests run a
+    //! bare-bones local TCP server that either never answers, or answers
+    //! and then goes silent mid-transfer, and check that both cases now
+    //! surface `ClientError::Timeout` instead of hanging.
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    async fn bind_local() -> (TcpListener, String) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        (listener, format!("http://{addr}/chunk"))
+    }
+
+    #[tokio::test]
+    async fn fetch_chunk_stream_times_out_when_server_never_responds() {
+        let (listener, url) = bind_local().await;
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            // Read (and discard) the request, then just hang without ever
+            // writing a response — the CDN host that never answers.
+            let mut buf = [0u8; 1024];
+            let _ = socket.read(&mut buf).await;
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        });
+
+        let client = HttpClient::new_with_client(reqwest::Client::new());
+        let mut rx = client.fetch_chunk_stream(
+            &url,
+            String::new(),
+            Duration::from_millis(150),
+            Duration::from_secs(5),
+        );
+
+        match rx.recv().await {
+            Some(Err(ClientError::Timeout)) => {}
+            other => panic!("expected a response timeout, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn fetch_chunk_stream_times_out_when_stream_stalls_mid_transfer() {
+        let (listener, url) = bind_local().await;
+
+        let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(b"hello from the stalled cdn").unwrap();
+        let compressed = encoder.finish().unwrap();
+
+        tokio::spawn({
+            let compressed = compressed.clone();
+            async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut buf = [0u8; 1024];
+                let _ = socket.read(&mut buf).await;
+
+                // Promise more bytes than we'll ever send, so the body is
+                // still "open" from the client's point of view.
+                let header = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    compressed.len() + 1000
+                );
+                socket.write_all(header.as_bytes()).await.unwrap();
+                socket.write_all(&compressed).await.unwrap();
+                socket.flush().await.unwrap();
+
+                // Stall: never send the rest, never close the connection —
+                // the CDN connection that answers, then wedges mid-transfer.
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            }
+        });
+
+        let client = HttpClient::new_with_client(reqwest::Client::new());
+        let mut rx = client.fetch_chunk_stream(
+            &url,
+            String::new(),
+            Duration::from_secs(5),
+            Duration::from_millis(750),
+        );
+
+        // No more bytes ever arrive after the (fully sent, but small)
+        // compressed payload, so the idle timeout must eventually fire
+        // instead of hanging forever — this is exactly the failure mode
+        // ("one stalled connection occupies its concurrency slot forever
+        // with no timeout to reclaim it") this change fixes. Whether the
+        // small payload is decoded and surfaced before then is an
+        // implementation detail of the streaming zlib decoder's internal
+        // buffering, not something this test should pin down — only the
+        // eventual timeout matters here.
+        let mut saw_timeout = false;
+        while let Some(message) = rx.recv().await {
+            match message {
+                Ok(_bytes) => continue,
+                Err(ClientError::Timeout) => {
+                    saw_timeout = true;
+                    break;
+                }
+                Err(other) => panic!("unexpected error before the idle timeout: {other}"),
+            }
+        }
+        assert!(
+            saw_timeout,
+            "expected the idle timeout to eventually fire for a stalled connection"
+        );
     }
 }

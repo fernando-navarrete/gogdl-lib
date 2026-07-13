@@ -44,6 +44,9 @@ pub enum DownloadError {
 
     #[error("Stream error")]
     StreamError(),
+
+    #[error("Request timed out")]
+    Timeout,
 }
 
 impl From<ClientError> for DownloadError {
@@ -58,6 +61,7 @@ impl From<ClientError> for DownloadError {
             ClientError::DecodeError(error) => DownloadError::DecodeError(error),
             ClientError::DeflateError(error) => DownloadError::DeflateError(error),
             ClientError::StreamError() => DownloadError::StreamError(),
+            ClientError::Timeout => DownloadError::Timeout,
         }
     }
 }

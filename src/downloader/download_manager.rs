@@ -8,8 +8,8 @@ use crate::{
     client::HttpClient,
     depot::DepotManager,
     downloader::{
-        downloadable_files::DownloadableFiles, downloadable_product::DownloadableProduct,
-        downloader::Downloader, error::DownloadError,
+        DownloadConfig, downloadable_files::DownloadableFiles,
+        downloadable_product::DownloadableProduct, downloader::Downloader, error::DownloadError,
     },
     games::GamesManager,
     secure_links::SecureLinksManager,
@@ -28,6 +28,10 @@ pub struct DownloadManagerInner {
     pub games: GamesManager,
     pub downloadable_products: HashMap<(i32, String), Vec<DownloadableProduct>>,
     pub downloadable_files: HashMap<(i32, String, Vec<String>), Vec<DownloadableFiles>>,
+    /// Network tuning (concurrency bounds, timeouts, retries) applied to
+    /// every `Downloader` this manager creates. Defaults are tuned for
+    /// network-bound throughput; see `DownloadConfig`.
+    pub download_config: DownloadConfig,
 }
 
 impl DownloadManager {
@@ -46,9 +50,18 @@ impl DownloadManager {
                 games,
                 downloadable_products: HashMap::new(),
                 downloadable_files: HashMap::new(),
+                download_config: DownloadConfig::default(),
             })),
             client,
         }
+    }
+    /// Overrides the network tuning used by subsequent `download`,
+    /// `repair_download`, and `verify` calls. Useful for a consumer that
+    /// wants to raise/lower the concurrency ceiling for a known-slow or
+    /// known-fast connection, or shorten timeouts for a flaky one.
+    pub async fn set_download_config(&self, config: DownloadConfig) {
+        let mut inner = self.inner.lock().await;
+        inner.download_config = config;
     }
     pub async fn verify_download(
         &self,
@@ -56,13 +69,14 @@ impl DownloadManager {
         files: Vec<DownloadableFiles>,
         tx: mpsc::UnboundedSender<VerifyEvent>,
     ) -> Result<(), DownloadError> {
-        let (auth, links) = {
+        let (auth, links, config) = {
             let inner = self.inner.lock().await;
             let auth = inner.auth.clone();
             let links = inner.secure_links.clone();
-            (auth, links)
+            let config = inner.download_config.clone();
+            (auth, links, config)
         };
-        let downloader = Downloader::new(self.client.clone(), links, auth);
+        let downloader = Downloader::new_with_config(self.client.clone(), links, auth, config);
         downloader.verify(files, path, tx).await?;
         Ok(())
     }
@@ -72,13 +86,14 @@ impl DownloadManager {
         files: Vec<DownloadableFiles>,
         tx: mpsc::UnboundedSender<RepairEvent>,
     ) -> Result<(), DownloadError> {
-        let (auth, links) = {
+        let (auth, links, config) = {
             let inner = self.inner.lock().await;
             let auth = inner.auth.clone();
             let links = inner.secure_links.clone();
-            (auth, links)
+            let config = inner.download_config.clone();
+            (auth, links, config)
         };
-        let downloader = Downloader::new(self.client.clone(), links, auth);
+        let downloader = Downloader::new_with_config(self.client.clone(), links, auth, config);
         downloader.repair_download(files, path, tx).await?;
         Ok(())
     }
@@ -88,13 +103,14 @@ impl DownloadManager {
         files: Vec<DownloadableFiles>,
         tx: mpsc::UnboundedSender<DownloadJobEvent>,
     ) -> Result<(), DownloadError> {
-        let (auth, links) = {
+        let (auth, links, config) = {
             let inner = self.inner.lock().await;
             let auth = inner.auth.clone();
             let links = inner.secure_links.clone();
-            (auth, links)
+            let config = inner.download_config.clone();
+            (auth, links, config)
         };
-        let downloader = Downloader::new(self.client.clone(), links, auth);
+        let downloader = Downloader::new_with_config(self.client.clone(), links, auth, config);
         downloader.download(files, path, tx).await?;
         Ok(())
     }

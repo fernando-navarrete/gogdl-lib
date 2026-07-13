@@ -10,6 +10,7 @@ mod saves;
 mod secure_links;
 
 pub use depot::ProductDetails;
+pub use downloader::DownloadConfig;
 pub use downloader::DownloadDetail;
 pub use downloader::DownloadEvent;
 pub use downloader::DownloadJobEvent;

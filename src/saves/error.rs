@@ -62,6 +62,9 @@ pub enum SavesError {
 
     #[error("Hash mismatch: expected {expected}, got {actual}")]
     HashMismatch { expected: String, actual: String },
+
+    #[error("Request timed out")]
+    Timeout,
 }
 
 impl From<ClientError> for SavesError {
@@ -76,6 +79,7 @@ impl From<ClientError> for SavesError {
             ClientError::DecodeError(error) => SavesError::DecodeError(error),
             ClientError::DeflateError(error) => SavesError::Io(error),
             ClientError::StreamError() => SavesError::StreamError(),
+            ClientError::Timeout => SavesError::Timeout,
         }
     }
 }
