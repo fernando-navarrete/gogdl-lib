@@ -183,7 +183,9 @@ pub(crate) fn spawn_controller(
             let next = if direction > 0 {
                 (current + config.step).min(config.max_concurrency)
             } else {
-                current.saturating_sub(config.step).max(config.min_concurrency)
+                current
+                    .saturating_sub(config.step)
+                    .max(config.min_concurrency)
             };
 
             if next > current {
