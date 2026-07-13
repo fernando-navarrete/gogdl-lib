@@ -60,7 +60,7 @@ impl From<ClientError> for DownloadError {
             },
             ClientError::DecodeError(error) => DownloadError::DecodeError(error),
             ClientError::DeflateError(error) => DownloadError::DeflateError(error),
-            ClientError::StreamError() => DownloadError::StreamError(),
+            ClientError::StreamError(_) => DownloadError::StreamError(),
             ClientError::Timeout => DownloadError::Timeout,
         }
     }

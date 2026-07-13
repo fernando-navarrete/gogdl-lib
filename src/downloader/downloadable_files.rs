@@ -9,6 +9,15 @@ use crate::{
 pub struct DownloadableFiles {
     pub product_id: String,
     pub product_files: Vec<DepotFile>,
+    /// Whether these files come from a dependency/redistributable depot
+    /// (DirectX, VC++ runtimes, ...) rather than a game depot. Dependency
+    /// content is hosted under the CDN's `dependencies/store` path, so only
+    /// units from a dependency depot should ever fall back to
+    /// `parse_url_redist` on a primary download failure — see
+    /// `Downloader::download_chunk`. Every current caller of
+    /// `get_download_files` resolves game depots, so this is always `false`
+    /// today; it exists for a future dependency-depot flow.
+    pub is_dependency: bool,
 }
 
 impl DownloadableFiles {
@@ -81,6 +90,7 @@ impl DownloadableFiles {
                 downloadable_files.push(DownloadableFiles {
                     product_id: id.to_string(),
                     product_files: depot_files,
+                    is_dependency: false,
                 });
             }
         }

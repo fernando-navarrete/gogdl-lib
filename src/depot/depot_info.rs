@@ -40,6 +40,7 @@ pub struct DownloadUnit {
     pub compressed_size: u64,
     pub path: String,
     pub offset: u64,
+    pub file_type: String,
 }
 
 impl DepotFile {
@@ -49,7 +50,7 @@ impl DepotFile {
             sha256: None,
             path: unit.path.clone(),
             chunks: None,
-            file_type: "".to_string(),
+            file_type: unit.file_type.clone(),
         }
     }
 
@@ -65,6 +66,7 @@ impl DepotFile {
                     compressed_size: chunk.compressed_size,
                     path: self.path.clone(),
                     offset,
+                    file_type: self.file_type.clone(),
                 });
                 offset += chunk.size;
             }

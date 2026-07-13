@@ -50,7 +50,7 @@ impl From<ClientError> for GamesError {
             },
             ClientError::DecodeError(error) => GamesError::DecodeError(error),
             ClientError::DeflateError(error) => GamesError::DeflateError(error),
-            ClientError::StreamError() => GamesError::StreamError(),
+            ClientError::StreamError(_) => GamesError::StreamError(),
             ClientError::Timeout => GamesError::Timeout,
         }
     }

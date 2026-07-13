@@ -161,6 +161,7 @@ impl Downloader {
                         let limiter = limiter.clone();
                         let meter = meter.clone();
                         let config = config.clone();
+                        let is_dependency = file.is_dependency;
                         download_futures.push(async move {
                             self.download_chunk(
                                 filtered_files,
@@ -170,6 +171,7 @@ impl Downloader {
                                 meter,
                                 config,
                                 stage_tx,
+                                is_dependency,
                             )
                             .await
                         });
@@ -260,6 +262,7 @@ impl Downloader {
                         let limiter = limiter.clone();
                         let meter = meter.clone();
                         let config = config.clone();
+                        let is_dependency = file.is_dependency;
                         download_futures.push(async move {
                             self.download_chunk(
                                 units,
@@ -269,6 +272,7 @@ impl Downloader {
                                 meter,
                                 config,
                                 stage_tx,
+                                is_dependency,
                             )
                             .await
                         });

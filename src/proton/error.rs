@@ -49,7 +49,7 @@ impl From<ClientError> for ProtonError {
             },
             ClientError::DecodeError(error) => ProtonError::DecodeError(error),
             ClientError::DeflateError(error) => ProtonError::Io(error),
-            ClientError::StreamError() => ProtonError::StreamError(),
+            ClientError::StreamError(_) => ProtonError::StreamError(),
             ClientError::Timeout => ProtonError::Timeout,
         }
     }

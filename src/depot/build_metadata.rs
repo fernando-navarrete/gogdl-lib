@@ -44,9 +44,6 @@ impl BuildMetadata {
             .authorized_get_and_decode(&download_manager.client, game_link)
             .await?;
         game_details.filter_languages("en-US");
-        for depot in &mut game_details.depots {
-            println!("{:?}", depot);
-        }
 
         let mut lock = download_manager.inner.lock().await;
         lock.build_metadata

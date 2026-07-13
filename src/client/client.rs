@@ -178,20 +178,33 @@ impl HttpClient {
                     return;
                 }
             };
-            let mut request = client.get(parsed_url).timeout(response_timeout);
+            let mut request = client.get(parsed_url);
             if !auth.is_empty() {
                 request = request.bearer_auth(&auth);
             }
 
-            let response = match request.send().await {
-                Ok(response) => response,
-                Err(e) => {
+            // `response_timeout` bounds only the wait for the initial
+            // response (status + headers); the body is read afterward in
+            // the loop below, governed solely by `idle_timeout` per read.
+            // Deliberately not using reqwest's `RequestBuilder::timeout()`
+            // here: despite its name, that's a *total* request timeout that
+            // keeps counting down through the whole body read, so it would
+            // abort a large-but-still-progressing chunk transfer once its
+            // cumulative duration crosses `response_timeout`, even with no
+            // actual stall and `idle_timeout` never coming into play.
+            let response = match tokio::time::timeout(response_timeout, request.send()).await {
+                Ok(Ok(response)) => response,
+                Ok(Err(e)) => {
                     let err = if e.is_timeout() {
                         ClientError::Timeout
                     } else {
                         e.into()
                     };
                     tx.send(Err(err)).ok();
+                    return;
+                }
+                Err(_elapsed) => {
+                    tx.send(Err(ClientError::Timeout)).ok();
                     return;
                 }
             };
@@ -223,8 +236,8 @@ impl HttpClient {
                 };
                 let downloaded_bytes = match chunk {
                     Ok(bytes) => bytes,
-                    Err(_err) => {
-                        tx.send(Err(ClientError::StreamError())).ok();
+                    Err(err) => {
+                        tx.send(Err(ClientError::StreamError(err))).ok();
                         return;
                     }
                 };

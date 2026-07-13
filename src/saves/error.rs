@@ -78,7 +78,7 @@ impl From<ClientError> for SavesError {
             },
             ClientError::DecodeError(error) => SavesError::DecodeError(error),
             ClientError::DeflateError(error) => SavesError::Io(error),
-            ClientError::StreamError() => SavesError::StreamError(),
+            ClientError::StreamError(_) => SavesError::StreamError(),
             ClientError::Timeout => SavesError::Timeout,
         }
     }

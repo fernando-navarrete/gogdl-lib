@@ -47,7 +47,7 @@ impl From<ClientError> for DepotError {
             },
             ClientError::DecodeError(error) => DepotError::DecodeError(error),
             ClientError::DeflateError(error) => DepotError::DeflateError(error),
-            ClientError::StreamError() => DepotError::StreamError(),
+            ClientError::StreamError(_) => DepotError::StreamError(),
             ClientError::Timeout => DepotError::Timeout,
         }
     }

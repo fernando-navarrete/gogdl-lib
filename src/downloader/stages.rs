@@ -71,6 +71,7 @@ impl Downloader {
         meter: Arc<ThroughputMeter>,
         config: Arc<DownloadConfig>,
         tx: mpsc::UnboundedSender<DownloadEvent>,
+        is_dependency: bool,
     ) -> Result<(), DownloadError> {
         let secure_links = self.secure_links.get_secure_links(product_id).await?;
         // Every known CDN endpoint for this product, highest-priority first.
@@ -106,8 +107,9 @@ impl Downloader {
 
                     if endpoints.is_empty() {
                         println!(
-                            "[SECURE_LINK_MISSING] {}: no secure link available",
-                            unit.path.clone()
+                            "[SECURE_LINK_MISSING] {} ({}): no secure link available",
+                            unit.path.clone(),
+                            unit.file_type
                         );
                         tx.send(DownloadEvent::SecureLinkError(unit.path.clone()))
                             .ok();
@@ -117,7 +119,11 @@ impl Downloader {
                     let access_token = match auth.get_auth().await {
                         Some(auth) => auth.access_token,
                         None => {
-                            println!("[NOT_AUTHENTICATED] {}", unit.path.clone());
+                            println!(
+                                "[NOT_AUTHENTICATED] {} ({})",
+                                unit.path.clone(),
+                                unit.file_type
+                            );
                             tx.send(DownloadEvent::DownloadError(unit.path.clone()))
                                 .ok();
                             return;
@@ -127,7 +133,12 @@ impl Downloader {
                     let file_path = match resolver.resolve_path(&unit.path).await {
                         Ok(file_path) => file_path,
                         Err(e) => {
-                            println!("[PATH_RESOLVE_ERROR] {}: {}", unit.path.clone(), e);
+                            println!(
+                                "[PATH_RESOLVE_ERROR] {} ({}): {}",
+                                unit.path.clone(),
+                                unit.file_type,
+                                e
+                            );
                             tx.send(DownloadEvent::PathResolveError(unit.path.clone()))
                                 .ok();
                             return;
@@ -138,7 +149,12 @@ impl Downloader {
                     {
                         Ok(file) => file,
                         Err(e) => {
-                            println!("[FILE_OPEN_ERROR] {}: {}", unit.path.clone(), e);
+                            println!(
+                                "[FILE_OPEN_ERROR] {} ({}): {}",
+                                unit.path.clone(),
+                                unit.file_type,
+                                e
+                            );
                             tx.send(DownloadEvent::WriteError(unit.path.clone())).ok();
                             return;
                         }
@@ -146,6 +162,8 @@ impl Downloader {
 
                     let mut counted: u64 = 0;
                     let mut download_err: Option<Box<dyn std::fmt::Display + Send>> = None;
+                    let mut last_primary_url = String::new();
+                    let mut last_redist_url = String::new();
                     let max_attempts = config.max_retries.max(1);
 
                     'attempts: for attempt in 1..=max_attempts {
@@ -160,11 +178,8 @@ impl Downloader {
                         let endpoint = &endpoints[(index + attempt - 1) % endpoints.len()];
                         let primary_url = endpoint.parse_url(&unit.compressed_md5);
                         let redist_url = endpoint.parse_url_redist(&unit.compressed_md5);
+                        last_primary_url = primary_url.clone();
 
-                        println!(
-                            "[PRIMARY_ATTEMPT_START] {} (try {}/{}): {}",
-                            unit.path, attempt, max_attempts, primary_url
-                        );
                         let primary_result = stream_unit_to_file(
                             &client,
                             &primary_url,
@@ -180,28 +195,28 @@ impl Downloader {
                         .await;
 
                         let result = match primary_result {
-                            Ok(()) => {
-                                println!("[PRIMARY_ATTEMPT_OK] {}", unit.path.clone());
-                                Ok(())
-                            }
+                            Ok(()) => Ok(()),
                             Err(UnitAttemptError::Write(e)) => Err(UnitAttemptError::Write(e)),
-                            Err(UnitAttemptError::Download(err)) => {
-                                // The primary secure-link CDN failed for this chunk
-                                // (e.g. a redist/dependency chunk it doesn't serve,
-                                // or a transient network error) — try the redist
-                                // store, which hosts the same content under a
-                                // different path, before deciding whether the whole
-                                // attempt failed.
+                            Err(UnitAttemptError::Download(err)) if is_dependency => {
+                                // The primary secure-link CDN failed for this
+                                // dependency chunk (e.g. a transient network
+                                // error) — try the redist store, which hosts
+                                // dependency content under a different path,
+                                // before deciding whether the whole attempt
+                                // failed. Only dependency depots take this
+                                // path: game content never lives under the
+                                // redist store, so falling back there for a
+                                // game chunk would just trade a retryable
+                                // primary error for a permanent 404 and stop
+                                // the retry loop dead (see download_chunk's
+                                // module docs / the plan that introduced this
+                                // gate).
                                 println!(
                                     "[PRIMARY_ATTEMPT_DOWNLOAD_ERROR] {}: {} (falling back to redist store)",
                                     unit.path.clone(),
                                     err
                                 );
-                                println!(
-                                    "[REDIST_ATTEMPT_START] {}: {}",
-                                    unit.path.clone(),
-                                    redist_url
-                                );
+                                last_redist_url = redist_url.clone();
                                 let redist_result = stream_unit_to_file(
                                     &client,
                                     &redist_url,
@@ -216,9 +231,7 @@ impl Downloader {
                                 )
                                 .await;
                                 match &redist_result {
-                                    Ok(()) => {
-                                        println!("[REDIST_ATTEMPT_OK] {}", unit.path.clone());
-                                    }
+                                    Ok(()) => {}
                                     Err(UnitAttemptError::Write(e)) => {
                                         println!(
                                             "[REDIST_ATTEMPT_WRITE_ERROR] {}: {}",
@@ -236,11 +249,18 @@ impl Downloader {
                                 }
                                 redist_result
                             }
+                            // Not a dependency depot (or the redist fallback
+                            // above didn't apply): let the primary error flow
+                            // through as-is, so the transient-retry check
+                            // below sees the real (possibly retryable) cause
+                            // instead of a fallback's unrelated result.
+                            Err(UnitAttemptError::Download(err)) => {
+                                Err(UnitAttemptError::Download(err))
+                            }
                         };
 
                         match result {
                             Ok(()) => {
-                                println!("[CHUNK_DOWNLOADED] {}", unit.path.clone());
                                 tx.send(DownloadEvent::ChunkDownloaded {
                                     path: unit.path.clone(),
                                 })
@@ -251,7 +271,14 @@ impl Downloader {
                                 // Disk errors aren't retried: every attempt
                                 // (primary or redist) writes to the same local
                                 // file, so a disk-side failure will recur.
-                                println!("[FINAL_WRITE_ERROR] {}: {}", unit.path.clone(), e);
+                                println!(
+                                    "[FINAL_WRITE_ERROR] {} ({}): {} (primary: {}, redist: {})",
+                                    unit.path.clone(),
+                                    unit.file_type,
+                                    e,
+                                    last_primary_url,
+                                    last_redist_url
+                                );
                                 tx.send(DownloadEvent::WriteError(unit.path.clone())).ok();
                                 return;
                             }
@@ -276,7 +303,14 @@ impl Downloader {
                     }
 
                     if let Some(err) = download_err {
-                        println!("[FINAL_DOWNLOAD_ERROR] {}: {}", unit.path.clone(), err);
+                        println!(
+                            "[FINAL_DOWNLOAD_ERROR] {} ({}): {} (primary: {}, redist: {})",
+                            unit.path.clone(),
+                            unit.file_type,
+                            err,
+                            last_primary_url,
+                            last_redist_url
+                        );
                         tx.send(DownloadEvent::DownloadError(unit.path.clone()))
                             .ok();
                     }
@@ -378,7 +412,12 @@ impl Downloader {
                         Err(err) => {
                             tx.send(FileAllocationEvent::PathResolveError(file.path.clone()))
                                 .ok();
-                            println!("ERROR: {}: {}", file.path.clone(), err);
+                            println!(
+                                "ERROR: {} ({}): {}",
+                                file.path.clone(),
+                                file.file_type,
+                                err
+                            );
                             return Some(file.clone());
                         }
                     };
@@ -435,7 +474,7 @@ impl Downloader {
 
         let errors = results.into_iter().flatten().collect::<Vec<_>>();
         for file in &errors {
-            println!("FAILED TO ALLOCATE: {}", file.path);
+            println!("FAILED TO ALLOCATE: {} ({})", file.path, file.file_type);
         }
         if !errors.is_empty() {
             return Err(DownloadError::DiskAllocationError);
@@ -460,7 +499,12 @@ impl Downloader {
                         Err(err) => {
                             tx.send(FileVerifyEvent::CouldNotResolvePath(file.path.clone()))
                                 .ok();
-                            println!("ERROR: {}: {}", file.path.clone(), err);
+                            println!(
+                                "ERROR: {} ({}): {}",
+                                file.path.clone(),
+                                file.file_type,
+                                err
+                            );
                             return Some(file.clone());
                         }
                     };
@@ -469,7 +513,11 @@ impl Downloader {
                         None => {
                             tx.send(FileVerifyEvent::FileNotFound(file.path.clone()))
                                 .ok();
-                            println!("ERROR: {}: FILE NOT FOUND", file.path.clone());
+                            println!(
+                                "ERROR: {} ({}): FILE NOT FOUND",
+                                file.path.clone(),
+                                file.file_type
+                            );
                             return Some(file.clone());
                         }
                     };
@@ -479,7 +527,12 @@ impl Downloader {
                         Err(e) => {
                             tx.send(FileVerifyEvent::CouldNotReadFileSize(file.path.clone()))
                                 .ok();
-                            println!("ERROR: {}: {}", file.path.clone(), e);
+                            println!(
+                                "ERROR: {} ({}): {}",
+                                file.path.clone(),
+                                file.file_type,
+                                e
+                            );
                             return Some(file.clone());
                         }
                     };
@@ -492,8 +545,9 @@ impl Downloader {
                         ))
                         .ok();
                         println!(
-                            "ERROR: {}: size mismatch: {} != {}",
+                            "ERROR: {} ({}): size mismatch: {} != {}",
                             file.path.clone(),
+                            file.file_type,
                             size,
                             file.get_file_size()
                         );

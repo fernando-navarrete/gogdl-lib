@@ -52,7 +52,7 @@ impl From<ClientError> for SecureLinksError {
             },
             ClientError::DecodeError(error) => SecureLinksError::DecodeError(error),
             ClientError::DeflateError(error) => SecureLinksError::DeflateError(error),
-            ClientError::StreamError() => SecureLinksError::StreamError(),
+            ClientError::StreamError(_) => SecureLinksError::StreamError(),
             ClientError::Timeout => SecureLinksError::Timeout,
         }
     }
