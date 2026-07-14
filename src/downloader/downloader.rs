@@ -12,6 +12,7 @@ use crate::{
     downloader::{
         DownloadConfig, DownloadError,
         adaptive::{AdaptiveLimiter, ThroughputMeter, spawn_controller},
+        control::DownloadControl,
         events::{
             DownloadDetail, DownloadEvent, DownloadJobEvent, DownloadStage, RepairDetail,
             RepairEvent, RepairStage, VerifyEvent,
@@ -53,6 +54,7 @@ impl Downloader {
         &self,
         files: Vec<DownloadableFiles>,
         path: &str,
+        control: DownloadControl,
         tx: mpsc::UnboundedSender<RepairEvent>,
     ) -> Result<(), DownloadError> {
         let resolver = Arc::new(PathResolver::new(PathBuf::from(path)).await?);
@@ -130,7 +132,12 @@ impl Downloader {
         // measured throughput for the lifetime of the download stage below.
         let meter = ThroughputMeter::new();
         let limiter = AdaptiveLimiter::new(self.config.min_concurrency);
-        let controller = spawn_controller(meter.clone(), limiter.clone(), self.config.clone());
+        let controller = spawn_controller(
+            meter.clone(),
+            limiter.clone(),
+            self.config.clone(),
+            control.clone(),
+        );
         let config = Arc::new(self.config.clone());
 
         let results = run_stage(
@@ -161,6 +168,7 @@ impl Downloader {
                         let limiter = limiter.clone();
                         let meter = meter.clone();
                         let config = config.clone();
+                        let control = control.clone();
                         let is_dependency = file.is_dependency;
                         download_futures.push(async move {
                             self.download_chunk(
@@ -170,6 +178,7 @@ impl Downloader {
                                 limiter,
                                 meter,
                                 config,
+                                control,
                                 stage_tx,
                                 is_dependency,
                             )
@@ -202,6 +211,7 @@ impl Downloader {
         &self,
         files: Vec<DownloadableFiles>,
         path: &str,
+        control: DownloadControl,
         tx: mpsc::UnboundedSender<DownloadJobEvent>,
     ) -> Result<(), DownloadError> {
         let resolver = Arc::new(PathResolver::new(PathBuf::from(path)).await?);
@@ -232,7 +242,12 @@ impl Downloader {
         // against measured throughput rather than a fixed CPU-derived split.
         let meter = ThroughputMeter::new();
         let limiter = AdaptiveLimiter::new(self.config.min_concurrency);
-        let controller = spawn_controller(meter.clone(), limiter.clone(), self.config.clone());
+        let controller = spawn_controller(
+            meter.clone(),
+            limiter.clone(),
+            self.config.clone(),
+            control.clone(),
+        );
         let config = Arc::new(self.config.clone());
 
         let results = run_stage(
@@ -262,6 +277,7 @@ impl Downloader {
                         let limiter = limiter.clone();
                         let meter = meter.clone();
                         let config = config.clone();
+                        let control = control.clone();
                         let is_dependency = file.is_dependency;
                         download_futures.push(async move {
                             self.download_chunk(
@@ -271,6 +287,7 @@ impl Downloader {
                                 limiter,
                                 meter,
                                 config,
+                                control,
                                 stage_tx,
                                 is_dependency,
                             )

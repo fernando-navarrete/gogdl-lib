@@ -11,12 +11,14 @@ mod secure_links;
 
 pub use depot::ProductDetails;
 pub use downloader::DownloadConfig;
+pub use downloader::DownloadControl;
 pub use downloader::DownloadDetail;
 pub use downloader::DownloadEvent;
 pub use downloader::DownloadJobEvent;
 pub use downloader::DownloadStage;
 pub use downloader::DownloadableFiles;
 pub use downloader::DownloadableProduct;
+pub use downloader::JobStatus;
 pub use downloader::FileAllocationEvent;
 pub use downloader::FileVerifyEvent;
 pub use downloader::RepairDetail;

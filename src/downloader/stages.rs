@@ -15,6 +15,7 @@ use crate::{
         DownloadError,
         adaptive::{AdaptiveLimiter, ThroughputMeter},
         config::DownloadConfig,
+        control::DownloadControl,
         downloader::Downloader,
         events::{DownloadEvent, FileAllocationEvent, FileVerifyEvent, VerifyChunksEvent},
         stream::{UnitAttemptError, stream_unit_to_file},
@@ -70,6 +71,7 @@ impl Downloader {
         limiter: Arc<AdaptiveLimiter>,
         meter: Arc<ThroughputMeter>,
         config: Arc<DownloadConfig>,
+        control: DownloadControl,
         tx: mpsc::UnboundedSender<DownloadEvent>,
         is_dependency: bool,
     ) -> Result<(), DownloadError> {
@@ -99,7 +101,17 @@ impl Downloader {
                 let limiter = limiter.clone();
                 let meter = meter.clone();
                 let config = config.clone();
+                let control = control.clone();
                 async move {
+                    // Pause/cancel checkpoint, ahead of the adaptive limiter
+                    // so a paused chunk holds no permit and a cancelled chunk
+                    // does no I/O at all. Chunks already past this point
+                    // drain to completion (see `DownloadControl`).
+                    if !control.wait_to_proceed().await {
+                        return;
+                    }
+                    let _active = control.active_guard();
+
                     // Acquired before any I/O so a chunk waiting on a full
                     // limiter doesn't hold a file handle or auth token while
                     // parked.

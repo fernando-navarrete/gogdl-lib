@@ -8,7 +8,7 @@ use crate::{
     client::HttpClient,
     depot::DepotManager,
     downloader::{
-        DownloadConfig, downloadable_files::DownloadableFiles,
+        DownloadConfig, control::DownloadControl, downloadable_files::DownloadableFiles,
         downloadable_product::DownloadableProduct, downloader::Downloader, error::DownloadError,
     },
     games::GamesManager,
@@ -84,6 +84,7 @@ impl DownloadManager {
         &self,
         path: &str,
         files: Vec<DownloadableFiles>,
+        control: DownloadControl,
         tx: mpsc::UnboundedSender<RepairEvent>,
     ) -> Result<(), DownloadError> {
         let (auth, links, config) = {
@@ -94,13 +95,14 @@ impl DownloadManager {
             (auth, links, config)
         };
         let downloader = Downloader::new_with_config(self.client.clone(), links, auth, config);
-        downloader.repair_download(files, path, tx).await?;
+        downloader.repair_download(files, path, control, tx).await?;
         Ok(())
     }
     pub async fn download(
         &self,
         path: &str,
         files: Vec<DownloadableFiles>,
+        control: DownloadControl,
         tx: mpsc::UnboundedSender<DownloadJobEvent>,
     ) -> Result<(), DownloadError> {
         let (auth, links, config) = {
@@ -111,7 +113,7 @@ impl DownloadManager {
             (auth, links, config)
         };
         let downloader = Downloader::new_with_config(self.client.clone(), links, auth, config);
-        downloader.download(files, path, tx).await?;
+        downloader.download(files, path, control, tx).await?;
         Ok(())
     }
     pub async fn get_downloadable_products(
