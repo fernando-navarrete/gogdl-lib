@@ -407,7 +407,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "gogdl-lib2"
+name = "gogdl-lib"
 version = "0.1.0"
 dependencies = [
  "chrono",
