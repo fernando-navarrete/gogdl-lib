@@ -23,6 +23,11 @@ const X_OBJECT_META_USER_AGENT: &str = "X-Object-Meta-User-Agent";
 /// transfers; the storage backend appears to key some behavior off it, so it
 /// is reproduced verbatim rather than gogdl-lib2's own identity.
 const GALAXY_USER_AGENT: &str = "GOGGalaxyCommunicationService/2.0.4.164 (Windows_32bit)";
+/// Depth of the bounded channel `fetch_chunk_stream` sends decoded chunk
+/// bytes over. Small on purpose: it exists to give the network-reading task
+/// backpressure from the disk-writing consumer, not to buffer ahead — see
+/// `fetch_chunk_stream`'s doc comment.
+const CHUNK_STREAM_CHANNEL_CAPACITY: usize = 8;
 
 /// The raw result of downloading a save file: still gzip-compressed exactly
 /// as GOG's cloud storage stores it, plus the two headers callers need to
@@ -151,6 +156,16 @@ impl HttpClient {
     /// at once. The receiver may get zero or more `Ok(bytes)` messages
     /// followed by channel closure (success) or an `Err(...)` (failure).
     ///
+    /// The channel is **bounded** (`CHUNK_STREAM_CHANNEL_CAPACITY`) rather than
+    /// unbounded: this spawned task decodes network bytes far faster than a
+    /// slow disk can write them, so an unbounded channel would let decoded
+    /// bytes pile up here without limit whenever the CDN outruns the disk
+    /// (observed as unbounded RSS growth during a disk-bound repair). A small
+    /// bounded queue means `tx.send(...).await` blocks once it fills, which
+    /// stalls this task's `stream.next()` loop and, transitively, TCP itself —
+    /// so the consumer's write-to-disk rate naturally caps how far ahead the
+    /// network is allowed to get.
+    ///
     /// `response_timeout` bounds how long the initial request may take to
     /// receive a response (guards against a CDN host that never answers);
     /// `idle_timeout` bounds each individual read of the body stream (guards
@@ -164,8 +179,8 @@ impl HttpClient {
         auth: String,
         response_timeout: Duration,
         idle_timeout: Duration,
-    ) -> mpsc::UnboundedReceiver<Result<Vec<u8>, ClientError>> {
-        let (tx, rx) = mpsc::unbounded_channel();
+    ) -> mpsc::Receiver<Result<Vec<u8>, ClientError>> {
+        let (tx, rx) = mpsc::channel(CHUNK_STREAM_CHANNEL_CAPACITY);
         let url = url.to_string();
         let auth = auth;
 
@@ -174,7 +189,7 @@ impl HttpClient {
             let parsed_url = match Url::parse(&url) {
                 Ok(url) => url,
                 Err(e) => {
-                    tx.send(Err(e.into())).ok();
+                    tx.send(Err(e.into())).await.ok();
                     return;
                 }
             };
@@ -200,11 +215,11 @@ impl HttpClient {
                     } else {
                         e.into()
                     };
-                    tx.send(Err(err)).ok();
+                    tx.send(Err(err)).await.ok();
                     return;
                 }
                 Err(_elapsed) => {
-                    tx.send(Err(ClientError::Timeout)).ok();
+                    tx.send(Err(ClientError::Timeout)).await.ok();
                     return;
                 }
             };
@@ -216,6 +231,7 @@ impl HttpClient {
                     status,
                     body: response_text,
                 }))
+                .await
                 .ok();
                 return;
             }
@@ -226,7 +242,7 @@ impl HttpClient {
                 let next = match tokio::time::timeout(idle_timeout, stream.next()).await {
                     Ok(next) => next,
                     Err(_elapsed) => {
-                        tx.send(Err(ClientError::Timeout)).ok();
+                        tx.send(Err(ClientError::Timeout)).await.ok();
                         return;
                     }
                 };
@@ -237,20 +253,20 @@ impl HttpClient {
                 let downloaded_bytes = match chunk {
                     Ok(bytes) => bytes,
                     Err(err) => {
-                        tx.send(Err(ClientError::StreamError(err))).ok();
+                        tx.send(Err(ClientError::StreamError(err))).await.ok();
                         return;
                     }
                 };
 
                 if let Err(e) = decoder.write_all(&downloaded_bytes) {
-                    tx.send(Err(e.into())).ok();
+                    tx.send(Err(e.into())).await.ok();
                     return;
                 }
 
                 // Drain whatever the decoder has produced so far without
                 // waiting for the rest of the response.
                 let produced = std::mem::take(decoder.get_mut());
-                if !produced.is_empty() && tx.send(Ok(produced)).is_err() {
+                if !produced.is_empty() && tx.send(Ok(produced)).await.is_err() {
                     // Receiver dropped; no point continuing.
                     return;
                 }
@@ -259,11 +275,11 @@ impl HttpClient {
             match decoder.finish() {
                 Ok(remaining) => {
                     if !remaining.is_empty() {
-                        tx.send(Ok(remaining)).ok();
+                        tx.send(Ok(remaining)).await.ok();
                     }
                 }
                 Err(e) => {
-                    tx.send(Err(e.into())).ok();
+                    tx.send(Err(e.into())).await.ok();
                 }
             }
         });
@@ -330,7 +346,11 @@ impl HttpClient {
             .map(|s| s.to_owned());
 
         let mut stream = response.bytes_stream();
-        let mut buffer = Vec::new();
+        // Pre-sized from `Content-Length` (when present) so the buffer grows
+        // to its final size in one allocation instead of doubling repeatedly
+        // as chunks arrive, which would otherwise transiently need up to ~2x
+        // the save's size in memory right as the last doubling happens.
+        let mut buffer = Vec::with_capacity(total as usize);
         let mut downloaded: u64 = 0;
         while let Some(chunk) = stream.next().await {
             let chunk = chunk?;
