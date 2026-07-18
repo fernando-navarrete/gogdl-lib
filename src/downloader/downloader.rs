@@ -57,6 +57,10 @@ impl Downloader {
         control: DownloadControl,
         tx: mpsc::UnboundedSender<RepairEvent>,
     ) -> Result<(), DownloadError> {
+        // Held for the whole job: publishes the terminal `JobStatus` on every
+        // exit path (success, error, or this future being dropped) so status
+        // watchers subscribed to `control` always see a final edge.
+        let _completion = control.completion_guard();
         let resolver = Arc::new(PathResolver::new(PathBuf::from(path)).await?);
 
         let all_files = files
@@ -132,7 +136,7 @@ impl Downloader {
         // measured throughput for the lifetime of the download stage below.
         let meter = ThroughputMeter::new();
         let limiter = AdaptiveLimiter::new(self.config.min_concurrency);
-        let controller = spawn_controller(
+        let _controller = spawn_controller(
             meter.clone(),
             limiter.clone(),
             self.config.clone(),
@@ -194,7 +198,6 @@ impl Downloader {
             },
         )
         .await;
-        controller.abort();
 
         for result in results {
             result?;
@@ -214,6 +217,8 @@ impl Downloader {
         control: DownloadControl,
         tx: mpsc::UnboundedSender<DownloadJobEvent>,
     ) -> Result<(), DownloadError> {
+        // See `repair_download`: publishes the terminal `JobStatus` on drop.
+        let _completion = control.completion_guard();
         let resolver = Arc::new(PathResolver::new(PathBuf::from(path)).await?);
 
         let all_files = files
@@ -242,7 +247,7 @@ impl Downloader {
         // against measured throughput rather than a fixed CPU-derived split.
         let meter = ThroughputMeter::new();
         let limiter = AdaptiveLimiter::new(self.config.min_concurrency);
-        let controller = spawn_controller(
+        let _controller = spawn_controller(
             meter.clone(),
             limiter.clone(),
             self.config.clone(),
@@ -302,7 +307,6 @@ impl Downloader {
             },
         )
         .await;
-        controller.abort();
 
         for result in results {
             result?;

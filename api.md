@@ -517,16 +517,17 @@ impl DownloadControl {
 
     /// Requests a pause. Chunks already in flight finish and flush normally
     /// (drain semantics — nothing is interrupted mid-transfer); no *new*
-    /// chunk starts until `resume()`. No-op once cancelled.
+    /// chunk starts until `resume()`. No-op once cancelled or completed.
     pub fn pause(&self);
 
-    /// Un-pauses: parked chunks proceed. No-op once cancelled.
+    /// Un-pauses: parked chunks proceed. No-op once cancelled or completed.
     pub fn resume(&self);
 
     /// Requests cancellation. Like pause, chunks already in flight drain to
     /// completion; no new chunk starts. Terminal — pause()/resume() become
     /// no-ops afterward. The job's `download_files`/`repair_files` future
     /// still resolves `Ok(())` once everything has drained (see below).
+    /// No-op once the job has completed.
     pub fn cancel(&self);
 
     /// The current status, computed live from in-flight state.
@@ -552,6 +553,7 @@ pub enum JobStatus {
     Paused,     // pause requested; nothing in flight
     Cancelling, // cancel requested; one or more chunks still draining
     Cancelled,  // cancel requested; nothing in flight (terminal)
+    Completed,  // job future resolved without a cancel (terminal)
 }
 ```
 
@@ -570,8 +572,18 @@ let control = DownloadControl::new();
 let mut status_rx = control.subscribe();
 
 tokio::spawn(async move {
-    while status_rx.changed().await.is_ok() {
-        println!("job status: {:?}", *status_rx.borrow());
+    loop {
+        let status = *status_rx.borrow_and_update();
+        println!("job status: {:?}", status);
+        // Stop on a terminal status — `Completed` (or `Cancelled`) is
+        // always published when the job's future resolves, so this task
+        // never outlives its job.
+        if matches!(status, JobStatus::Completed | JobStatus::Cancelled) {
+            break;
+        }
+        if status_rx.changed().await.is_err() {
+            break;
+        }
     }
 });
 
@@ -599,6 +611,14 @@ control.cancel();
   a failure. Check `control.is_cancelled()` (or the terminal `JobStatus`) to
   tell "the user cancelled" apart from "the job actually finished downloading
   everything."
+- **Completion is always signalled.** When a `download_files`/`repair_files`
+  future resolves — success *or* error — the status settles to a terminal
+  `JobStatus::Completed`, unless a cancel was requested first, in which case
+  `Cancelled` wins (so `is_cancelled()` keeps telling "user cancelled" apart
+  from "actually finished"). A status watcher must exit on `Completed`/
+  `Cancelled` (as in the example above); waiting only on `changed()` would
+  otherwise park forever once the job is done, leaking the watcher task and
+  the control handle.
 - **Resume ramp-up:** the adaptive concurrency controller (see
   [§5.6](#56-tuning-network-behavior-downloadconfig)) is aware of pauses and
   re-baselines instead of shrinking to the concurrency floor while paused, so

@@ -31,6 +31,10 @@ pub enum JobStatus {
     Cancelling,
     /// Cancel requested; no chunks are in flight. Terminal.
     Cancelled,
+    /// The job's future resolved (successfully or with an error) without
+    /// being cancelled. Terminal — `subscribe()` watchers should stop on
+    /// this edge (or on `Cancelled`); no further transitions follow.
+    Completed,
 }
 
 /// The gate's own instruction state. Kept separate from `JobStatus` because
@@ -48,6 +52,11 @@ struct St {
     /// Number of chunk futures currently past the gate (claimed a slot via
     /// `wait_to_proceed` and haven't yet dropped their `ActiveGuard`).
     active: usize,
+    /// Set once the job's future resolves (see `complete`). Terminal: it
+    /// makes the published status `Completed` (unless a cancel was
+    /// requested, which wins) and turns `pause`/`resume`/`cancel` into
+    /// no-ops.
+    completed: bool,
 }
 
 struct Inner {
@@ -65,12 +74,16 @@ impl Inner {
     /// Recomputes `JobStatus` from the current `request`/`active` and
     /// publishes it. Called with `st` already locked.
     fn publish_status(&self, st: &St) {
-        let status = match (st.request, st.active) {
-            (Request::Run, _) => JobStatus::Running,
-            (Request::Pause, 0) => JobStatus::Paused,
-            (Request::Pause, _) => JobStatus::Pausing,
-            (Request::Cancel, 0) => JobStatus::Cancelled,
-            (Request::Cancel, _) => JobStatus::Cancelling,
+        let status = match (st.request, st.completed, st.active) {
+            // A requested cancel outranks completion: `cancel()` still
+            // resolves the job `Ok(())`, so both can be true at once and
+            // the caller-visible answer must stay "cancelled".
+            (Request::Cancel, _, 0) => JobStatus::Cancelled,
+            (Request::Cancel, _, _) => JobStatus::Cancelling,
+            (_, true, _) => JobStatus::Completed,
+            (Request::Run, _, _) => JobStatus::Running,
+            (Request::Pause, _, 0) => JobStatus::Paused,
+            (Request::Pause, _, _) => JobStatus::Pausing,
         };
         self.status_tx.send_replace(status);
     }
@@ -98,6 +111,7 @@ impl DownloadControl {
                 st: Mutex::new(St {
                     request: Request::Run,
                     active: 0,
+                    completed: false,
                 }),
                 request_tx,
                 status_tx,
@@ -107,10 +121,10 @@ impl DownloadControl {
 
     /// Requests a pause: no new chunk will start until `resume()`. Chunks
     /// already past the gate finish and flush normally (drain semantics). A
-    /// no-op once the job has been cancelled.
+    /// no-op once the job has been cancelled or has completed.
     pub fn pause(&self) {
         let mut st = self.inner.st.lock().unwrap();
-        if st.request == Request::Cancel {
+        if st.request == Request::Cancel || st.completed {
             return;
         }
         st.request = Request::Pause;
@@ -122,10 +136,10 @@ impl DownloadControl {
     }
 
     /// Un-pauses the job, letting parked chunks proceed. A no-op once the job
-    /// has been cancelled.
+    /// has been cancelled or has completed.
     pub fn resume(&self) {
         let mut st = self.inner.st.lock().unwrap();
-        if st.request == Request::Cancel {
+        if st.request == Request::Cancel || st.completed {
             return;
         }
         st.request = Request::Run;
@@ -136,9 +150,12 @@ impl DownloadControl {
     /// Requests cancellation: no new chunk will start (parked or not-yet-
     /// gated chunks return without downloading), and the job winds down once
     /// every already-in-flight chunk finishes draining. Terminal — `pause()`/
-    /// `resume()` are no-ops afterward.
+    /// `resume()` are no-ops afterward. A no-op once the job has completed.
     pub fn cancel(&self) {
         let mut st = self.inner.st.lock().unwrap();
+        if st.completed {
+            return;
+        }
         st.request = Request::Cancel;
         self.inner.request_tx.send_replace(Request::Cancel);
         self.inner.publish_status(&st);
@@ -218,6 +235,29 @@ impl DownloadControl {
         st.active -= 1;
         self.inner.publish_status(&st);
     }
+
+    /// Marks the job as finished, settling the published status to
+    /// `Completed` (unless a cancel was requested first — `Cancelled` wins)
+    /// so `subscribe()` watchers get a final edge to stop on. Without this,
+    /// a successfully finished job would leave the status at `Running`
+    /// forever and any status-watching task would park (and leak) on
+    /// `changed().await`.
+    pub(crate) fn complete(&self) {
+        let mut st = self.inner.st.lock().unwrap();
+        if st.completed {
+            return;
+        }
+        st.completed = true;
+        self.inner.publish_status(&st);
+    }
+
+    /// RAII guard the job's engine holds for the lifetime of its future;
+    /// dropping it calls `complete()`, so completion is published on every
+    /// exit path — success, early error return, or the caller dropping the
+    /// job future outright.
+    pub(crate) fn completion_guard(&self) -> CompletionGuard {
+        CompletionGuard(self.clone())
+    }
 }
 
 impl Default for DownloadControl {
@@ -233,6 +273,16 @@ pub(crate) struct ActiveGuard(DownloadControl);
 impl Drop for ActiveGuard {
     fn drop(&mut self) {
         self.0.finish_unit();
+    }
+}
+
+/// RAII guard returned by `DownloadControl::completion_guard`; publishes the
+/// job's terminal status on drop.
+pub(crate) struct CompletionGuard(DownloadControl);
+
+impl Drop for CompletionGuard {
+    fn drop(&mut self) {
+        self.0.complete();
     }
 }
 
@@ -320,6 +370,84 @@ mod tests {
 
         drop(guard);
         assert_eq!(control.status(), JobStatus::Cancelled);
+    }
+
+    #[tokio::test]
+    async fn completion_guard_drop_settles_status_to_completed() {
+        let control = DownloadControl::new();
+        let guard = control.completion_guard();
+        assert_eq!(control.status(), JobStatus::Running);
+
+        drop(guard);
+        assert_eq!(control.status(), JobStatus::Completed);
+    }
+
+    #[tokio::test]
+    async fn cancel_then_complete_stays_cancelled() {
+        let control = DownloadControl::new();
+        let guard = control.completion_guard();
+
+        control.cancel();
+        drop(guard);
+        assert_eq!(control.status(), JobStatus::Cancelled);
+        assert!(control.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn complete_while_paused_settles_to_completed() {
+        // A zero-chunk job (e.g. repairing an already-complete install) can
+        // resolve while a pause request is standing; completion must win so
+        // the control doesn't report a finished job as `Paused`.
+        let control = DownloadControl::new();
+        control.pause();
+        assert_eq!(control.status(), JobStatus::Paused);
+
+        control.complete();
+        assert_eq!(control.status(), JobStatus::Completed);
+        assert!(!control.is_paused());
+    }
+
+    #[tokio::test]
+    async fn pause_resume_cancel_are_no_ops_after_completion() {
+        let control = DownloadControl::new();
+        control.complete();
+
+        control.pause();
+        assert_eq!(control.status(), JobStatus::Completed);
+
+        control.resume();
+        assert_eq!(control.status(), JobStatus::Completed);
+
+        control.cancel();
+        assert_eq!(control.status(), JobStatus::Completed);
+    }
+
+    #[tokio::test]
+    async fn status_watcher_terminates_when_job_completes() {
+        // Regression test for the leak this fixes: the api.md §5.3 watcher
+        // pattern parked forever on `changed().await` after a successful
+        // job because no terminal edge was ever published.
+        let control = DownloadControl::new();
+        let mut rx = control.subscribe();
+        let watcher = tokio::spawn(async move {
+            loop {
+                let status = *rx.borrow_and_update();
+                if matches!(status, JobStatus::Completed | JobStatus::Cancelled) {
+                    return status;
+                }
+                if rx.changed().await.is_err() {
+                    return *rx.borrow();
+                }
+            }
+        });
+
+        let guard = control.completion_guard();
+        drop(guard);
+
+        let joined = tokio::time::timeout(std::time::Duration::from_secs(1), watcher)
+            .await
+            .expect("status watcher should terminate once the job completes");
+        assert_eq!(joined.unwrap(), JobStatus::Completed);
     }
 
     #[tokio::test]

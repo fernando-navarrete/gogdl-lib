@@ -119,10 +119,23 @@ const NOISE_FLOOR: f64 = 0.05;
 /// load) rather than ordinary background flakiness.
 const ERROR_SPIKE_THRESHOLD: u64 = 3;
 
+/// Handle to the spawned controller task; aborts it on drop. The sampler
+/// loop otherwise runs forever, so tying its lifetime to this handle (held
+/// across the download stage) guarantees it can't leak — even when the
+/// job's future is dropped mid-stage instead of running to completion,
+/// which a plain `JoinHandle` + explicit `abort()` call would miss.
+pub(crate) struct ControllerHandle(JoinHandle<()>);
+
+impl Drop for ControllerHandle {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 /// Spawns the background task that hill-climbs chunk concurrency against
 /// measured throughput once per `config.sample_interval`, backing off when
-/// transient errors spike. The caller should `abort()` the returned handle
-/// once the job's download stage finishes — the loop otherwise runs forever.
+/// transient errors spike. The loop runs until the returned
+/// `ControllerHandle` is dropped.
 ///
 /// `control` is consulted each sample: while the job is paused, no chunk
 /// bytes are flowing, so throughput reads as ~0 and would otherwise look
@@ -135,8 +148,8 @@ pub(crate) fn spawn_controller(
     limiter: Arc<AdaptiveLimiter>,
     config: DownloadConfig,
     control: DownloadControl,
-) -> JoinHandle<()> {
-    tokio::spawn(async move {
+) -> ControllerHandle {
+    ControllerHandle(tokio::spawn(async move {
         // Read the limiter's actual starting permit count rather than
         // assuming `config.min_concurrency`: the two always match in
         // production (the limiter is always constructed with exactly that
@@ -215,7 +228,7 @@ pub(crate) fn spawn_controller(
             current = next;
             last_throughput = throughput;
         }
-    })
+    }))
 }
 
 #[cfg(test)]
@@ -284,7 +297,7 @@ mod tests {
             })
             .await;
         }
-        controller.abort();
+        drop(controller);
 
         let final_limit = limiter.current_limit();
         // The hill-climb should have found its way to (and then oscillate
@@ -332,7 +345,7 @@ mod tests {
         // controller task has been polled to completion before returning —
         // give the scheduler an explicit turn to run it.
         tokio::task::yield_now().await;
-        controller.abort();
+        drop(controller);
 
         let after = limiter.current_limit();
         assert!(
