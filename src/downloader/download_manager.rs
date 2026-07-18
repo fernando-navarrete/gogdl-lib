@@ -6,7 +6,7 @@ use crate::{
     DownloadJobEvent, RepairEvent, VerifyEvent,
     auth::AuthManager,
     client::HttpClient,
-    depot::DepotManager,
+    depot::{Depot, DepotManager},
     downloader::{
         DownloadConfig, control::DownloadControl, downloadable_files::DownloadableFiles,
         downloadable_product::DownloadableProduct, downloader::Downloader, error::DownloadError,
@@ -63,21 +63,27 @@ impl DownloadManager {
         let mut inner = self.inner.lock().await;
         inner.download_config = config;
     }
+    /// Snapshots the manager's current auth/secure-links/config under the
+    /// lock and builds the per-job `Downloader` from them — the shared
+    /// preamble of `verify_download`/`repair_download`/`download`.
+    async fn make_downloader(&self) -> Downloader {
+        let (auth, links, config) = {
+            let inner = self.inner.lock().await;
+            (
+                inner.auth.clone(),
+                inner.secure_links.clone(),
+                inner.download_config.clone(),
+            )
+        };
+        Downloader::new_with_config(self.client.clone(), links, auth, config)
+    }
     pub async fn verify_download(
         &self,
         path: &str,
         files: Vec<DownloadableFiles>,
         tx: mpsc::UnboundedSender<VerifyEvent>,
     ) -> Result<(), DownloadError> {
-        let (auth, links, config) = {
-            let inner = self.inner.lock().await;
-            let auth = inner.auth.clone();
-            let links = inner.secure_links.clone();
-            let config = inner.download_config.clone();
-            (auth, links, config)
-        };
-        let downloader = Downloader::new_with_config(self.client.clone(), links, auth, config);
-        downloader.verify(files, path, tx).await?;
+        self.make_downloader().await.verify(files, path, tx).await?;
         Ok(())
     }
     pub async fn repair_download(
@@ -87,15 +93,10 @@ impl DownloadManager {
         control: DownloadControl,
         tx: mpsc::UnboundedSender<RepairEvent>,
     ) -> Result<(), DownloadError> {
-        let (auth, links, config) = {
-            let inner = self.inner.lock().await;
-            let auth = inner.auth.clone();
-            let links = inner.secure_links.clone();
-            let config = inner.download_config.clone();
-            (auth, links, config)
-        };
-        let downloader = Downloader::new_with_config(self.client.clone(), links, auth, config);
-        downloader.repair_download(files, path, control, tx).await?;
+        self.make_downloader()
+            .await
+            .repair_download(files, path, control, tx)
+            .await?;
         Ok(())
     }
     pub async fn download(
@@ -105,16 +106,43 @@ impl DownloadManager {
         control: DownloadControl,
         tx: mpsc::UnboundedSender<DownloadJobEvent>,
     ) -> Result<(), DownloadError> {
-        let (auth, links, config) = {
-            let inner = self.inner.lock().await;
-            let auth = inner.auth.clone();
-            let links = inner.secure_links.clone();
-            let config = inner.download_config.clone();
-            (auth, links, config)
-        };
-        let downloader = Downloader::new_with_config(self.client.clone(), links, auth, config);
-        downloader.download(files, path, control, tx).await?;
+        self.make_downloader()
+            .await
+            .download(files, path, control, tx)
+            .await?;
         Ok(())
+    }
+    /// Resolves `build_name` among `game_id`'s builds and groups the build's
+    /// depots by product id — the shared first half of
+    /// `get_downloadable_products` and `get_downloadable_files`.
+    pub(crate) async fn resolve_build_depots(
+        &self,
+        game_id: i32,
+        build_name: &str,
+    ) -> Result<HashMap<String, Vec<Depot>>, DownloadError> {
+        let game_builds = {
+            let inner = self.inner.lock().await;
+            inner.games.get_game_builds(game_id).await?
+        };
+        let build = game_builds
+            .items
+            .iter()
+            .find(|b| b.version_name == build_name)
+            .ok_or(DownloadError::BuildNotFound)?;
+
+        let build_metadata = {
+            let inner = self.inner.lock().await;
+            inner.depot.get_build_metadata(&build.link).await?
+        };
+
+        let mut products: HashMap<String, Vec<Depot>> = HashMap::new();
+        for depot in build_metadata.depots {
+            products
+                .entry(depot.product_id.clone())
+                .or_default()
+                .push(depot);
+        }
+        Ok(products)
     }
     pub async fn get_downloadable_products(
         &self,

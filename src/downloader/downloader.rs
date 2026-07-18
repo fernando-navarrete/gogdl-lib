@@ -9,6 +9,7 @@ use crate::{
     DownloadableFiles,
     auth::AuthManager,
     client::HttpClient,
+    depot::DownloadUnit,
     downloader::{
         DownloadConfig, DownloadError,
         adaptive::{AdaptiveLimiter, ThroughputMeter, spawn_controller},
@@ -17,8 +18,8 @@ use crate::{
             DownloadDetail, DownloadEvent, DownloadJobEvent, DownloadStage, RepairDetail,
             RepairEvent, RepairStage, VerifyEvent,
         },
-        stages::default_concurrency,
-        util::{ChecksumAlgorithm, PathResolver, compute_chunk_checksum},
+        stages::{ChunkVerifyIssue, DownloadStageCtx, check_unit_checksum, default_concurrency},
+        util::PathResolver,
     },
     secure_links::SecureLinksManager,
 };
@@ -123,87 +124,18 @@ impl Downloader {
         let needs_download_map: HashSet<&str> =
             errored_units.iter().map(|f| f.path.as_str()).collect();
 
-        let (total_bytes, total_chunks) = files
-            .iter()
-            .flat_map(|f| f.product_files.iter())
-            .flat_map(|df| df.get_download_units())
-            .filter(|u| needs_download_map.contains(&u.path.as_str()))
-            .fold((0u64, 0usize), |(bytes, chunks), u| (bytes + u.size, chunks + 1));
-
-        // One adaptive concurrency limit shared by every product's chunks in
-        // this job — not a fixed, CPU-derived number per product (see
-        // `downloader::adaptive`). The controller hill-climbs it against
-        // measured throughput for the lifetime of the download stage below.
-        let meter = ThroughputMeter::new();
-        let limiter = AdaptiveLimiter::new(self.config.min_concurrency);
-        let _controller = spawn_controller(
-            meter.clone(),
-            limiter.clone(),
-            self.config.clone(),
-            control.clone(),
-        );
-        let config = Arc::new(self.config.clone());
-
-        let results = run_stage(
+        self.run_download_stage(
+            files,
+            resolver,
+            control,
+            |unit| needs_download_map.contains(&unit.path.as_str()),
             &tx,
             |event| RepairEvent {
                 stage: RepairStage::Downloading,
                 detail: RepairDetail::Download(event),
             },
-            |stage_tx| {
-                stage_tx
-                    .send(DownloadEvent::Total {
-                        bytes: total_bytes,
-                        chunks: total_chunks,
-                    })
-                    .ok();
-
-                let mut download_futures = Vec::new();
-                for file in files {
-                    let filtered_files = file
-                        .product_files
-                        .iter()
-                        .flat_map(|depot_file| depot_file.get_download_units())
-                        .filter(|unit| needs_download_map.contains(&unit.path.as_str()))
-                        .collect::<Vec<_>>();
-                    if !filtered_files.is_empty() {
-                        let stage_tx = stage_tx.clone();
-                        let resolver = resolver.clone();
-                        let limiter = limiter.clone();
-                        let meter = meter.clone();
-                        let config = config.clone();
-                        let control = control.clone();
-                        let is_dependency = file.is_dependency;
-                        download_futures.push(async move {
-                            self.download_chunk(
-                                filtered_files,
-                                resolver,
-                                &file.product_id,
-                                limiter,
-                                meter,
-                                config,
-                                control,
-                                stage_tx,
-                                is_dependency,
-                            )
-                            .await
-                        });
-                    }
-                }
-                // `stage_tx`'s original handle is dropped here at the end of
-                // this closure, so the channel closes (and the stage's
-                // event-forwarder returns) once every spawned download
-                // future below has finished and dropped its own clone.
-                futures::future::join_all(download_futures)
-            },
         )
-        .await;
-
-        for result in results {
-            result?;
-        }
-
-        Ok(())
+        .await
     }
     /// Downloads every file in `files` into `path` from scratch: allocates
     /// all files on disk, then downloads every chunk. Unlike
@@ -236,15 +168,46 @@ impl Downloader {
         )
         .await?;
 
+        self.run_download_stage(
+            files,
+            resolver,
+            control,
+            |_| true,
+            &tx,
+            |event| DownloadJobEvent {
+                stage: DownloadStage::Downloading,
+                detail: DownloadDetail::Download(event),
+            },
+        )
+        .await
+    }
+    /// The download stage shared by `download` and `repair_download`: totals
+    /// up the units selected by `should_download`, spins up the job's
+    /// adaptive concurrency controller, and downloads every selected unit of
+    /// every product, forwarding `DownloadEvent`s to `out_tx` via `wrap`.
+    async fn run_download_stage<T>(
+        &self,
+        files: Vec<DownloadableFiles>,
+        resolver: Arc<PathResolver>,
+        control: DownloadControl,
+        should_download: impl Fn(&DownloadUnit) -> bool,
+        out_tx: &mpsc::UnboundedSender<T>,
+        wrap: impl Fn(DownloadEvent) -> T,
+    ) -> Result<(), DownloadError> {
         let (total_bytes, total_chunks) = files
             .iter()
             .flat_map(|f| f.product_files.iter())
             .flat_map(|df| df.get_download_units())
-            .fold((0u64, 0usize), |(bytes, chunks), u| (bytes + u.size, chunks + 1));
+            .filter(|u| should_download(u))
+            .fold((0u64, 0usize), |(bytes, chunks), u| {
+                (bytes + u.size, chunks + 1)
+            });
 
-        // See the comment in `repair_download`: one adaptive concurrency
-        // limit shared by every product's chunks in this job, hill-climbed
-        // against measured throughput rather than a fixed CPU-derived split.
+        // One adaptive concurrency limit shared by every product's chunks in
+        // this job — not a fixed, CPU-derived number per product (see
+        // `downloader::adaptive`). The controller hill-climbs it against
+        // measured throughput for the lifetime of the download stage, and
+        // its handle aborts the sampler task on drop.
         let meter = ThroughputMeter::new();
         let limiter = AdaptiveLimiter::new(self.config.min_concurrency);
         let _controller = spawn_controller(
@@ -253,59 +216,47 @@ impl Downloader {
             self.config.clone(),
             control.clone(),
         );
-        let config = Arc::new(self.config.clone());
 
-        let results = run_stage(
-            &tx,
-            |event| DownloadJobEvent {
-                stage: DownloadStage::Downloading,
-                detail: DownloadDetail::Download(event),
-            },
-            |stage_tx| {
-                stage_tx
-                    .send(DownloadEvent::Total {
-                        bytes: total_bytes,
-                        chunks: total_chunks,
-                    })
-                    .ok();
+        let results = run_stage(out_tx, wrap, |stage_tx| {
+            stage_tx
+                .send(DownloadEvent::Total {
+                    bytes: total_bytes,
+                    chunks: total_chunks,
+                })
+                .ok();
 
-                let mut download_futures = Vec::new();
-                for file in files {
-                    let units = file
-                        .product_files
-                        .iter()
-                        .flat_map(|depot_file| depot_file.get_download_units())
-                        .collect::<Vec<_>>();
-                    if !units.is_empty() {
-                        let stage_tx = stage_tx.clone();
-                        let resolver = resolver.clone();
-                        let limiter = limiter.clone();
-                        let meter = meter.clone();
-                        let config = config.clone();
-                        let control = control.clone();
-                        let is_dependency = file.is_dependency;
-                        download_futures.push(async move {
-                            self.download_chunk(
-                                units,
-                                resolver,
-                                &file.product_id,
-                                limiter,
-                                meter,
-                                config,
-                                control,
-                                stage_tx,
-                                is_dependency,
-                            )
+            let ctx = DownloadStageCtx {
+                client: self.client.clone(),
+                resolver,
+                limiter,
+                meter,
+                config: Arc::new(self.config.clone()),
+                control,
+                tx: stage_tx,
+            };
+
+            let mut download_futures = Vec::new();
+            for file in files {
+                let units = file
+                    .product_files
+                    .iter()
+                    .flat_map(|depot_file| depot_file.get_download_units())
+                    .filter(|unit| should_download(unit))
+                    .collect::<Vec<_>>();
+                if !units.is_empty() {
+                    let ctx = ctx.clone();
+                    download_futures.push(async move {
+                        self.download_chunk(units, &file.product_id, ctx, file.is_dependency)
                             .await
-                        });
-                    }
+                    });
                 }
-                // See the comment in `repair_download`: `stage_tx`'s
-                // original handle drops here, closing the channel once
-                // every download future finishes.
-                futures::future::join_all(download_futures)
-            },
-        )
+            }
+            // `ctx` (and with it the original `stage_tx` handle) is dropped
+            // here at the end of this closure, so the channel closes (and
+            // the stage's event-forwarder returns) once every download
+            // future below has finished and dropped its own clone.
+            futures::future::join_all(download_futures)
+        })
         .await;
 
         for result in results {
@@ -324,16 +275,10 @@ impl Downloader {
 
         let concurrency = default_concurrency();
 
-        let files = files
-            .iter()
-            .map(|files| files.product_files.clone())
-            .flatten()
-            .collect::<Vec<_>>();
-
         let chunks = files
             .iter()
-            .map(|chunk| chunk.get_download_units())
-            .flatten()
+            .flat_map(|files| files.product_files.iter())
+            .flat_map(|file| file.get_download_units())
             .collect::<Vec<_>>();
 
         stream::iter(chunks)
@@ -341,58 +286,34 @@ impl Downloader {
                 let resolver = resolver.clone();
                 let tx = tx.clone();
                 async move {
-                    let opt_path = match resolver.resolve_existing_path(&chunk.path).await {
-                        Ok(path) => path,
-                        Err(e) => {
+                    match check_unit_checksum(&resolver, &chunk).await {
+                        Ok(()) => {
+                            tx.send(VerifyEvent::ChunkOk).ok();
+                        }
+                        Err(ChunkVerifyIssue::PathResolveError(e)) => {
                             tx.send(VerifyEvent::CouldNotResolvePath(chunk.path.clone()))
                                 .ok();
                             println!("ERROR: {}: {}", chunk.path.clone(), e);
-                            return Some(chunk.path.clone());
                         }
-                    };
-
-                    let final_path = match opt_path {
-                        Some(path) => path,
-                        None => {
+                        Err(ChunkVerifyIssue::FileNotFound) => {
                             tx.send(VerifyEvent::FileNotFound(chunk.path.clone())).ok();
                             println!("ERROR: {}: FILE NOT FOUND", chunk.path.clone());
-                            return Some(chunk.path.clone());
                         }
-                    };
-
-                    let algo = ChecksumAlgorithm::Md5;
-                    let expected_checksum = chunk.md5.clone();
-
-                    let actual_checksum = match compute_chunk_checksum(
-                        final_path.clone(),
-                        chunk.offset,
-                        chunk.size,
-                        algo,
-                    )
-                    .await
-                    {
-                        Ok(checksum) => checksum,
-                        Err(e) => {
+                        Err(ChunkVerifyIssue::ChecksumCalculationError(final_path, e)) => {
                             tx.send(VerifyEvent::ChunkChecksumMismatch(
                                 final_path.to_string_lossy().to_string(),
                             ))
                             .ok();
                             println!("ERROR: {}: {}", chunk.path.clone(), e);
-                            return Some(chunk.path.clone());
                         }
-                    };
-
-                    if actual_checksum != expected_checksum {
-                        tx.send(VerifyEvent::ChunkChecksumMismatch(
-                            final_path.to_string_lossy().to_string(),
-                        ))
-                        .ok();
-                        println!("ERROR: {} CHECKSUM MISMATCH", chunk.path.clone());
-                        return Some(chunk.path.clone());
+                        Err(ChunkVerifyIssue::ChecksumMismatch(final_path)) => {
+                            tx.send(VerifyEvent::ChunkChecksumMismatch(
+                                final_path.to_string_lossy().to_string(),
+                            ))
+                            .ok();
+                            println!("ERROR: {} CHECKSUM MISMATCH", chunk.path.clone());
+                        }
                     }
-
-                    tx.send(VerifyEvent::ChunkOk).ok();
-                    return None;
                 }
             })
             .buffer_unordered(concurrency)

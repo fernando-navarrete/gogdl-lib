@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use crate::{
     depot::Depot,
     downloader::{DownloadError, DownloadManager},
@@ -26,30 +24,9 @@ impl DownloadableProduct {
                 return Ok(downloadable_products.clone());
             }
         }
-        let game_builds = {
-            let inner = download_manager.inner.lock().await;
-            inner.games.get_game_builds(game_id).await?
-        };
-        let build = game_builds
-            .items
-            .iter()
-            .find(|b| b.version_name == build_name)
-            .ok_or(DownloadError::BuildNotFound)?;
-
-        let build_metadata = {
-            let inner = download_manager.inner.lock().await;
-            inner.depot.get_build_metadata(&build.link).await?
-        };
-
-        let depots = build_metadata.depots.iter().collect::<Vec<_>>();
-        let mut products: HashMap<&str, Vec<Depot>> = HashMap::new();
-
-        for depot in depots.iter().cloned() {
-            products
-                .entry(&depot.product_id)
-                .or_insert_with(Vec::new)
-                .push(depot.clone());
-        }
+        let products = download_manager
+            .resolve_build_depots(game_id, build_name)
+            .await?;
 
         let owned_products = {
             let inner = download_manager.inner.lock().await;
@@ -59,10 +36,7 @@ impl DownloadableProduct {
         let downloadable_products = products
             .into_iter()
             .filter(|(product_id, _)| owned_products.owned.contains(&product_id.parse().unwrap()))
-            .map(|(product_id, depots)| DownloadableProduct {
-                product_id: product_id.to_string(),
-                depots,
-            })
+            .map(|(product_id, depots)| DownloadableProduct { product_id, depots })
             .collect::<Vec<_>>();
 
         let mut lock = download_manager.inner.lock().await;

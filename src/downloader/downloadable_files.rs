@@ -1,7 +1,5 @@
-use std::collections::HashMap;
-
 use crate::{
-    depot::{Depot, DepotFile},
+    depot::DepotFile,
     downloader::{DownloadError, DownloadManager},
 };
 
@@ -42,39 +40,13 @@ impl DownloadableFiles {
             }
         }
 
-        let game_builds = {
-            let inner = download_manager.inner.lock().await;
-            inner.games.get_game_builds(game_id).await?
-        };
-        let build = game_builds
-            .items
-            .iter()
-            .find(|b| b.version_name == build_name)
-            .ok_or(DownloadError::BuildNotFound)?;
-
-        let build_metadata = {
-            let inner = download_manager.inner.lock().await;
-            inner.depot.get_build_metadata(&build.link).await?
-        };
-
-        let depots = build_metadata.depots.iter().collect::<Vec<_>>();
-        let products = {
-            let mut products: HashMap<&str, Vec<Depot>> = HashMap::new();
-
-            for depot in depots.iter().cloned() {
-                products
-                    .entry(&depot.product_id)
-                    .or_insert_with(Vec::new)
-                    .push(depot.clone());
-            }
-
-            let products_vec = products.into_iter().collect::<Vec<_>>();
-            products_vec
-        };
+        let products = download_manager
+            .resolve_build_depots(game_id, build_name)
+            .await?;
 
         let filtered_products = products
-            .iter()
-            .filter(|(product_id, _)| selected_products.contains(&product_id))
+            .into_iter()
+            .filter(|(product_id, _)| selected_products.contains(&product_id.as_str()))
             .collect::<Vec<_>>();
 
         let mut downloadable_files: Vec<DownloadableFiles> = Vec::new();
