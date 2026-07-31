@@ -22,7 +22,6 @@ use tokio::sync::{Semaphore, SemaphorePermit};
 use tokio::task::JoinHandle;
 
 use crate::downloader::config::DownloadConfig;
-use crate::downloader::control::DownloadControl;
 
 /// Cumulative byte/transient-error counters fed by every in-flight chunk.
 /// The controller samples these once per interval and derives deltas itself;
@@ -119,37 +118,16 @@ const NOISE_FLOOR: f64 = 0.05;
 /// load) rather than ordinary background flakiness.
 const ERROR_SPIKE_THRESHOLD: u64 = 3;
 
-/// Handle to the spawned controller task; aborts it on drop. The sampler
-/// loop otherwise runs forever, so tying its lifetime to this handle (held
-/// across the download stage) guarantees it can't leak — even when the
-/// job's future is dropped mid-stage instead of running to completion,
-/// which a plain `JoinHandle` + explicit `abort()` call would miss.
-pub(crate) struct ControllerHandle(JoinHandle<()>);
-
-impl Drop for ControllerHandle {
-    fn drop(&mut self) {
-        self.0.abort();
-    }
-}
-
 /// Spawns the background task that hill-climbs chunk concurrency against
 /// measured throughput once per `config.sample_interval`, backing off when
-/// transient errors spike. The loop runs until the returned
-/// `ControllerHandle` is dropped.
-///
-/// `control` is consulted each sample: while the job is paused, no chunk
-/// bytes are flowing, so throughput reads as ~0 and would otherwise look
-/// like "concurrency is too high," shrinking the limit toward the floor for
-/// no reason and making resume ramp back up slowly. Instead, while paused,
-/// the sample is skipped and the bytes/error baseline is refreshed so the
-/// first post-resume sample measures a real window instead of a starved one.
+/// transient errors spike. The caller should `abort()` the returned handle
+/// once the job's download stage finishes — the loop otherwise runs forever.
 pub(crate) fn spawn_controller(
     meter: Arc<ThroughputMeter>,
     limiter: Arc<AdaptiveLimiter>,
     config: DownloadConfig,
-    control: DownloadControl,
-) -> ControllerHandle {
-    ControllerHandle(tokio::spawn(async move {
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
         // Read the limiter's actual starting permit count rather than
         // assuming `config.min_concurrency`: the two always match in
         // production (the limiter is always constructed with exactly that
@@ -166,16 +144,6 @@ pub(crate) fn spawn_controller(
             tokio::time::sleep(config.sample_interval).await;
 
             let (bytes, errors) = meter.snapshot();
-
-            if control.is_paused() {
-                // Re-baseline without adjusting concurrency: see the doc
-                // comment above.
-                last_bytes = bytes;
-                last_errors = errors;
-                last_throughput = 0.0;
-                continue;
-            }
-
             let bytes_delta = bytes.saturating_sub(last_bytes);
             let errors_delta = errors.saturating_sub(last_errors);
             last_bytes = bytes;
@@ -228,7 +196,7 @@ pub(crate) fn spawn_controller(
             current = next;
             last_throughput = throughput;
         }
-    }))
+    })
 }
 
 #[cfg(test)]
@@ -284,12 +252,7 @@ mod tests {
         let config = test_config(2, 200, 2, 100);
         let meter = ThroughputMeter::new();
         let limiter = AdaptiveLimiter::new(config.min_concurrency);
-        let controller = spawn_controller(
-            meter.clone(),
-            limiter.clone(),
-            config.clone(),
-            DownloadControl::new(),
-        );
+        let controller = spawn_controller(meter.clone(), limiter.clone(), config.clone());
 
         for _ in 0..80 {
             simulate_one_window(&meter, &limiter, config.sample_interval, |c| {
@@ -297,7 +260,7 @@ mod tests {
             })
             .await;
         }
-        drop(controller);
+        controller.abort();
 
         let final_limit = limiter.current_limit();
         // The hill-climb should have found its way to (and then oscillate
@@ -317,12 +280,7 @@ mod tests {
         let config = test_config(2, 200, 2, 100);
         let meter = ThroughputMeter::new();
         let limiter = AdaptiveLimiter::new(20);
-        let controller = spawn_controller(
-            meter.clone(),
-            limiter.clone(),
-            config.clone(),
-            DownloadControl::new(),
-        );
+        let controller = spawn_controller(meter.clone(), limiter.clone(), config.clone());
 
         // Let the freshly-spawned controller task run once so it reaches
         // its first `sleep` and actually registers a timer — otherwise the
@@ -345,7 +303,7 @@ mod tests {
         // controller task has been polled to completion before returning —
         // give the scheduler an explicit turn to run it.
         tokio::task::yield_now().await;
-        drop(controller);
+        controller.abort();
 
         let after = limiter.current_limit();
         assert!(

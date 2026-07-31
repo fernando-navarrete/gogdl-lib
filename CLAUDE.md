@@ -10,14 +10,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```sh
 cargo build              # build the library
-cargo test --lib         # run the full unit test suite (~33 tests, all in-tree)
+cargo test --lib         # run the full unit test suite (~26 tests, all in-tree)
 cargo test <substring>   # run a subset, e.g. `cargo test adaptive::`
 cargo check               # fast type-check without codegen
 cargo clippy               # lint
 cargo fmt                  # format
 ```
 
-Tests live inline in `mod tests` blocks within the source files they cover (not a separate `tests/` directory) — e.g. `src/downloader/adaptive.rs`, `src/downloader/control.rs`, `src/downloader/util/path_resolver.rs`, `src/client/client.rs`, `src/proton/release.rs`, `src/saves/*.rs`. Some tests (adaptive controller) use `tokio::time::pause`/`advance` (the `tokio` `test-util` feature, a dev-dependency) to drive timers deterministically instead of racing real sleeps — follow that pattern for any new time-dependent test rather than using real `sleep`s.
+Tests live inline in `mod tests` blocks within the source files they cover (not a separate `tests/` directory) — e.g. `src/downloader/adaptive.rs`, `src/downloader/util/path_resolver.rs`, `src/client/client.rs`, `src/proton/release.rs`, `src/saves/*.rs`. Some tests (adaptive controller) use `tokio::time::pause`/`advance` (the `tokio` `test-util` feature, a dev-dependency) to drive timers deterministically instead of racing real sleeps — follow that pattern for any new time-dependent test rather than using real `sleep`s.
 
 ## Architecture
 
@@ -44,11 +44,10 @@ This is the most involved module:
 
 - `downloader.rs` / `download_manager.rs` — top-level download/repair/verify orchestration.
 - `adaptive.rs` — an adaptive concurrency controller that hill-climbs concurrent chunk downloads between `DownloadConfig::min_concurrency`/`max_concurrency` against measured throughput, backing off on transient error bursts. Driven by `sample_interval`/`step` in `DownloadConfig` (`config.rs`).
-- `control.rs` — `DownloadControl`/`JobStatus`: a cheap-to-clone, separate-from-the-progress-channel handle for pause/resume/cancel. Pause/cancel are two-phase (`Pausing`→`Paused`, `Cancelling`→`Cancelled`) with drain-never-discard semantics — an in-flight chunk always finishes and flushes before the transition settles. `cancel()` still resolves the job `Ok(())`; check `is_cancelled()`/`JobStatus` to distinguish "user cancelled" from "actually finished."
 - `stream.rs` — chunk-level HTTP streaming/decoding (zlib via `flate2`) and retry/timeout handling.
 - `stages.rs` — allocation/download/verify stage sequencing and event emission.
 - `events.rs` — the public progress event types (`DownloadJobEvent`, `DownloadEvent`, `RepairEvent`, `VerifyEvent`, etc.) sent over caller-owned `mpsc::UnboundedSender` channels. Progress is push-based: the job's own `async fn` only resolves on completion/failure, all incremental state goes over the channel.
 - `util/path_resolver.rs` — resolves manifest paths safely under the install root (rejects path traversal, sanitizes reserved Windows filenames); has concurrency-safety tests for concurrent resolves of the same directory.
 - `util/hash.rs` — checksum verification (MD5/SHA-256, used for saves/Proton and repair/verify flows).
 
-When changing progress-channel event shapes, downloader retry/timeout behavior, or `DownloadControl` semantics, update the corresponding section of `api.md` (§5) in the same change — it's treated as the authoritative spec for consumers, not incidental documentation.
+When changing progress-channel event shapes or downloader retry/timeout behavior, update the corresponding section of `api.md` (§5) in the same change — it's treated as the authoritative spec for consumers, not incidental documentation.

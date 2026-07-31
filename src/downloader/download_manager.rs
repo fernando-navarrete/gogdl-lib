@@ -8,7 +8,7 @@ use crate::{
     client::HttpClient,
     depot::{Depot, DepotManager},
     downloader::{
-        DownloadConfig, control::DownloadControl, downloadable_files::DownloadableFiles,
+        DownloadConfig, downloadable_files::DownloadableFiles,
         downloadable_product::DownloadableProduct, downloader::Downloader, error::DownloadError,
     },
     games::GamesManager,
@@ -90,12 +90,11 @@ impl DownloadManager {
         &self,
         path: &str,
         files: Vec<DownloadableFiles>,
-        control: DownloadControl,
         tx: mpsc::UnboundedSender<RepairEvent>,
     ) -> Result<(), DownloadError> {
         self.make_downloader()
             .await
-            .repair_download(files, path, control, tx)
+            .repair_download(files, path, tx)
             .await?;
         Ok(())
     }
@@ -103,12 +102,11 @@ impl DownloadManager {
         &self,
         path: &str,
         files: Vec<DownloadableFiles>,
-        control: DownloadControl,
         tx: mpsc::UnboundedSender<DownloadJobEvent>,
     ) -> Result<(), DownloadError> {
         self.make_downloader()
             .await
-            .download(files, path, control, tx)
+            .download(files, path, tx)
             .await?;
         Ok(())
     }

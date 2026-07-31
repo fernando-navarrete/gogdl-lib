@@ -8,9 +8,7 @@ use crate::VerifyEvent;
 use crate::auth::AuthManager;
 use crate::client::HttpClient;
 use crate::depot::{DepotManager, ProductDetails};
-use crate::downloader::{
-    DownloadConfig, DownloadControl, DownloadManager, DownloadableFiles, DownloadableProduct,
-};
+use crate::downloader::{DownloadConfig, DownloadManager, DownloadableFiles, DownloadableProduct};
 use crate::games::{
     GameBuilds, GameDetails, GameLinks, GameScreenshots, GameSummary, GamesManager, OwnedGames,
 };
@@ -121,29 +119,20 @@ impl GogDl {
         &self,
         files: Vec<DownloadableFiles>,
         path: &str,
-        control: DownloadControl,
         tx: mpsc::UnboundedSender<RepairEvent>,
     ) -> Result<(), GogDlError> {
-        self.downloader
-            .repair_download(path, files, control, tx)
-            .await?;
+        self.downloader.repair_download(path, files, tx).await?;
         Ok(())
     }
-    /// Downloads `files` into `path`, reporting progress on `tx` exactly as
-    /// before, and additionally driven/observable through `control`: the
-    /// caller keeps its own clone of the same `DownloadControl` to call
-    /// `pause()`/`resume()`/`cancel()` and to `subscribe()` for the resulting
-    /// `JobStatus` (`Running`/`Pausing`/`Paused`/`Cancelling`/`Cancelled`).
-    /// This future still runs to completion in the caller's own task, same
-    /// as always — pausing parks it in place rather than returning early.
+    /// Downloads `files` into `path`, reporting progress on `tx`. This future
+    /// runs to completion in the caller's own task.
     pub async fn download_files(
         &self,
         files: Vec<DownloadableFiles>,
         path: &str,
-        control: DownloadControl,
         tx: mpsc::UnboundedSender<DownloadJobEvent>,
     ) -> Result<(), GogDlError> {
-        self.downloader.download(path, files, control, tx).await?;
+        self.downloader.download(path, files, tx).await?;
         Ok(())
     }
     /// Overrides the network tuning (concurrency bounds, timeouts, retry

@@ -27,10 +27,9 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "rus
 5. [Download flow](#5-download-flow)
    - [5.1 Discovering what to download](#51-discovering-what-to-download)
    - [5.2 Downloading (`download_files`)](#52-downloading-download_files)
-   - [5.3 Pause / resume / cancel (`DownloadControl`)](#53-pause--resume--cancel-downloadcontrol)
-   - [5.4 Repairing an install (`repair_files`)](#54-repairing-an-install-repair_files)
-   - [5.5 Verifying an install (`verify_files`)](#55-verifying-an-install-verify_files)
-   - [5.6 Tuning network behavior (`DownloadConfig`)](#56-tuning-network-behavior-downloadconfig)
+   - [5.3 Repairing an install (`repair_files`)](#53-repairing-an-install-repair_files)
+   - [5.4 Verifying an install (`verify_files`)](#54-verifying-an-install-verify_files)
+   - [5.5 Tuning network behavior (`DownloadConfig`)](#55-tuning-network-behavior-downloadconfig)
 6. [Cloud saves](#6-cloud-saves)
 7. [Proton-GE releases](#7-proton-ge-releases)
 8. [Error handling](#8-error-handling)
@@ -59,10 +58,8 @@ create; the operation sends status/progress events into it as it works, and
 your code drains the paired `UnboundedReceiver` concurrently (typically on
 another task). The `async fn` itself only resolves once the whole job is
 done (or fails) — the channel is for progress, the `Result` is for the final
-outcome. **This structure is unconditional and unchanged across every
-operation in this library, including the new pause/resume/cancel feature in
-§5.3** — pausing/cancelling a job does not touch its progress channel at all;
-it's driven and observed through a separate handle (`DownloadControl`).
+outcome. **This structure is unconditional across every operation in this
+library.**
 
 **Caching is in-memory, per-`GogDl`-instance, and mostly unbounded.**
 Catalog/manifest lookups (`get_game_builds`, `get_downloadable_files`,
@@ -399,13 +396,11 @@ impl GogDl {
     /// install — no existing-install diffing, unlike `repair_files`).
     /// Progress and lifecycle events are pushed onto `tx` as the job runs;
     /// this future itself resolves only once the whole job is done (or a
-    /// fatal error occurs). `control` drives/observes pause, resume, and
-    /// cancel for this job — see §5.3.
+    /// fatal error occurs).
     pub async fn download_files(
         &self,
         files: Vec<DownloadableFiles>,
         path: &str,               // install root; created if it doesn't exist
-        control: DownloadControl,
         tx: mpsc::UnboundedSender<DownloadJobEvent>,
     ) -> Result<(), GogDlError>;
 }
@@ -413,16 +408,14 @@ impl GogDl {
 
 ```rust
 use tokio::sync::mpsc;
-use gogdl_lib2::{DownloadControl, DownloadJobEvent, DownloadStage, DownloadDetail, DownloadEvent, FileAllocationEvent};
+use gogdl_lib2::{DownloadJobEvent, DownloadStage, DownloadDetail, DownloadEvent, FileAllocationEvent};
 
-let control = DownloadControl::new();
 let (tx, mut rx) = mpsc::unbounded_channel();
 
 let files = gog.get_downloadable_files(game_id, "1.0", &["12345"]).await?;
 
-let control_for_job = control.clone();
 let download_task = tokio::spawn(async move {
-    gog.download_files(files, "/games/MyGame", control_for_job, tx).await
+    gog.download_files(files, "/games/MyGame", tx).await
 });
 
 while let Some(event) = rx.recv().await {
@@ -497,151 +490,17 @@ chunks or fail the whole job's `Result`, so if you need "did everything
 actually succeed," track chunk error events yourself and compare the count
 against `Total.chunks`.
 
-### 5.3 Pause / resume / cancel (`DownloadControl`)
-
-`DownloadControl` is a cheap-to-clone handle for controlling one download or
-repair job's lifecycle from outside the task that's awaiting it. You construct
-it, pass one clone into `download_files`/`repair_files`, and keep another
-clone (or several, e.g. one held by a UI layer) to drive and observe it.
-**This is entirely separate from the `mpsc` progress channel** — pausing does
-not emit anything on `tx`; you observe pause/cancel state exclusively through
-`DownloadControl` itself.
-
-```rust
-#[derive(Clone)]
-pub struct DownloadControl { /* private */ }
-
-impl DownloadControl {
-    /// A fresh handle in the `Running` state.
-    pub fn new() -> Self;
-
-    /// Requests a pause. Chunks already in flight finish and flush normally
-    /// (drain semantics — nothing is interrupted mid-transfer); no *new*
-    /// chunk starts until `resume()`. No-op once cancelled or completed.
-    pub fn pause(&self);
-
-    /// Un-pauses: parked chunks proceed. No-op once cancelled or completed.
-    pub fn resume(&self);
-
-    /// Requests cancellation. Like pause, chunks already in flight drain to
-    /// completion; no new chunk starts. Terminal — pause()/resume() become
-    /// no-ops afterward. The job's `download_files`/`repair_files` future
-    /// still resolves `Ok(())` once everything has drained (see below).
-    /// No-op once the job has completed.
-    pub fn cancel(&self);
-
-    /// The current status, computed live from in-flight state.
-    pub fn status(&self) -> JobStatus;
-
-    /// `true` once a pause has been requested (`Pausing` or `Paused`).
-    pub fn is_paused(&self) -> bool;
-
-    /// `true` once a cancel has been requested (`Cancelling` or `Cancelled`).
-    pub fn is_cancelled(&self) -> bool;
-
-    /// A `watch` receiver that immediately yields the current status and
-    /// every subsequent transition, with no missed edges. This is how a
-    /// frontend shows "Pausing…" transitioning to "Paused" once every
-    /// in-flight chunk has actually finished draining.
-    pub fn subscribe(&self) -> tokio::sync::watch::Receiver<JobStatus>;
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum JobStatus {
-    Running,
-    Pausing,    // pause requested; one or more chunks still draining
-    Paused,     // pause requested; nothing in flight
-    Cancelling, // cancel requested; one or more chunks still draining
-    Cancelled,  // cancel requested; nothing in flight (terminal)
-    Completed,  // job future resolved without a cancel (terminal)
-}
-```
-
-#### Two-phase transitions
-
-Both pause and cancel are **two-phase**. Calling `pause()` while chunks are
-mid-transfer immediately publishes `JobStatus::Pausing`; the moment the last
-already-in-flight chunk finishes writing (and no new chunk has started, since
-they're parked), the status settles to `JobStatus::Paused`. The same shape
-applies to `cancel()` → `Cancelling` → `Cancelled`. If nothing happens to be
-in flight at the moment you call `pause()`/`cancel()`, the settled state
-(`Paused`/`Cancelled`) is published immediately — there's no artificial delay.
-
-```rust
-let control = DownloadControl::new();
-let mut status_rx = control.subscribe();
-
-tokio::spawn(async move {
-    loop {
-        let status = *status_rx.borrow_and_update();
-        println!("job status: {:?}", status);
-        // Stop on a terminal status — `Completed` (or `Cancelled`) is
-        // always published when the job's future resolves, so this task
-        // never outlives its job.
-        if matches!(status, JobStatus::Completed | JobStatus::Cancelled) {
-            break;
-        }
-        if status_rx.changed().await.is_err() {
-            break;
-        }
-    }
-});
-
-// elsewhere, e.g. a "pause" button handler:
-control.pause();
-// ... later, a "resume" button:
-control.resume();
-// ... or to stop for good:
-control.cancel();
-```
-
-#### Semantics you should rely on
-
-- **Drain, never discard:** a chunk that has already started downloading
-  always finishes and flushes its bytes to disk before the job pauses or
-  cancels — you will never end up with a chunk half-written mid-buffer.
-- **Concurrency-bounded drain window:** because chunks are downloaded with
-  bounded concurrency (up to `DownloadConfig::max_concurrency`, default 64),
-  up to that many chunks may already be in flight the instant you call
-  `pause()`; the transition to `Paused` completes once all of them finish —
-  typically the time for one chunk's remaining transfer, not the whole job.
-- **`cancel()` still resolves the job `Ok(())`.** Once every in-flight chunk
-  has drained after a cancel, `download_files`/`repair_files` returns
-  `Ok(())`, not an error — cancellation is a normal, successful wind-down, not
-  a failure. Check `control.is_cancelled()` (or the terminal `JobStatus`) to
-  tell "the user cancelled" apart from "the job actually finished downloading
-  everything."
-- **Completion is always signalled.** When a `download_files`/`repair_files`
-  future resolves — success *or* error — the status settles to a terminal
-  `JobStatus::Completed`, unless a cancel was requested first, in which case
-  `Cancelled` wins (so `is_cancelled()` keeps telling "user cancelled" apart
-  from "actually finished"). A status watcher must exit on `Completed`/
-  `Cancelled` (as in the example above); waiting only on `changed()` would
-  otherwise park forever once the job is done, leaking the watcher task and
-  the control handle.
-- **Resume ramp-up:** the adaptive concurrency controller (see
-  [§5.6](#56-tuning-network-behavior-downloadconfig)) is aware of pauses and
-  re-baselines instead of shrinking to the concurrency floor while paused, so
-  resuming doesn't force a slow re-climb.
-- **One `DownloadControl` per job.** Don't reuse the same handle across two
-  separate `download_files`/`repair_files` calls — construct a new one per
-  job (cheap: `DownloadControl::new()`).
-- **`verify_files` is not gated.** `DownloadControl` only applies to
-  `download_files` and `repair_files`; `verify_files` is a read-only checksum
-  pass and has no pause/cancel hook.
-
-### 5.4 Repairing an install (`repair_files`)
+### 5.3 Repairing an install (`repair_files`)
 
 ```rust
 impl GogDl {
     /// Repairs an existing install: verifies files against `files`'
     /// manifests, re-allocates/re-downloads only what's missing or doesn't
-    /// match. Same `DownloadControl`/`mpsc` shape as `download_files`.
+    /// match. Same `mpsc` shape as `download_files`.
     pub async fn repair_files(
         &self,
         files: Vec<DownloadableFiles>,
         path: &str,
-        control: DownloadControl,
         tx: mpsc::UnboundedSender<RepairEvent>,
     ) -> Result<(), GogDlError>;
 }
@@ -693,14 +552,13 @@ tagged by `RepairStage`:
 4. **Downloading** — downloads every chunk queued by steps 1 and 3, using the
    same `DownloadEvent` shape and adaptive concurrency as a fresh install.
 
-### 5.5 Verifying an install (`verify_files`)
+### 5.4 Verifying an install (`verify_files`)
 
 ```rust
 impl GogDl {
     /// Read-only integrity check: verifies every chunk's MD5 against an
-    /// existing install. Does not modify anything on disk and has no
-    /// `DownloadControl` (not pausable/cancellable — it's a fast, bounded
-    /// checksum pass, not a network-bound download).
+    /// existing install. Does not modify anything on disk — it's a fast,
+    /// bounded checksum pass, not a network-bound download.
     pub async fn verify_files(
         &self,
         files: Vec<DownloadableFiles>,
@@ -717,7 +575,7 @@ pub enum VerifyEvent {
 }
 ```
 
-### 5.6 Tuning network behavior (`DownloadConfig`)
+### 5.5 Tuning network behavior (`DownloadConfig`)
 
 ```rust
 impl GogDl {
@@ -1060,10 +918,10 @@ one yourself, since `GogDl` owns and uses it internally; `SecureLinksManager`,
 | `get_secure_links(game_id)` | `Result<SecureLinks, GogDlError>` | internal-facing; see `SecureLinks` in §9 |
 | `get_downloadable_products(game_id, build_name)` | `Result<Vec<DownloadableProduct>, GogDlError>` | [§5.1](#51-discovering-what-to-download) |
 | `get_downloadable_files(game_id, build_name, products)` | `Result<Vec<DownloadableFiles>, GogDlError>` | [§5.1](#51-discovering-what-to-download) |
-| `set_download_config(config)` | `()` | [§5.6](#56-tuning-network-behavior-downloadconfig) |
-| `download_files(files, path, control, tx)` | `Result<(), GogDlError>` | [§5.2](#52-downloading-download_files) |
-| `repair_files(files, path, control, tx)` | `Result<(), GogDlError>` | [§5.4](#54-repairing-an-install-repair_files) |
-| `verify_files(files, path, tx)` | `Result<(), GogDlError>` | [§5.5](#55-verifying-an-install-verify_files) |
+| `set_download_config(config)` | `()` | [§5.5](#55-tuning-network-behavior-downloadconfig) |
+| `download_files(files, path, tx)` | `Result<(), GogDlError>` | [§5.2](#52-downloading-download_files) |
+| `repair_files(files, path, tx)` | `Result<(), GogDlError>` | [§5.3](#53-repairing-an-install-repair_files) |
+| `verify_files(files, path, tx)` | `Result<(), GogDlError>` | [§5.4](#54-verifying-an-install-verify_files) |
 | `get_remote_config(client_id)` | `Result<RemoteConfig, GogDlError>` | [§6](#6-cloud-saves) |
 | `get_save_auth_ids(game_id)` | `Result<(String, String), GogDlError>` | [§6](#6-cloud-saves) |
 | `get_save_file_list(client_id, client_secret)` | `Result<Vec<SaveFile>, GogDlError>` | [§6](#6-cloud-saves) |
@@ -1076,7 +934,7 @@ one yourself, since `GogDl` owns and uses it internally; `SecureLinksManager`,
 ### Full list of root-exported types (`use gogdl_lib2::...`)
 
 `GogDl`, `GogDlError`, `Client` (re-exported `reqwest::Client`),
-`DownloadConfig`, `DownloadControl`, `JobStatus`, `DownloadableFiles`,
+`DownloadConfig`, `DownloadableFiles`,
 `DownloadableProduct`, `ProductDetails`, `SecureLinks`,
 `DownloadJobEvent`, `DownloadStage`, `DownloadDetail`, `DownloadEvent`,
 `FileAllocationEvent`, `FileVerifyEvent`, `RepairEvent`, `RepairStage`,

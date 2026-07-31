@@ -13,7 +13,6 @@ use crate::{
     downloader::{
         DownloadConfig, DownloadError,
         adaptive::{AdaptiveLimiter, ThroughputMeter, spawn_controller},
-        control::DownloadControl,
         events::{
             DownloadDetail, DownloadEvent, DownloadJobEvent, DownloadStage, RepairDetail,
             RepairEvent, RepairStage, VerifyEvent,
@@ -55,13 +54,8 @@ impl Downloader {
         &self,
         files: Vec<DownloadableFiles>,
         path: &str,
-        control: DownloadControl,
         tx: mpsc::UnboundedSender<RepairEvent>,
     ) -> Result<(), DownloadError> {
-        // Held for the whole job: publishes the terminal `JobStatus` on every
-        // exit path (success, error, or this future being dropped) so status
-        // watchers subscribed to `control` always see a final edge.
-        let _completion = control.completion_guard();
         let resolver = Arc::new(PathResolver::new(PathBuf::from(path)).await?);
 
         let all_files = files
@@ -127,7 +121,6 @@ impl Downloader {
         self.run_download_stage(
             files,
             resolver,
-            control,
             |unit| needs_download_map.contains(&unit.path.as_str()),
             &tx,
             |event| RepairEvent {
@@ -146,11 +139,8 @@ impl Downloader {
         &self,
         files: Vec<DownloadableFiles>,
         path: &str,
-        control: DownloadControl,
         tx: mpsc::UnboundedSender<DownloadJobEvent>,
     ) -> Result<(), DownloadError> {
-        // See `repair_download`: publishes the terminal `JobStatus` on drop.
-        let _completion = control.completion_guard();
         let resolver = Arc::new(PathResolver::new(PathBuf::from(path)).await?);
 
         let all_files = files
@@ -171,7 +161,6 @@ impl Downloader {
         self.run_download_stage(
             files,
             resolver,
-            control,
             |_| true,
             &tx,
             |event| DownloadJobEvent {
@@ -189,7 +178,6 @@ impl Downloader {
         &self,
         files: Vec<DownloadableFiles>,
         resolver: Arc<PathResolver>,
-        control: DownloadControl,
         should_download: impl Fn(&DownloadUnit) -> bool,
         out_tx: &mpsc::UnboundedSender<T>,
         wrap: impl Fn(DownloadEvent) -> T,
@@ -206,16 +194,12 @@ impl Downloader {
         // One adaptive concurrency limit shared by every product's chunks in
         // this job — not a fixed, CPU-derived number per product (see
         // `downloader::adaptive`). The controller hill-climbs it against
-        // measured throughput for the lifetime of the download stage, and
-        // its handle aborts the sampler task on drop.
+        // measured throughput for the lifetime of the download stage; its
+        // sampler loop runs forever, so it is aborted below as soon as the
+        // stage returns.
         let meter = ThroughputMeter::new();
         let limiter = AdaptiveLimiter::new(self.config.min_concurrency);
-        let _controller = spawn_controller(
-            meter.clone(),
-            limiter.clone(),
-            self.config.clone(),
-            control.clone(),
-        );
+        let controller = spawn_controller(meter.clone(), limiter.clone(), self.config.clone());
 
         let results = run_stage(out_tx, wrap, |stage_tx| {
             stage_tx
@@ -231,7 +215,6 @@ impl Downloader {
                 limiter,
                 meter,
                 config: Arc::new(self.config.clone()),
-                control,
                 tx: stage_tx,
             };
 
@@ -258,6 +241,10 @@ impl Downloader {
             futures::future::join_all(download_futures)
         })
         .await;
+
+        // Aborted before the `?` below rather than after, so an errored unit
+        // can't return early and leave the sampler task spinning forever.
+        controller.abort();
 
         for result in results {
             result?;
