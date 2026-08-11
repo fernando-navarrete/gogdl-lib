@@ -104,7 +104,9 @@ impl SavesManager {
             let lock = self.inner.lock().await;
             lock.auth.clone()
         };
-        let saves_auth = auth.get_cloud_saves_tokens(client_id, client_secret).await?;
+        let saves_auth = auth
+            .get_cloud_saves_tokens(client_id, client_secret)
+            .await?;
         Ok(saves_auth)
     }
     pub async fn get_save_file_list(
@@ -183,6 +185,9 @@ mod tests {
     #[test]
     fn first_build_link_errors_on_empty_items() {
         let builds = builds_with_links(&[]);
-        assert!(matches!(first_build_link(&builds), Err(SavesError::BuildNotFound)));
+        assert!(matches!(
+            first_build_link(&builds),
+            Err(SavesError::BuildNotFound)
+        ));
     }
 }

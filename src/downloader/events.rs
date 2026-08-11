@@ -42,7 +42,14 @@ pub enum DownloadEvent {
     /// `remaining = Total.bytes - downloaded`.
     Total { bytes: u64, chunks: usize },
     /// An incremental delta of decoded bytes written for a chunk still in
-    /// flight. Sent as each network read is decoded and written to disk.
+    /// flight. Sent when that chunk's write buffer is flushed to disk (every
+    /// `WRITE_BUFFER_THRESHOLD`, see `downloader::stream`) and once more for
+    /// any remainder when the chunk finishes -- not on every network read,
+    /// which can happen thousands of times per second across many
+    /// concurrent chunks and would emit far faster than a consumer wiring
+    /// this straight into a UI/IPC push per event could drain. Regardless of
+    /// batching, `downloaded = Σ Progress.bytes` still holds exactly once
+    /// per byte, per the `Total` doc above.
     Progress { bytes: u64 },
     /// A chunk was downloaded and written successfully in full.
     ChunkDownloaded { path: String },

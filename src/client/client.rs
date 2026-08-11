@@ -8,7 +8,9 @@ use flate2::write::ZlibDecoder as ZlibStreamDecoder;
 use futures::{StreamExt, stream};
 use md5::{Digest, Md5};
 use reqwest::Client;
-use reqwest::header::{ACCEPT, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, ETAG, EXPECT, USER_AGENT};
+use reqwest::header::{
+    ACCEPT, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, ETAG, EXPECT, USER_AGENT,
+};
 use serde::de::DeserializeOwned;
 use tokio::sync::mpsc;
 use url::Url;
@@ -313,7 +315,11 @@ impl HttpClient {
     /// Authenticated GET returning the raw response body as text, unlike
     /// `get_json_with_auth` this doesn't parse it: cloud storage's save-file
     /// listing is a newline-delimited plain-text body, not JSON.
-    pub async fn get_text_with_auth(&self, url: &str, auth_token: &str) -> Result<String, ClientError> {
+    pub async fn get_text_with_auth(
+        &self,
+        url: &str,
+        auth_token: &str,
+    ) -> Result<String, ClientError> {
         let response = self.send_get(url, Some(auth_token)).await?;
         let response_text = response.text().await?;
         Ok(response_text)
@@ -429,7 +435,12 @@ impl HttpClient {
     /// is unverified against a live GOG account.
     pub async fn delete_with_auth(&self, url: &str, auth_token: &str) -> Result<(), ClientError> {
         let url = reqwest::Url::parse(url)?;
-        let response = self.client.delete(url).bearer_auth(auth_token).send().await?;
+        let response = self
+            .client
+            .delete(url)
+            .bearer_auth(auth_token)
+            .send()
+            .await?;
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await?;

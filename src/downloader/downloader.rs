@@ -59,9 +59,8 @@ impl Downloader {
         let resolver = Arc::new(PathResolver::new(PathBuf::from(path)).await?);
 
         let all_files = files
-            .clone()
-            .into_iter()
-            .flat_map(|f| f.product_files)
+            .iter()
+            .flat_map(|f| f.product_files.clone())
             .collect::<Vec<_>>();
 
         let verify_result = run_stage(
@@ -87,14 +86,13 @@ impl Downloader {
         let needs_repair_paths: HashSet<&str> =
             verify_result.iter().map(|f| f.path.as_str()).collect();
 
-        let unaffected_files = all_files
+        // Iterate straight into `get_download_units()` instead of collecting
+        // an intermediate `unaffected_files: Vec<DepotFile>` -- that Vec was
+        // pure overhead, cloning every unaffected file's metadata just to be
+        // consumed once, right here, at repair's peak-footprint moment.
+        let download_units = all_files
             .iter()
             .filter(|f| !needs_repair_paths.contains(&f.path.as_str()))
-            .cloned()
-            .collect::<Vec<_>>();
-
-        let download_units = unaffected_files
-            .iter()
             .flat_map(|depot_file| depot_file.get_download_units())
             .collect::<Vec<_>>();
 
@@ -115,13 +113,19 @@ impl Downloader {
 
         errored_units.extend(missing_from_first_step);
 
-        let needs_download_map: HashSet<&str> =
-            errored_units.iter().map(|f| f.path.as_str()).collect();
+        // Owned instead of borrowing from `errored_units`, so `errored_units`
+        // (whose elements can be sizeable -- each carries a URL-bearing
+        // `DownloadUnit`) can be dropped before `run_download_stage`, rather
+        // than living for the rest of the function just to back this map's
+        // borrows.
+        let needs_download_map: HashSet<String> =
+            errored_units.iter().map(|f| f.path.clone()).collect();
+        drop(errored_units);
 
         self.run_download_stage(
             files,
             resolver,
-            |unit| needs_download_map.contains(&unit.path.as_str()),
+            |unit| needs_download_map.contains(unit.path.as_str()),
             &tx,
             |event| RepairEvent {
                 stage: RepairStage::Downloading,

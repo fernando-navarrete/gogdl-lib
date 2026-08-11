@@ -44,15 +44,29 @@ impl std::fmt::Display for UnitAttemptError {
 /// Streams `url`'s (decoded) bytes into `file` starting at `offset`, emitting
 /// a `DownloadEvent::Progress` for each byte range not yet credited.
 ///
+/// `Progress` is emitted at the same cadence as disk writes -- i.e. every
+/// `WRITE_BUFFER_THRESHOLD`, not every network-level read -- rather than
+/// once per (often small) decoded chunk of a stream that can complete
+/// thousands of reads per second across many concurrent chunks. A consumer
+/// wiring `Progress` straight into a per-event UI/IPC push (as
+/// `gogdl_flutter`'s drain loops do) sees an event rate this way that's
+/// bounded by throughput / `WRITE_BUFFER_THRESHOLD` instead of by read
+/// syscall size, which is what let a fast connection flood an unbounded
+/// downstream channel faster than it could be drained.
+///
 /// `counted` is a per-unit high-water-mark of how many decoded bytes have
 /// already been credited via `Progress` for this chunk, shared across a
 /// primary attempt and a possible redist-fallback retry: if a first attempt
 /// streams `w` bytes before failing, the retry only emits `Progress` for
 /// bytes beyond `w`, so the two attempts together credit exactly the chunk's
-/// size once, never double-counting the re-streamed prefix.
+/// size once, never double-counting the re-streamed prefix. This still holds
+/// with `Progress` moved to the flush boundary: a failed attempt's
+/// not-yet-flushed tail is simply re-decoded (and then credited) by the
+/// retry, since both attempts always re-seek to the same `offset`.
 ///
-/// `meter` is credited with every decoded byte as it's written, feeding the
-/// job's adaptive concurrency controller (see `downloader::adaptive`).
+/// `meter` is credited with every decoded byte as it's read (not just at the
+/// flush boundary), so the adaptive concurrency controller's throughput
+/// measurement (see `downloader::adaptive`) is unaffected by this batching.
 /// `response_timeout`/`idle_timeout` are forwarded to
 /// `HttpClient::fetch_chunk_stream` to bound how long a stalled CDN
 /// connection is tolerated before it's reported as a (retryable) error.
@@ -77,32 +91,42 @@ pub(crate) async fn stream_unit_to_file(
     let mut pos: u64 = 0;
     let mut write_buffer: Vec<u8> = Vec::with_capacity(WRITE_BUFFER_THRESHOLD);
 
+    // Credits `pos - *counted` bytes via `Progress`, if any are outstanding,
+    // and advances `*counted` to `pos`. Called at every point the buffer is
+    // written out, so `Progress` tracks disk writes rather than reads.
+    let credit_progress = |pos: u64, counted: &mut u64| {
+        if pos > *counted {
+            tx.send(DownloadEvent::Progress {
+                bytes: pos - *counted,
+            })
+            .ok();
+            *counted = pos;
+        }
+    };
+
     loop {
         match rx.recv().await {
             Some(Ok(bytes)) => {
                 write_buffer.extend_from_slice(&bytes);
                 pos += bytes.len() as u64;
                 meter.add_bytes(bytes.len() as u64);
-                if pos > *counted {
-                    tx.send(DownloadEvent::Progress {
-                        bytes: pos - *counted,
-                    })
-                    .ok();
-                    *counted = pos;
-                }
                 if write_buffer.len() >= WRITE_BUFFER_THRESHOLD {
                     file.write_all(&write_buffer)
                         .await
                         .map_err(UnitAttemptError::Write)?;
                     write_buffer.clear();
+                    credit_progress(pos, counted);
                 }
             }
             Some(Err(err)) => {
                 // Flush whatever was already decoded before surfacing the
-                // error: a retry resumes at `*counted`, i.e. past these
-                // bytes, so losing them here would corrupt the file.
+                // error: a retry resumes at `offset`, i.e. rewrites this
+                // range, but losing an already-decoded, not-yet-written tail
+                // here would still leave stale bytes on disk if the retry
+                // itself fails before reaching this far.
                 if !write_buffer.is_empty() {
                     file.write_all(&write_buffer).await.ok();
+                    credit_progress(pos, counted);
                 }
                 return Err(UnitAttemptError::Download(err));
             }
@@ -114,6 +138,7 @@ pub(crate) async fn stream_unit_to_file(
             .await
             .map_err(UnitAttemptError::Write)?;
     }
+    credit_progress(pos, counted);
     file.flush().await.ok();
     Ok(())
 }

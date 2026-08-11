@@ -469,7 +469,10 @@ pub enum DownloadEvent {
     /// `downloaded = Σ Progress.bytes`, `remaining = Total.bytes - downloaded`.
     Total { bytes: u64, chunks: usize },
     /// An incremental delta of decoded bytes written for a chunk still in
-    /// flight — sent as each network read is decoded and flushed to disk.
+    /// flight — sent when that chunk's write buffer is flushed to disk
+    /// (every 256 KB), not on every network read, so the event rate stays
+    /// bounded regardless of how many small reads a fast connection
+    /// produces. `downloaded = Σ Progress.bytes` still holds exactly.
     Progress { bytes: u64 },
     /// One chunk finished downloading and writing successfully, in full.
     ChunkDownloaded { path: String },

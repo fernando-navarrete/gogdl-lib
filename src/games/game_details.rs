@@ -30,25 +30,23 @@ impl GameDetails {
         };
         let url = format!("https://embed.gog.com/account/gameDetails/{}.json", game_id);
 
-        let game_details: GameDetails = match auth
-            .authorized_get_json(&games_manager.client, &url)
-            .await
-        {
-            Ok(game_details) => game_details,
-            Err(err) => {
-                let err = GamesError::from(err);
-                // A non-game product's response body doesn't match
-                // `GameDetails`'s shape, which surfaces as a decode error —
-                // negative-cache that as "not a game" so we don't re-fetch
-                // and re-fail on every subsequent lookup.
-                if let GamesError::DecodeError(_) = err {
-                    let mut lock = games_manager.inner.lock().await;
-                    lock.game_details.insert(game_id, None);
-                    return Err(GamesError::ProductNotAGame);
+        let game_details: GameDetails =
+            match auth.authorized_get_json(&games_manager.client, &url).await {
+                Ok(game_details) => game_details,
+                Err(err) => {
+                    let err = GamesError::from(err);
+                    // A non-game product's response body doesn't match
+                    // `GameDetails`'s shape, which surfaces as a decode error —
+                    // negative-cache that as "not a game" so we don't re-fetch
+                    // and re-fail on every subsequent lookup.
+                    if let GamesError::DecodeError(_) = err {
+                        let mut lock = games_manager.inner.lock().await;
+                        lock.game_details.insert(game_id, None);
+                        return Err(GamesError::ProductNotAGame);
+                    }
+                    return Err(err);
                 }
-                return Err(err);
-            }
-        };
+            };
 
         let mut lock = games_manager.inner.lock().await;
         lock.game_details

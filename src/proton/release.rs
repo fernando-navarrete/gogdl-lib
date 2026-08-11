@@ -42,7 +42,9 @@ pub struct ProtonProgress {
 fn verify_sha256(data: &[u8], expected_digest: &str) -> Result<(), ProtonError> {
     // GitHub formats asset digests as `sha256:<hex>`; strip the algorithm
     // prefix before comparing against our own hash.
-    let expected_hex = expected_digest.strip_prefix("sha256:").unwrap_or(expected_digest);
+    let expected_hex = expected_digest
+        .strip_prefix("sha256:")
+        .unwrap_or(expected_digest);
     let actual = hex::encode(Sha256::digest(data));
     if actual != expected_hex {
         Err(ProtonError::HashMismatch {
@@ -64,13 +66,15 @@ impl Release {
             .find(|asset| asset.name.ends_with(".tar.gz") && !asset.name.contains("aarch64"))
     }
     pub fn get_download_link(&self) -> Option<&str> {
-        self.tarball_asset().map(|asset| asset.browser_download_url.as_str())
+        self.tarball_asset()
+            .map(|asset| asset.browser_download_url.as_str())
     }
     pub fn get_download_size(&self) -> Option<u64> {
         self.tarball_asset().map(|asset| asset.size)
     }
     pub fn get_checksum(&self) -> Option<&str> {
-        self.tarball_asset().and_then(|asset| asset.digest.as_deref())
+        self.tarball_asset()
+            .and_then(|asset| asset.digest.as_deref())
     }
     /// Lists Proton-GE releases from GitHub, one page at a time. GitHub
     /// rejects unauthenticated requests without a `User-Agent`, so both that
@@ -109,9 +113,13 @@ impl Release {
 
         let bytes = manager
             .client
-            .download_bytes(&url, &[("User-Agent", "gogdl-lib2")], move |transferred, total| {
-                tx.send(ProtonProgress { transferred, total }).ok();
-            })
+            .download_bytes(
+                &url,
+                &[("User-Agent", "gogdl-lib2")],
+                move |transferred, total| {
+                    tx.send(ProtonProgress { transferred, total }).ok();
+                },
+            )
             .await?;
 
         if let Some(checksum) = self.get_checksum() {
@@ -159,28 +167,59 @@ mod tests {
     #[test]
     fn get_download_link_picks_the_gz_asset() {
         let release = release_with_assets(vec![
-            ("GE-Proton1-1.sha512sum", "https://example.com/sha512sum", None),
-            ("GE-Proton1-1.tar.gz", "https://example.com/tarball", Some("sha256:abc")),
+            (
+                "GE-Proton1-1.sha512sum",
+                "https://example.com/sha512sum",
+                None,
+            ),
+            (
+                "GE-Proton1-1.tar.gz",
+                "https://example.com/tarball",
+                Some("sha256:abc"),
+            ),
         ]);
-        assert_eq!(release.get_download_link(), Some("https://example.com/tarball"));
+        assert_eq!(
+            release.get_download_link(),
+            Some("https://example.com/tarball")
+        );
         assert_eq!(release.get_checksum(), Some("sha256:abc"));
     }
 
     #[test]
     fn get_download_link_skips_the_aarch64_tarball() {
         let release = release_with_assets(vec![
-            ("GE-Proton1-1-aarch64.sha512sum", "https://example.com/aarch64-sha512sum", None),
-            ("GE-Proton1-1-aarch64.tar.gz", "https://example.com/aarch64-tarball", Some("sha256:aarch64")),
-            ("GE-Proton1-1.sha512sum", "https://example.com/sha512sum", None),
-            ("GE-Proton1-1.tar.gz", "https://example.com/tarball", Some("sha256:abc")),
+            (
+                "GE-Proton1-1-aarch64.sha512sum",
+                "https://example.com/aarch64-sha512sum",
+                None,
+            ),
+            (
+                "GE-Proton1-1-aarch64.tar.gz",
+                "https://example.com/aarch64-tarball",
+                Some("sha256:aarch64"),
+            ),
+            (
+                "GE-Proton1-1.sha512sum",
+                "https://example.com/sha512sum",
+                None,
+            ),
+            (
+                "GE-Proton1-1.tar.gz",
+                "https://example.com/tarball",
+                Some("sha256:abc"),
+            ),
         ]);
-        assert_eq!(release.get_download_link(), Some("https://example.com/tarball"));
+        assert_eq!(
+            release.get_download_link(),
+            Some("https://example.com/tarball")
+        );
         assert_eq!(release.get_checksum(), Some("sha256:abc"));
     }
 
     #[test]
     fn get_download_link_returns_none_without_a_gz_asset() {
-        let release = release_with_assets(vec![("checksum.sha512sum", "https://example.com/x", None)]);
+        let release =
+            release_with_assets(vec![("checksum.sha512sum", "https://example.com/x", None)]);
         assert_eq!(release.get_download_link(), None);
     }
 
@@ -194,7 +233,10 @@ mod tests {
     #[test]
     fn verify_sha256_errors_when_mismatched() {
         let data = b"hello world";
-        let result = verify_sha256(data, "sha256:0000000000000000000000000000000000000000000000000000000000000000");
+        let result = verify_sha256(
+            data,
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        );
         match result {
             Err(ProtonError::HashMismatch { expected, actual }) => {
                 assert_ne!(expected, actual);
