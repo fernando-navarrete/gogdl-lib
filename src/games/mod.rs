@@ -8,7 +8,7 @@ mod games_manager;
 mod owned_games;
 
 pub use error::GamesError;
-pub use game_build::GameBuilds;
+pub use game_build::{GameBuild, GameBuilds};
 pub use game_details::GameDetails;
 pub use game_links::GameLinks;
 pub use game_screenshots::GameScreenshots;
