@@ -13,6 +13,8 @@ pub use depot::DepotFile;
 pub use depot::ProductDetails;
 pub use downloader::DownloadStageEvent;
 pub use downloader::DownloadableProduct;
+pub use downloader::FileAllocationEvent;
+pub use downloader::FileSizeVerificationEvent;
 pub use downloader::ProductBundle;
 pub use downloader::VerificationEvent;
 pub use games::GameBuild;
