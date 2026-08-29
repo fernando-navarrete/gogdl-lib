@@ -5,18 +5,18 @@ use crate::{
     downloader::{DownloadError, DownloadManager},
 };
 
-pub struct DownloadableFiles {
+pub struct ProductBundle {
     pub product_id: String,
     pub product_files: Vec<DepotFile>,
 }
 
-impl DownloadableFiles {
+impl ProductBundle {
     pub async fn get_download_files(
         download_manager: &DownloadManager,
         game_id: i32,
         build_name: &str,
         selected_products: &[i32],
-    ) -> Result<Vec<DownloadableFiles>, DownloadError> {
+    ) -> Result<Vec<ProductBundle>, DownloadError> {
         let game_builds = {
             let inner = download_manager.inner.lock().await;
             inner.games.get_game_builds(game_id).await?
@@ -52,7 +52,7 @@ impl DownloadableFiles {
             .filter(|(product_id, _)| selected_products.contains(&product_id.parse().unwrap_or(0)))
             .collect::<Vec<_>>();
 
-        let mut downloadable_files: Vec<DownloadableFiles> = Vec::new();
+        let mut downloadable_files: Vec<ProductBundle> = Vec::new();
 
         for (id, depots) in filtered_products {
             for depot in depots {
@@ -62,7 +62,7 @@ impl DownloadableFiles {
                 };
 
                 let depot_files = depot_info.depot.items;
-                downloadable_files.push(DownloadableFiles {
+                downloadable_files.push(ProductBundle {
                     product_id: id.to_string(),
                     product_files: depot_files,
                 });

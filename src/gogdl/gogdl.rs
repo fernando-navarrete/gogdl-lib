@@ -1,7 +1,7 @@
 use crate::auth::AuthManager;
 use crate::client::HttpClient;
 use crate::depot::{DepotManager, ProductDetails};
-use crate::downloader::{DownloadManager, DownloadableFiles, DownloadableProduct};
+use crate::downloader::{DownloadManager, DownloadableProduct, ProductBundle};
 use crate::games::{
     GameBuilds, GameDetails, GameLinks, GameScreenshots, GameSummary, GamesManager, OwnedGames,
 };
@@ -104,12 +104,12 @@ impl GogDl {
             .await?;
         Ok(downloadable_products)
     }
-    pub async fn get_downloadable_files(
+    pub async fn get_product_bundles(
         &self,
         game_id: i32,
         build_name: &str,
         selected_products: &[i32],
-    ) -> Result<Vec<DownloadableFiles>, GogDlError> {
+    ) -> Result<Vec<ProductBundle>, GogDlError> {
         let downloadable_files = self
             .downloader
             .get_downloadable_files(game_id, build_name, selected_products)
