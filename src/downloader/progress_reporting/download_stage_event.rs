@@ -4,4 +4,5 @@ use crate::downloader::progress_reporting::FileSizeVerificationEvent;
 pub enum DownloadStageEvent {
     FileSizeVerificationStage(FileSizeVerificationEvent),
     FileAllocationStage(FileAllocationEvent),
+    FileAllocationError(),
 }

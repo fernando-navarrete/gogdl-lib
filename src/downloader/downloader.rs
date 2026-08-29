@@ -8,7 +8,7 @@ use crate::{
     auth::AuthManager,
     client::HttpClient,
     downloader::{
-        DownloadError, DownloadUnit, PathResolver, ProductBundle,
+        DownloadError, DownloadEvent, DownloadUnit, PathResolver, ProductBundle,
         progress_reporting::{
             DownloadStageEvent, FileAllocationEvent, FileSizeVerificationEvent, VerificationEvent,
         },
@@ -64,6 +64,7 @@ impl Downloader {
         };
         let (missing_files, _) = tokio::join!(missing_files_fut, progress_future);
 
+        // File allocation step
         let (files_allocation_tx, mut files_allocation_rx) = mpsc::unbounded_channel();
         let files_allocation_fut =
             self.allocate_missing_files(&missing_files, &path_resolver, files_allocation_tx);
@@ -75,11 +76,20 @@ impl Downloader {
                     .ok();
             }
         };
-        let (files_allocation, _) = tokio::join!(files_allocation_fut, progress_future);
+        let (files_allocation_error, _) = tokio::join!(files_allocation_fut, progress_future);
 
-        if files_allocation.len() < missing_files.len() {
-            println!("Could not allocate all files");
+        // Check if all files were allocated successfully, if not, we may have run out of disk space
+        if files_allocation_error.len() != 0 {
+            tx.send(DownloadStageEvent::FileAllocationError()).ok();
+            return Err(DownloadError::FileAllocationError);
         }
+
+        // Download step
+        let download_units = depot_files
+            .iter()
+            .flat_map(|depot_file| DownloadUnit::from_depot_file(depot_file.clone()))
+            .collect::<Vec<DownloadUnit>>();
+
         Ok(())
     }
     pub async fn verify(
@@ -101,6 +111,15 @@ impl Downloader {
             .await;
 
         Ok(())
+    }
+
+    async fn download_units(
+        &self,
+        download_units: &[DownloadUnit],
+        path_resolver: &PathResolver,
+        tx: mpsc::UnboundedSender<DownloadEvent>,
+    ) -> Result<(), DownloadError> {
+        todo!()
     }
 
     async fn allocate_missing_files(
