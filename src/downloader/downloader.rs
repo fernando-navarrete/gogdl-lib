@@ -45,7 +45,8 @@ impl Downloader {
 
         let threads = std::thread::available_parallelism()
             .map(|n| n.get())
-            .unwrap_or(1);
+            .unwrap_or(1)
+            .clamp(1, 12);
 
         stream::iter(download_units)
             .map(|download_unit| {
