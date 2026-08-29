@@ -12,5 +12,6 @@ pub use download_unit::DownloadUnit;
 pub use downloadable_product::DownloadableProduct;
 pub use error::DownloadError;
 pub use product_bundle::ProductBundle;
+pub use progress_reporting::DownloadStageEvent;
 pub use progress_reporting::VerificationEvent;
 pub use util::PathResolver;

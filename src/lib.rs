@@ -11,6 +11,7 @@ pub use depot::Chunk;
 pub use depot::Depot;
 pub use depot::DepotFile;
 pub use depot::ProductDetails;
+pub use downloader::DownloadStageEvent;
 pub use downloader::DownloadableProduct;
 pub use downloader::ProductBundle;
 pub use downloader::VerificationEvent;

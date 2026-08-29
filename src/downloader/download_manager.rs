@@ -7,8 +7,8 @@ use crate::{
     client::HttpClient,
     depot::DepotManager,
     downloader::{
-        ProductBundle, downloadable_product::DownloadableProduct, downloader::Downloader,
-        error::DownloadError, progress_reporting::VerificationEvent,
+        DownloadStageEvent, ProductBundle, downloadable_product::DownloadableProduct,
+        downloader::Downloader, error::DownloadError, progress_reporting::VerificationEvent,
     },
     games::GamesManager,
     secure_links::SecureLinksManager,
@@ -82,6 +82,7 @@ impl DownloadManager {
         &self,
         bundles: Vec<ProductBundle>,
         path: &str,
+        tx: mpsc::UnboundedSender<DownloadStageEvent>,
     ) -> Result<(), DownloadError> {
         let (auth, links) = {
             let inner = self.inner.lock().await;
@@ -90,7 +91,7 @@ impl DownloadManager {
             (auth, links)
         };
         let downloader = Downloader::new(self.client.clone(), links, auth);
-        downloader.download(bundles, path).await?;
+        downloader.download(bundles, path, tx).await?;
         Ok(())
     }
 }

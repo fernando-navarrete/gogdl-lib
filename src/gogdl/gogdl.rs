@@ -1,5 +1,6 @@
 use tokio::sync::mpsc;
 
+use crate::DownloadStageEvent;
 use crate::auth::AuthManager;
 use crate::client::HttpClient;
 use crate::depot::{DepotManager, ProductDetails};
@@ -131,8 +132,9 @@ impl GogDl {
         &self,
         bundles: Vec<ProductBundle>,
         path: &str,
+        tx: mpsc::UnboundedSender<DownloadStageEvent>,
     ) -> Result<(), GogDlError> {
-        self.downloader.download_game(bundles, path).await?;
+        self.downloader.download_game(bundles, path, tx).await?;
         Ok(())
     }
 }
