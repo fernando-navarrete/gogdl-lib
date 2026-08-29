@@ -4,11 +4,12 @@ use futures_util::{StreamExt, stream};
 use tokio::sync::mpsc;
 
 use crate::{
-    Depot, DepotFile,
+    Depot, DepotFile, SecureLinks,
     auth::AuthManager,
     client::HttpClient,
     downloader::{
         DownloadError, DownloadEvent, DownloadUnit, PathResolver, ProductBundle,
+        download_unit::FileType,
         progress_reporting::{
             DownloadStageEvent, FileAllocationEvent, FileSizeVerificationEvent, VerificationEvent,
         },
@@ -77,19 +78,20 @@ impl Downloader {
             }
         };
         let (files_allocation_error, _) = tokio::join!(files_allocation_fut, progress_future);
+        drop(missing_files);
 
         // Check if all files were allocated successfully, if not, we may have run out of disk space
         if files_allocation_error.len() != 0 {
             tx.send(DownloadStageEvent::FileAllocationError()).ok();
             return Err(DownloadError::FileAllocationError);
         }
+        drop(files_allocation_error);
 
         // Download step
-        let download_units = depot_files
-            .iter()
-            .flat_map(|depot_file| DownloadUnit::from_depot_file(depot_file.clone()))
-            .collect::<Vec<DownloadUnit>>();
 
+        let (files_download_tx, mut files_download_rx) = mpsc::unbounded_channel();
+        self.download_files(&bundles, &path_resolver, files_download_tx)
+            .await?;
         Ok(())
     }
     pub async fn verify(
@@ -113,12 +115,63 @@ impl Downloader {
         Ok(())
     }
 
-    async fn download_units(
+    async fn download_files(
         &self,
-        download_units: &[DownloadUnit],
+        bundles: &[ProductBundle],
         path_resolver: &PathResolver,
         tx: mpsc::UnboundedSender<DownloadEvent>,
     ) -> Result<(), DownloadError> {
+        let download_units: Vec<(String, DownloadUnit)> = bundles
+            .iter()
+            .flat_map(|bundle| {
+                bundle.product_files.iter().flat_map(move |depot_file| {
+                    DownloadUnit::from_depot_file(depot_file.clone())
+                        .into_iter()
+                        .map(|download_unit| (bundle.product_id.clone(), download_unit))
+                })
+            })
+            .collect::<Vec<(String, DownloadUnit)>>();
+
+        // Pre-fetch secure links for all bundles so they get stored in cache
+        stream::iter(bundles)
+            .map(|bundle| {
+                let product_id = bundle.product_id.clone();
+                async move {
+                    let _ = self.secure_links.get_secure_links(&product_id).await;
+                }
+            })
+            .buffer_unordered(self.threads)
+            .collect::<Vec<()>>()
+            .await;
+
+        stream::iter(download_units)
+            .map(|(product_id, download_unit)| async move {
+                let secure_link = match self.secure_links.get_secure_links(&product_id).await {
+                    Ok(link) => link,
+                    Err(e) => {
+                        println!("{e}");
+                        return;
+                    }
+                };
+                let highest_priority_link = match secure_link.get_highest_priority_url() {
+                    Some(link) => link,
+                    None => {
+                        return;
+                    }
+                };
+                let url = match download_unit.file_type {
+                    FileType::DepotFile => {
+                        highest_priority_link.parse_url(&download_unit.compressed_md5)
+                    }
+                    FileType::Other => {
+                        highest_priority_link.parse_url_redist(&download_unit.compressed_md5)
+                    }
+                };
+                println!("{url}")
+            })
+            .buffer_unordered(self.threads)
+            .collect::<Vec<_>>()
+            .await;
         todo!()
     }
 

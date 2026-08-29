@@ -32,6 +32,9 @@ impl HttpClient {
         let result: T = serde_json::from_str(&response_text)?;
         Ok(result)
     }
+    pub async fn stream_chunk(&self, url: &str) {
+        todo!()
+    }
     pub async fn get_and_decode<T: DeserializeOwned>(
         &self,
         url: &str,
