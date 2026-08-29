@@ -1,12 +1,14 @@
 use std::{path::PathBuf, sync::Arc};
 
 use futures_util::{StreamExt, stream};
+use tokio::sync::mpsc;
 
 use crate::{
     auth::AuthManager,
     client::HttpClient,
     downloader::{
         DownloadError, DownloadUnit, PathResolver, ProductBundle,
+        progress_reporting::VerificationEvent,
         util::{ChecksumAlgorithm, compute_chunk_checksum},
     },
     secure_links::SecureLinksManager,
@@ -31,6 +33,7 @@ impl Downloader {
         &self,
         bundles: Vec<ProductBundle>,
         path: &str,
+        tx: mpsc::UnboundedSender<VerificationEvent>,
     ) -> Result<(), DownloadError> {
         let path_resolver = Arc::new(PathResolver::new(PathBuf::from(path)).await?);
 
@@ -47,6 +50,7 @@ impl Downloader {
         stream::iter(download_units)
             .map(|download_unit| {
                 let path_resolver = path_resolver.clone();
+                let tx = tx.clone();
                 async move {
                     let opt_path = match path_resolver
                         .resolve_existing_path(&download_unit.path)
@@ -54,6 +58,10 @@ impl Downloader {
                     {
                         Ok(path) => path,
                         Err(e) => {
+                            tx.send(VerificationEvent::CouldNotResolvePath(
+                                download_unit.path.clone(),
+                            ))
+                            .ok();
                             println!("ERROR: {}: {}", download_unit.path, e);
                             return Some(download_unit);
                         }
@@ -62,6 +70,8 @@ impl Downloader {
                     let final_path = match opt_path {
                         Some(path) => path,
                         None => {
+                            tx.send(VerificationEvent::FileNotFound(download_unit.path.clone()))
+                                .ok();
                             println!("ERROR: {}: FILE_NOT_FOUND", download_unit.path);
                             return Some(download_unit);
                         }
@@ -79,12 +89,20 @@ impl Downloader {
                     {
                         Ok(checksum) => checksum,
                         Err(err) => {
+                            tx.send(VerificationEvent::ChecksumMismatch(
+                                download_unit.path.clone(),
+                            ))
+                            .ok();
                             println!("ERROR: {}: {}", download_unit.path, err);
                             return Some(download_unit);
                         }
                     };
 
                     if actual_checksum != download_unit.md5 {
+                        tx.send(VerificationEvent::ChecksumMismatch(
+                            download_unit.path.clone(),
+                        ))
+                        .ok();
                         println!("ERROR: {} CHECKSUM MISMATCH", download_unit.path);
                         return Some(download_unit);
                     }

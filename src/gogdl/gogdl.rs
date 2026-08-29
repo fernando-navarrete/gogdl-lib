@@ -1,7 +1,9 @@
+use tokio::sync::mpsc;
+
 use crate::auth::AuthManager;
 use crate::client::HttpClient;
 use crate::depot::{DepotManager, ProductDetails};
-use crate::downloader::{DownloadManager, DownloadableProduct, ProductBundle};
+use crate::downloader::{DownloadManager, DownloadableProduct, ProductBundle, VerificationEvent};
 use crate::games::{
     GameBuilds, GameDetails, GameLinks, GameScreenshots, GameSummary, GamesManager, OwnedGames,
 };
@@ -120,8 +122,9 @@ impl GogDl {
         &self,
         bundles: Vec<ProductBundle>,
         path: &str,
+        tx: mpsc::UnboundedSender<VerificationEvent>,
     ) -> Result<(), GogDlError> {
-        self.downloader.verify_download(bundles, path).await?;
+        self.downloader.verify_download(bundles, path, tx).await?;
         Ok(())
     }
 }

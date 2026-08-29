@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, mpsc};
 
 use crate::{
     auth::AuthManager,
@@ -8,7 +8,7 @@ use crate::{
     depot::DepotManager,
     downloader::{
         ProductBundle, downloadable_product::DownloadableProduct, downloader::Downloader,
-        error::DownloadError,
+        error::DownloadError, progress_reporting::VerificationEvent,
     },
     games::GamesManager,
     secure_links::SecureLinksManager,
@@ -66,6 +66,7 @@ impl DownloadManager {
         &self,
         bundles: Vec<ProductBundle>,
         path: &str,
+        tx: mpsc::UnboundedSender<VerificationEvent>,
     ) -> Result<(), DownloadError> {
         let (auth, links) = {
             let inner = self.inner.lock().await;
@@ -74,7 +75,7 @@ impl DownloadManager {
             (auth, links)
         };
         let downloader = Downloader::new(self.client.clone(), links, auth);
-        downloader.verify(bundles, path).await?;
+        downloader.verify(bundles, path, tx).await?;
         Ok(())
     }
 }

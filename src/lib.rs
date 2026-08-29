@@ -13,6 +13,7 @@ pub use depot::DepotFile;
 pub use depot::ProductDetails;
 pub use downloader::DownloadableProduct;
 pub use downloader::ProductBundle;
+pub use downloader::VerificationEvent;
 pub use games::GameBuild;
 pub use games::GameBuilds;
 pub use games::GameDetails;

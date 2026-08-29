@@ -4,6 +4,7 @@ mod downloadable_product;
 mod downloader;
 mod error;
 mod product_bundle;
+mod progress_reporting;
 mod util;
 
 pub use download_manager::DownloadManager;
@@ -11,4 +12,5 @@ pub use download_unit::DownloadUnit;
 pub use downloadable_product::DownloadableProduct;
 pub use error::DownloadError;
 pub use product_bundle::ProductBundle;
+pub use progress_reporting::VerificationEvent;
 pub use util::PathResolver;
