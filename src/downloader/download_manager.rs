@@ -6,7 +6,10 @@ use crate::{
     auth::AuthManager,
     client::HttpClient,
     depot::DepotManager,
-    downloader::{ProductBundle, downloadable_product::DownloadableProduct, error::DownloadError},
+    downloader::{
+        ProductBundle, downloadable_product::DownloadableProduct, downloader::Downloader,
+        error::DownloadError,
+    },
     games::GamesManager,
     secure_links::SecureLinksManager,
 };
@@ -59,8 +62,19 @@ impl DownloadManager {
     ) -> Result<Vec<ProductBundle>, DownloadError> {
         ProductBundle::get_download_files(self, game_id, build_name, selected_products).await
     }
-    pub async fn verify_download() -> Result<(), DownloadError> {
-        
-        todo!()
+    pub async fn verify_download(
+        &self,
+        bundles: Vec<ProductBundle>,
+        path: &str,
+    ) -> Result<(), DownloadError> {
+        let (auth, links) = {
+            let inner = self.inner.lock().await;
+            let auth = inner.auth.clone();
+            let links = inner.secure_links.clone();
+            (auth, links)
+        };
+        let downloader = Downloader::new(self.client.clone(), links, auth);
+        downloader.verify(bundles, path).await?;
+        Ok(())
     }
 }

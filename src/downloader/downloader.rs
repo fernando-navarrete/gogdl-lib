@@ -19,6 +19,14 @@ pub struct Downloader {
 }
 
 impl Downloader {
+    pub fn new(client: HttpClient, secure_links: SecureLinksManager, auth: AuthManager) -> Self {
+        Self {
+            client,
+            secure_links,
+            auth,
+        }
+    }
+
     pub async fn verify(
         &self,
         bundles: Vec<ProductBundle>,

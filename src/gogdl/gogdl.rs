@@ -116,4 +116,12 @@ impl GogDl {
             .await?;
         Ok(downloadable_files)
     }
+    pub async fn verify_files(
+        &self,
+        bundles: Vec<ProductBundle>,
+        path: &str,
+    ) -> Result<(), GogDlError> {
+        self.downloader.verify_download(bundles, path).await?;
+        Ok(())
+    }
 }
