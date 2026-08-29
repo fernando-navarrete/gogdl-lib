@@ -78,4 +78,19 @@ impl DownloadManager {
         downloader.verify(bundles, path, tx).await?;
         Ok(())
     }
+    pub async fn download_game(
+        &self,
+        bundles: Vec<ProductBundle>,
+        path: &str,
+    ) -> Result<(), DownloadError> {
+        let (auth, links) = {
+            let inner = self.inner.lock().await;
+            let auth = inner.auth.clone();
+            let links = inner.secure_links.clone();
+            (auth, links)
+        };
+        let downloader = Downloader::new(self.client.clone(), links, auth);
+        downloader.download(bundles, path).await?;
+        Ok(())
+    }
 }

@@ -127,4 +127,12 @@ impl GogDl {
         self.downloader.verify_download(bundles, path, tx).await?;
         Ok(())
     }
+    pub async fn download_game(
+        &self,
+        bundles: Vec<ProductBundle>,
+        path: &str,
+    ) -> Result<(), GogDlError> {
+        self.downloader.download_game(bundles, path).await?;
+        Ok(())
+    }
 }

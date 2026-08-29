@@ -4,11 +4,12 @@ use futures_util::{StreamExt, stream};
 use tokio::sync::mpsc;
 
 use crate::{
+    Depot, DepotFile,
     auth::AuthManager,
     client::HttpClient,
     downloader::{
         DownloadError, DownloadUnit, PathResolver, ProductBundle,
-        progress_reporting::VerificationEvent,
+        progress_reporting::{FileSizeVerificationEvent, VerificationEvent},
         util::{ChecksumAlgorithm, compute_chunk_checksum},
     },
     secure_links::SecureLinksManager,
@@ -18,15 +19,64 @@ pub struct Downloader {
     pub client: HttpClient,
     pub secure_links: SecureLinksManager,
     pub auth: AuthManager,
+    threads: usize,
 }
 
 impl Downloader {
     pub fn new(client: HttpClient, secure_links: SecureLinksManager, auth: AuthManager) -> Self {
+        let threads = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+            .clamp(1, 12);
         Self {
             client,
             secure_links,
             auth,
+            threads,
         }
+    }
+    pub async fn download(
+        &self,
+        bundles: Vec<ProductBundle>,
+        path: &str,
+    ) -> Result<(), DownloadError> {
+        let path_resolver = Arc::new(PathResolver::new(PathBuf::from(path)).await?);
+
+        let depot_files = bundles
+            .iter()
+            .flat_map(|bundle| bundle.product_files.clone())
+            .collect::<Vec<DepotFile>>();
+
+        // File size verification step
+        let (missing_files_tx, mut missing_files_rx) = mpsc::unbounded_channel();
+        let missing_files_fut =
+            self.verify_files_size(&depot_files, &path_resolver, missing_files_tx);
+        let progress_future = async move {
+            while let Some(event) = missing_files_rx.recv().await {
+                match event {
+                    FileSizeVerificationEvent::FileWithNoChunks(_, _) => {
+                        println!("File with no chunks: ");
+                    }
+                    FileSizeVerificationEvent::CouldNotResolvePath(_, _) => {
+                        println!("Could not resolve path: ");
+                    }
+                    FileSizeVerificationEvent::FileNotFound(_, _) => {
+                        println!("File not found: ");
+                    }
+                    FileSizeVerificationEvent::FileSizeVerificationFailed(_, _) => {
+                        println!("File size verification failed: ");
+                    }
+                    FileSizeVerificationEvent::FileSizeMismatch(_, _) => {
+                        println!("File size mismatch: ");
+                    }
+                    FileSizeVerificationEvent::FileSizeVerificationSuccess(_, _) => {
+                        println!("File size verification success: ");
+                    }
+                }
+            }
+        };
+        let (missing_files, _) = tokio::join!(missing_files_fut, progress_future);
+        todo!()
     }
 
     pub async fn verify(
@@ -43,14 +93,110 @@ impl Downloader {
             .flat_map(|depot_file| DownloadUnit::from_depot_file(depot_file))
             .collect::<Vec<DownloadUnit>>();
 
-        let threads = std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(1)
-            .clamp(1, 12);
+        let _missing_units = self
+            .verify_download_units(&download_units, &path_resolver, tx)
+            .await;
 
-        stream::iter(download_units)
+        Ok(())
+    }
+
+    async fn verify_files_size(
+        &self,
+        files: &[DepotFile],
+        path_resolver: &PathResolver,
+        tx: mpsc::UnboundedSender<FileSizeVerificationEvent>,
+    ) -> Vec<DepotFile> {
+        let missing_files = stream::iter(files)
+            .map(|file| {
+                let path_resolver = path_resolver;
+                let tx = tx.clone();
+                async move {
+                    let expected_file_size = match file.chunks.as_ref() {
+                        Some(chunks) => chunks.iter().fold(0, |acc, chunk| acc + chunk.size),
+                        None => {
+                            tx.send(FileSizeVerificationEvent::FileWithNoChunks(
+                                file.path.clone(),
+                                0,
+                            ))
+                            .ok();
+                            return None;
+                        }
+                    };
+                    let opt_path = match path_resolver.resolve_existing_path(&file.path).await {
+                        Ok(path) => path,
+                        Err(_) => {
+                            tx.send(FileSizeVerificationEvent::CouldNotResolvePath(
+                                file.path.clone(),
+                                expected_file_size,
+                            ))
+                            .ok();
+                            return Some(file);
+                        }
+                    };
+
+                    let final_path = match opt_path {
+                        Some(path) => path,
+                        None => {
+                            tx.send(FileSizeVerificationEvent::FileNotFound(
+                                file.path.clone(),
+                                expected_file_size,
+                            ))
+                            .ok();
+                            return Some(file);
+                        }
+                    };
+
+                    // File exists, verify size
+                    let file_size = match path_resolver.get_file_size(&final_path).await {
+                        Ok(size) => size,
+                        Err(_) => {
+                            tx.send(FileSizeVerificationEvent::FileSizeVerificationFailed(
+                                file.path.clone(),
+                                expected_file_size,
+                            ))
+                            .ok();
+                            return Some(file);
+                        }
+                    };
+
+                    if file_size != expected_file_size {
+                        tx.send(FileSizeVerificationEvent::FileSizeMismatch(
+                            file.path.clone(),
+                            expected_file_size,
+                        ))
+                        .ok();
+                        return Some(file);
+                    }
+
+                    tx.send(FileSizeVerificationEvent::FileSizeVerificationSuccess(
+                        file.path.clone(),
+                        expected_file_size,
+                    ))
+                    .ok();
+                    None
+                }
+            })
+            .buffer_unordered(self.threads)
+            .collect::<Vec<_>>()
+            .await;
+
+        let missing_units = missing_files
+            .iter()
+            .filter(|&unit| unit.is_some())
+            .map(|unit| unit.unwrap().clone())
+            .collect::<Vec<_>>();
+        missing_units
+    }
+
+    async fn verify_download_units(
+        &self,
+        download_units: &[DownloadUnit],
+        path_resolver: &PathResolver,
+        tx: mpsc::UnboundedSender<VerificationEvent>,
+    ) -> Vec<DownloadUnit> {
+        let units = stream::iter(download_units)
             .map(|download_unit| {
-                let path_resolver = path_resolver.clone();
+                let path_resolver = path_resolver;
                 let tx = tx.clone();
                 async move {
                     let opt_path = match path_resolver
@@ -58,7 +204,7 @@ impl Downloader {
                         .await
                     {
                         Ok(path) => path,
-                        Err(e) => {
+                        Err(_) => {
                             tx.send(VerificationEvent::CouldNotResolvePath(
                                 download_unit.path.clone(),
                                 download_unit.size,
@@ -91,7 +237,7 @@ impl Downloader {
                     .await
                     {
                         Ok(checksum) => checksum,
-                        Err(err) => {
+                        Err(_) => {
                             tx.send(VerificationEvent::ChecksumMismatch(
                                 download_unit.path.clone(),
                                 download_unit.size,
@@ -118,10 +264,15 @@ impl Downloader {
                     return None;
                 }
             })
-            .buffer_unordered(threads)
+            .buffer_unordered(self.threads)
             .collect::<Vec<_>>()
             .await;
 
-        Ok(())
+        let missing_units = units
+            .iter()
+            .filter(|&unit| unit.is_some())
+            .map(|unit| unit.unwrap().clone())
+            .collect::<Vec<_>>();
+        missing_units
     }
 }
