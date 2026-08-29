@@ -62,7 +62,6 @@ impl Downloader {
                                 download_unit.path.clone(),
                             ))
                             .ok();
-                            println!("ERROR: {}: {}", download_unit.path, e);
                             return Some(download_unit);
                         }
                     };
@@ -72,7 +71,6 @@ impl Downloader {
                         None => {
                             tx.send(VerificationEvent::FileNotFound(download_unit.path.clone()))
                                 .ok();
-                            println!("ERROR: {}: FILE_NOT_FOUND", download_unit.path);
                             return Some(download_unit);
                         }
                     };
@@ -93,7 +91,6 @@ impl Downloader {
                                 download_unit.path.clone(),
                             ))
                             .ok();
-                            println!("ERROR: {}: {}", download_unit.path, err);
                             return Some(download_unit);
                         }
                     };
@@ -103,10 +100,11 @@ impl Downloader {
                             download_unit.path.clone(),
                         ))
                         .ok();
-                        println!("ERROR: {} CHECKSUM MISMATCH", download_unit.path);
                         return Some(download_unit);
                     }
 
+                    tx.send(VerificationEvent::Verified(download_unit.path.clone()))
+                        .ok();
                     return None;
                 }
             })
