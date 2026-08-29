@@ -1,6 +1,6 @@
 pub enum VerificationEvent {
-    CouldNotResolvePath(String),
-    FileNotFound(String),
-    ChecksumMismatch(String),
-    Verified(String),
+    CouldNotResolvePath(String, u64),
+    FileNotFound(String, u64),
+    ChecksumMismatch(String, u64),
+    Verified(String, u64),
 }

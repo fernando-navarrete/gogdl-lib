@@ -61,6 +61,7 @@ impl Downloader {
                         Err(e) => {
                             tx.send(VerificationEvent::CouldNotResolvePath(
                                 download_unit.path.clone(),
+                                download_unit.size,
                             ))
                             .ok();
                             return Some(download_unit);
@@ -70,8 +71,11 @@ impl Downloader {
                     let final_path = match opt_path {
                         Some(path) => path,
                         None => {
-                            tx.send(VerificationEvent::FileNotFound(download_unit.path.clone()))
-                                .ok();
+                            tx.send(VerificationEvent::FileNotFound(
+                                download_unit.path.clone(),
+                                download_unit.size,
+                            ))
+                            .ok();
                             return Some(download_unit);
                         }
                     };
@@ -90,6 +94,7 @@ impl Downloader {
                         Err(err) => {
                             tx.send(VerificationEvent::ChecksumMismatch(
                                 download_unit.path.clone(),
+                                download_unit.size,
                             ))
                             .ok();
                             return Some(download_unit);
@@ -99,13 +104,17 @@ impl Downloader {
                     if actual_checksum != download_unit.md5 {
                         tx.send(VerificationEvent::ChecksumMismatch(
                             download_unit.path.clone(),
+                            download_unit.size,
                         ))
                         .ok();
                         return Some(download_unit);
                     }
 
-                    tx.send(VerificationEvent::Verified(download_unit.path.clone()))
-                        .ok();
+                    tx.send(VerificationEvent::Verified(
+                        download_unit.path.clone(),
+                        download_unit.size,
+                    ))
+                    .ok();
                     return None;
                 }
             })
