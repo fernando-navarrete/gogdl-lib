@@ -126,8 +126,9 @@ impl Downloader {
         &self,
         bundles: &[ProductBundle],
         path_resolver: &PathResolver,
-        _tx: mpsc::UnboundedSender<DownloadEvent>,
+        tx: mpsc::UnboundedSender<DownloadEvent>,
     ) -> Result<(), DownloadError> {
+        tx.send(DownloadEvent::Preparing).ok();
         let download_units: Vec<(String, DownloadUnit)> = bundles
             .iter()
             .flat_map(|bundle| {
@@ -151,9 +152,12 @@ impl Downloader {
             .collect::<Vec<()>>()
             .await;
 
+        tx.send(DownloadEvent::Prepared).ok();
         let results: Vec<Result<(), DownloadError>> = stream::iter(download_units)
             .map(|(product_id, download_unit)| {
                 let path_resolver = path_resolver;
+                tx.send(DownloadEvent::Downloading).ok();
+                let tx = tx.clone();
                 async move {
                     let secure_link = match self.secure_links.get_secure_links(&product_id).await
                     {
@@ -189,7 +193,10 @@ impl Downloader {
                     let mut decoder = ZlibStreamDecoder::new(sink);
 
                     self.client
-                        .stream_chunk(&url, |chunk| decoder.write_all(&chunk))
+                        .stream_chunk(&url, |chunk| {
+                            tx.send(DownloadEvent::Progress(chunk.len())).ok();
+                            decoder.write_all(&chunk)
+                        })
                         .await?;
 
                     let sink = decoder.finish()?;
