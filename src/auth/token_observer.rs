@@ -1,3 +1,5 @@
+use crate::auth::auth::Auth;
+
 pub trait TokenObserver: Send + Sync + 'static {
-    fn on_token_refreshed(&self, token: &str);
+    fn on_token_refreshed(&self, auth: Auth);
 }

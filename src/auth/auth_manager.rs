@@ -76,7 +76,7 @@ impl AuthManager {
             let mut inner = self.inner.lock().await;
             inner.tokens = Some(response.clone());
             if let Some(observer) = &inner.token_observer {
-                observer.on_token_refreshed(&response.access_token);
+                observer.on_token_refreshed(response.clone());
             }
         }
         Ok(())
