@@ -3,7 +3,7 @@
 Findings from a full read-through of `gogdl-lib` on the `restart` branch (all `src/*.rs`, `Cargo.toml`,
 `cargo build`, `cargo clippy --all -- -W clippy::all`) on 2026-08-30. Grouped by severity, each item has
 a checkbox so they can be worked one at a time. File:line references were accurate as of commit
-`377314c`; the auth section was re-checked against `998829d` (`src/auth/model.rs` is now
+`377314c`; the auth section was re-checked against `6c76f03` (`src/auth/model.rs` is now
 `src/auth/auth.rs`).
 
 No automated tests exist yet (`grep -r '#\[test\]' src/` is empty), so treat every fix here as
@@ -17,47 +17,53 @@ untested until you add coverage for it.
   `refresh_auth` no longer returns a JSON string at all (`Result<(), AuthError>`), and `valid_until`
   is now computed on the response *before* it is stored, so the ordering hazard is gone.
 
-- [ ] **Silent, internal token refreshes are invisible to callers.** *Partially addressed in
-  `998829d`* — `AuthManager` now holds an optional `TokenObserver`
-  (`src/auth/token_observer.rs`) that `refresh_auth` notifies, so the six internal 401-retry call
-  sites (`depot/depot_info.rs`, `depot/build_metadata.rs`, `games/owned_games.rs`,
-  `games/game_details.rs`, `games/game_build.rs`, `secure_links/secure_links.rs`) no longer refresh
-  invisibly. **The original risk remains**: the callback receives only `&str` access_token
-  (`src/auth/auth_manager.rs:77`), so the rotated *refresh* token still cannot be persisted — see
-  "Token observer only emits the access token" below. `GogDl::refresh_auth()` was removed in the same
-  commit, so the observer is now the *only* channel by which an app can learn about a refresh.
+- [x] **Silent, internal token refreshes are invisible to callers.** *Addressed in `998829d` +
+  `b87d8dd`.* `AuthManager` holds an optional `TokenObserver` (`src/auth/token_observer.rs`) that
+  `refresh_auth` notifies, so the six internal 401-retry call sites (`depot/depot_info.rs`,
+  `depot/build_metadata.rs`, `games/owned_games.rs`, `games/game_details.rs`, `games/game_build.rs`,
+  `secure_links/secure_links.rs`) no longer refresh invisibly, and `b87d8dd` changed the callback to
+  hand over the whole `Auth` (`src/auth/auth_manager.rs:79`), so the rotated refresh token reaches
+  the app. `GogDl::refresh_auth()` was removed in `998829d`, so the observer is now the *only*
+  channel by which an app can learn about a refresh — which makes the export blocker below a hard
+  dependency rather than a nicety.
 
 - [x] **`valid_until` is dead.** *Addressed in `998829d`* — `Auth::is_valid()`
-  (`src/auth/auth.rs:27-30`) compares it against `chrono::Utc::now()`, and `AuthManager::get_auth`
-  now gates on it. It is wired as a hard gate rather than a pre-flight refresh, which introduces
-  three new problems tracked separately below (restore lockout, no proactive refresh, reachable
-  `unwrap()` panics).
+  (`src/auth/auth.rs:26-29`) compares it against `chrono::Utc::now()`, and `AuthManager::get_auth`
+  now gates on it. It is wired as a hard gate rather than a pre-flight refresh, which introduces two
+  problems still open below (no proactive refresh, reachable `unwrap()` panics).
 
-- [ ] **Restoring persisted tokens now locks the app out entirely.** *Regression introduced by
-  `998829d`.* `Auth::valid_until` is `#[serde(skip_deserializing)]` (`src/auth/auth.rs:14`), so
-  `restore_from_string` always produces `valid_until: None`, and `is_valid()` returns `false` for
-  `None`. Every fetcher's pre-flight `if let None = lock.auth.get_auth().await { return
-  Err(Unauthorized) }` therefore fires immediately after `GogDl::restore_auth`, before any request is
-  made — so the 401 branch that would have refreshed is never reached, and with `GogDl::refresh_auth`
-  removed there is no other way to recover. An app that restores a session on launch can no longer
-  make a single API call. Fix by deserializing `valid_until` (or recomputing it from `expires_in` at
-  restore time) *and* by refreshing rather than failing when the stored token is expired.
+- [x] **Restoring persisted tokens locks the app out entirely.** *Fixed in `6c76f03`*, which dropped
+  `#[serde(skip_deserializing)]` from `Auth::valid_until` (`src/auth/auth.rs:14`), so
+  `restore_from_string` now recovers the stored expiry instead of always producing `None`. (`Option`
+  fields default to `None` when absent, so the GOG API responses — which never carry `valid_until` —
+  still deserialize, and both login and refresh overwrite it with a computed value.) A session
+  restored *before* its access token expires now works. A session restored *after* expiry still fails
+  — that case belongs to the next item.
 
-- [ ] **Local expiry is a hard failure, not a refresh trigger.**
-  `AuthManager::get_auth` (`src/auth/auth_manager.rs:82-92`) returns `None` for an expired token,
-  which is indistinguishable at every call site from "never logged in" — all six map it to
-  `Unauthorized`. A session with a perfectly good refresh token is reported as logged out. `get_auth`
-  (or a new `get_valid_auth`) should attempt a refresh when the token is expired but a refresh token
-  exists, and only then report `Unauthorized`.
+- [ ] **Local expiry is a hard failure, not a refresh trigger.** *This is now the whole of the
+  restart-lockout problem, and the common case.* `AuthManager::get_auth`
+  (`src/auth/auth_manager.rs:84-94`) returns `None` for an expired token, which is indistinguishable
+  at every call site from "never logged in" — all six map it to `Unauthorized` in their pre-flight
+  check, before any request is made, so the 401 branch that would have refreshed is never reached.
+  GOG access tokens live about an hour, so any relaunch after the app has been closed that long is
+  locked out with a valid refresh token sitting on disk, and with `GogDl::refresh_auth()` removed
+  there is no way for the app to force a recovery. `get_auth` (or a new `get_valid_auth`) should
+  refresh when the token is expired but a refresh token exists, and only then report `Unauthorized`.
 
-- [ ] **Token observer only emits the access token.** `TokenObserver::on_token_refreshed(&self, token:
-  &str)` (`src/auth/token_observer.rs:2`) hands out `response.access_token` only. GOG rotates refresh
-  tokens on every refresh, so an app persisting what the callback gives it still writes a stale
-  refresh token — the exact failure the observer was added to prevent. It is also inconsistent with
-  the rest of the persistence surface: `login_with_code` returns and `restore_auth` consumes the full
-  `Auth` JSON. Pass the serialized `Auth` (or an exported `Auth` type) instead. Note `Auth` is
-  crate-private and `Auth::to_string()` is not reachable from outside the crate, so today a consumer
-  cannot round-trip a refresh into `restore_auth` at all.
+- [x] **Token observer only emits the access token.** *Fixed in `b87d8dd`* —
+  `TokenObserver::on_token_refreshed(&self, auth: Auth)` (`src/auth/token_observer.rs:4`) now hands
+  over the full `Auth`, so the rotated refresh token and the computed `valid_until` are both
+  available to persist. Blocked in practice by the export gap below.
+
+- [ ] **`TokenObserver` cannot be implemented outside the crate.** `Auth` has no public path:
+  `src/auth/mod.rs` declares `mod auth;` privately and re-exports only `AuthManager`, `AuthError`,
+  and `TokenObserver`, and `src/lib.rs` re-exports only `TokenObserver`. Since `b87d8dd` the trait's
+  one method names `Auth` in its signature, so a downstream crate cannot write the `impl` at all —
+  verified: an external `impl gogdl_lib::TokenObserver` fails with ``E0425: cannot find type `Auth`
+  in crate `gogdl_lib` ``. `Auth::to_string()` is unreachable for the same reason, so even a consumer
+  that somehow held an `Auth` could not serialize it for `restore_auth`. The whole observer feature
+  is dead from `gogdl_flutter`'s side until `Auth` is exported from `src/lib.rs` (and `to_string` /
+  `from_string` along with it). This is the one gap that gates the token-persistence work as a whole.
 
 ## High — panics on untrusted data
 
@@ -133,15 +139,15 @@ untested until you add coverage for it.
 ## Medium — auth concurrency & lifetime
 
 - [ ] **The `inner` mutex is held across the refresh/login network round-trip.**
-  `self.inner.lock().await.client.get_json::<Auth>(&url).await` (`src/auth/auth_manager.rs:38` and
-  `:67`) keeps the guard alive for the whole statement, so every `get_auth()` in the crate — i.e.
+  `self.inner.lock().await.client.get_json::<Auth>(&url).await` (`src/auth/auth_manager.rs:42` and
+  `:68`) keeps the guard alive for the whole statement, so every `get_auth()` in the crate — i.e.
   every in-flight request's pre-flight check — blocks for the duration of an HTTP call. `HttpClient`
   is `Clone` (`src/client/client.rs:11`), so the fix is to clone it out of the guard and drop the
   lock before awaiting. The six call sites make this worse by holding *their* manager's mutex across
   `refresh_auth()` too.
 
 - [ ] **`refresh_lock` serializes refreshes but doesn't collapse them.**
-  `refresh_auth` (`src/auth/auth_manager.rs:56-81`) takes `refresh_lock` and then unconditionally
+  `refresh_auth` (`src/auth/auth_manager.rs:56-83`) takes `refresh_lock` and then unconditionally
   performs a refresh. With N concurrent requests hitting 401 together, all N queue on the lock and
   each fires its own refresh round-trip; because GOG rotates refresh tokens, each one invalidates the
   token the previous call just persisted, and the observer fires N times. After acquiring the lock,
@@ -150,22 +156,23 @@ untested until you add coverage for it.
 
 - [ ] **The observer callback runs while the `inner` mutex is held.**
   `observer.on_token_refreshed(...)` is invoked inside the `let mut inner = self.inner.lock().await`
-  block (`src/auth/auth_manager.rs:73-79`). It's a synchronous callback into consumer code — over FFI
+  block (`src/auth/auth_manager.rs:75-81`). It's a synchronous callback into consumer code — over FFI
   into Dart, in this project's case — so a slow observer stalls all auth access and one that re-enters
-  the crate (e.g. to make an API call while persisting) deadlocks. Clone what's needed and drop the
-  guard before calling out.
+  the crate (e.g. to make an API call while persisting) deadlocks. `b87d8dd` made this cheaper to fix:
+  the callback now takes `Auth` by value, so the clone it receives can be made before the guard is
+  taken and the guard dropped before calling out.
 
 - [ ] **`is_valid()` has no clock-skew / in-flight margin.**
-  `src/auth/auth.rs:27-30` accepts a token that expires one second from now, which will then 401
+  `src/auth/auth.rs:26-29` accepts a token that expires one second from now, which will then 401
   mid-request. Subtract a margin (30–60s) so a token about to expire is refreshed up front.
 
-- [ ] **`AuthManager::set_auth` is unreachable dead code.** `src/auth/auth_manager.rs:93-95` takes an
+- [ ] **`AuthManager::set_auth` is unreachable dead code.** `src/auth/auth_manager.rs:95-97` takes an
   `Auth`, but neither `Auth` nor `AuthManager` is exported from `src/lib.rs` (only `TokenObserver`
-  is), and nothing in the crate calls it. Either drop it or export `Auth` — the latter would also
-  solve the observer-payload gap above.
+  is), and nothing in the crate calls it. Either drop it or keep it as the counterpart to the `Auth`
+  export the observer now needs.
 
 - [ ] **A registered `TokenObserver` can never be replaced with "none".**
-  `set_token_observer` (`src/auth/auth_manager.rs:36-38`) only ever sets `Some`, so a consumer cannot
+  `set_token_observer` (`src/auth/auth_manager.rs:37-39`) only ever sets `Some`, so a consumer cannot
   detach on logout/teardown; the `Arc<dyn TokenObserver>` lives as long as the `AuthManager`.
 
 ## Medium — duplication & consistency
@@ -209,8 +216,9 @@ untested until you add coverage for it.
 - [ ] **No automated tests anywhere in the crate.** Given the `restart` branch's explicit goal of a
   careful, from-scratch rebuild (per the workspace `CLAUDE.md`), this is worth addressing before the
   crate grows further rather than after. The auth logic added in `998829d` is the clearest candidate
-  to start with: `Auth::is_valid` boundaries, the restore round-trip (which currently fails, see
-  above), and concurrent `refresh_auth` collapsing are all unit-testable without network access.
+  to start with: `Auth::is_valid` boundaries, the `to_string`/`from_string` restore round-trip
+  (regressed once already in `998829d`, fixed in `6c76f03`, and with no test to stop it happening
+  again), and concurrent `refresh_auth` collapsing are all unit-testable without network access.
 
 - [ ] **No `CLAUDE.md`/`api.md` on the `restart` branch.** Both exist on `master` and are treated as
   canonical specs for consumers (`gogdl_flutter`); the `restart` branch currently has neither, so
@@ -219,7 +227,7 @@ untested until you add coverage for it.
 ## Low — style / clippy
 
 `cargo clippy --lib -- -W clippy::all` reports 37 warnings as of `998829d` (was 34), mostly minor:
-- [ ] `Auth::is_valid`'s `map_or(false, ...)` should be `is_some_and(...)` (`src/auth/auth.rs:28`).
+- [ ] `Auth::is_valid`'s `map_or(false, ...)` should be `is_some_and(...)` (`src/auth/auth.rs:27`).
 - [ ] Redundant `if let None = ... ` patterns instead of `.is_none()` in five files (`game_build.rs`,
   `game_details.rs`, `owned_games.rs`, `secure_links.rs`, and the `depot_info`/`build_metadata`
   equivalents).
