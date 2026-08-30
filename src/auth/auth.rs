@@ -11,7 +11,6 @@ pub struct Auth {
     pub session_id: String,
     pub scope: Option<String>,
     pub user_id: String,
-    #[serde(skip_deserializing)]
     pub valid_until: Option<i64>,
 }
 
