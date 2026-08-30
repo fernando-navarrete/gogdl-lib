@@ -46,6 +46,7 @@ impl From<ClientError> for SecureLinksError {
             },
             ClientError::DecodeError(error) => SecureLinksError::DecodeError(error),
             ClientError::DeflateError(error) => SecureLinksError::DeflateError(error),
+            ClientError::AuthError(auth_error) => SecureLinksError::AuthError(auth_error),
         }
     }
 }

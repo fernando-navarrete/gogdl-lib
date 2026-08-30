@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use crate::depot::{depot_manager::DepotManager, error::DepotError};
+use crate::{
+    client::Request,
+    depot::{depot_manager::DepotManager, error::DepotError},
+};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct DepotInfo {
@@ -37,12 +40,12 @@ impl DepotInfo {
         download_manager: &DepotManager,
         depot_manifest: &str,
     ) -> Result<DepotInfo, DepotError> {
-        let auth = {
+        let auth_manager = {
             let lock = download_manager.inner.lock().await;
             if let Err(err) = lock.auth.get_auth().await {
                 return Err(DepotError::AuthError(err));
             }
-            lock.auth.get_auth().await.unwrap()
+            lock.auth.clone()
         };
         let url = format!(
             "https://cdn.gog.com/content-system/v2/meta/{}/{}/{}",
@@ -51,39 +54,19 @@ impl DepotInfo {
             &depot_manifest
         );
 
-        let game_details: DepotInfo = match download_manager
+        let depot_info: DepotInfo = match download_manager
             .client
-            .get_and_decode::<DepotInfo>(&url, &auth.access_token)
+            .fetch(Request::AuthDecode {
+                url,
+                auth_manager: auth_manager,
+            })
             .await
             .map_err(DepotError::from)
         {
-            Ok(game_details) => game_details,
-            Err(DepotError::AuthError(_err)) => {
-                // Token refresh logic
-                let auth = {
-                    let lock = download_manager.inner.lock().await;
-                    if let Err(err) = lock.auth.refresh_auth().await {
-                        return Err(DepotError::AuthError(err));
-                    }
-                    lock.auth.get_auth().await.unwrap()
-                };
-                match download_manager
-                    .client
-                    .get_and_decode::<DepotInfo>(&url, &auth.access_token)
-                    .await
-                    .map_err(DepotError::from)
-                {
-                    Ok(game_details) => game_details,
-                    Err(err) => {
-                        return Err(err);
-                    }
-                }
-            }
-            Err(err) => {
-                return Err(err);
-            }
+            Ok(depot_info) => depot_info,
+            Err(err) => return Err(err),
         };
 
-        Ok(game_details)
+        Ok(depot_info)
     }
 }

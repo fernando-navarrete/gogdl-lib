@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use crate::depot::{depot_manager::DepotManager, error::DepotError};
+use crate::{
+    client::Request,
+    depot::{depot_manager::DepotManager, error::DepotError},
+};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct BuildMetadata {
@@ -28,48 +31,29 @@ impl BuildMetadata {
         download_manager: &DepotManager,
         game_link: &str,
     ) -> Result<Self, DepotError> {
-        let auth = {
+        let auth_manager = {
             let lock = download_manager.inner.lock().await;
             if let Err(err) = lock.auth.get_auth().await {
                 return Err(DepotError::AuthError(err));
             }
-            lock.auth.get_auth().await.unwrap()
+            lock.auth.clone()
         };
 
-        let mut game_details: BuildMetadata = match download_manager
+        let mut build_metadata: BuildMetadata = match download_manager
             .client
-            .get_and_decode::<BuildMetadata>(&game_link, &auth.access_token)
+            .fetch(Request::AuthDecode {
+                url: game_link.to_string(),
+                auth_manager,
+            })
             .await
             .map_err(DepotError::from)
         {
-            Ok(game_details) => game_details,
-            Err(DepotError::AuthError(_err)) => {
-                // Token refresh logic
-                let auth = {
-                    let lock = download_manager.inner.lock().await;
-                    if let Err(err) = lock.auth.refresh_auth().await {
-                        return Err(DepotError::AuthError(err));
-                    }
-                    lock.auth.get_auth().await.unwrap()
-                };
-                match download_manager
-                    .client
-                    .get_and_decode::<BuildMetadata>(&game_link, &auth.access_token)
-                    .await
-                    .map_err(DepotError::from)
-                {
-                    Ok(game_details) => game_details,
-                    Err(err) => {
-                        return Err(err);
-                    }
-                }
-            }
-            Err(err) => {
-                return Err(err);
-            }
+            Ok(build_metadata) => build_metadata,
+            Err(err) => return Err(err),
         };
-        game_details.filter_languages("en-US");
-        Ok(game_details)
+
+        build_metadata.filter_languages("en-US");
+        Ok(build_metadata)
     }
     pub fn filter_languages(&mut self, language: &str) {
         let filtered_depots = self

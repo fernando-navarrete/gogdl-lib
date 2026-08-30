@@ -37,6 +37,7 @@ impl From<ClientError> for DepotError {
             },
             ClientError::DecodeError(error) => DepotError::DecodeError(error),
             ClientError::DeflateError(error) => DepotError::DeflateError(error),
+            ClientError::AuthError(auth_error) => DepotError::AuthError(auth_error),
         }
     }
 }

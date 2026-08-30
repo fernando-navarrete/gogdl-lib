@@ -1,6 +1,9 @@
 use serde::Deserialize;
 
-use crate::games::{GamesError, GamesManager, owned_games::GameId};
+use crate::{
+    client::Request,
+    games::{GamesError, GamesManager, owned_games::GameId},
+};
 
 #[derive(Deserialize, Clone)]
 pub struct GameLinks {
@@ -37,21 +40,16 @@ impl GameLinks {
 
         let url = format!("https://api.gog.com/v2/games/{}", game_id);
 
-        let game_details: GameLinks = match games_manager
-            .client
-            .get_json::<GameLinks>(&url)
-            .await
-            .map_err(GamesError::from)
-        {
-            Ok(game_details) => game_details,
+        let game_links: GameLinks = match games_manager.client.fetch(Request::Get { url }).await {
+            Ok(game_links) => game_links,
             Err(err) => {
-                return Err(err);
+                return Err(GamesError::from(err));
             }
         };
 
         let mut lock = games_manager.inner.lock().await;
-        lock.game_links.insert(game_id, game_details.clone());
+        lock.game_links.insert(game_id, game_links.clone());
 
-        Ok(game_details)
+        Ok(game_links)
     }
 }

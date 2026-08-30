@@ -4,7 +4,7 @@ use tokio::sync::Mutex;
 
 use crate::{
     auth::{auth::Auth, error::AuthError, token_observer::TokenObserver},
-    client::HttpClient,
+    client::{HttpClient, Request},
     constants::{AUTH_URL, LOGIN_URL, REFRESH_URL},
 };
 
@@ -39,13 +39,17 @@ impl AuthManager {
     }
     pub async fn login_with_code(&self, code: &str) -> Result<String, AuthError> {
         let url = format!("{AUTH_URL}&code={code}");
-        let mut response = match self.inner.lock().await.client.get_json::<Auth>(&url).await {
-            Ok(auth) => auth,
-            Err(err) => return Err(AuthError::from(err)),
+
+        let client = {
+            let lock = self.inner.lock().await;
+            lock.client.clone()
         };
-        response.valid_until = Some(response.expires_in as i64 + chrono::Utc::now().timestamp());
-        let json_str = response.to_string()?;
-        self.inner.lock().await.tokens = Some(response);
+
+        let mut auth: Auth = client.fetch(Request::Get { url }).await?;
+
+        auth.valid_until = Some(auth.expires_in as i64 + chrono::Utc::now().timestamp());
+        let json_str = auth.to_string()?;
+        self.inner.lock().await.tokens = Some(auth);
         Ok(json_str)
     }
     pub async fn restore_from_string(&self, json_str: &str) -> Result<(), AuthError> {
@@ -65,18 +69,19 @@ impl AuthManager {
         };
         let refresh_token = tokens.refresh_token;
         let url = format!("{REFRESH_URL}&refresh_token={refresh_token}");
-        let response = match self.inner.lock().await.client.get_json::<Auth>(&url).await {
-            Ok(mut auth) => {
-                auth.valid_until = Some(auth.expires_in as i64 + chrono::Utc::now().timestamp());
-                auth
-            }
-            Err(err) => return Err(AuthError::from(err)),
+
+        let client = {
+            let lock = self.inner.lock().await;
+            lock.client.clone()
         };
+
+        let auth: Auth = client.fetch(Request::Get { url }).await?;
+
         {
             let mut inner = self.inner.lock().await;
-            inner.tokens = Some(response.clone());
+            inner.tokens = Some(auth.clone());
             if let Some(observer) = &inner.token_observer {
-                observer.on_token_refreshed(response.clone());
+                observer.on_token_refreshed(auth.clone());
             }
         }
         Ok(())

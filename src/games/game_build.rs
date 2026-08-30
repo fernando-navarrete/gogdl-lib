@@ -1,7 +1,10 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::games::{GamesError, GamesManager, owned_games::GameId};
+use crate::{
+    client::Request,
+    games::{GamesError, GamesManager, owned_games::GameId},
+};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct GameBuild {
@@ -26,8 +29,8 @@ impl GameBuilds {
     ) -> Result<Self, GamesError> {
         {
             let lock = games_manager.inner.lock().await;
-            if let Some(game_details) = lock.game_builds.get(&game_id) {
-                return Ok(game_details.clone());
+            if let Some(game_builds) = lock.game_builds.get(&game_id) {
+                return Ok(game_builds.clone());
             }
         }
         let auth = {
@@ -35,47 +38,28 @@ impl GameBuilds {
             if let Err(err) = lock.auth.get_auth().await {
                 return Err(GamesError::AuthError(err));
             }
-            lock.auth.get_auth().await.unwrap()
+            lock.auth.clone()
         };
         let url = format!(
             "https://content-system.gog.com/products/{}/os/windows/builds?generation=2",
             game_id
         );
 
-        let game_details: GameBuilds = match games_manager
+        let game_builds: GameBuilds = match games_manager
             .client
-            .get_json_with_auth::<GameBuilds>(&url, &auth.access_token)
+            .fetch(Request::GetAuth {
+                url,
+                auth_manager: auth,
+            })
             .await
             .map_err(GamesError::from)
         {
-            Ok(game_details) => game_details,
-            Err(GamesError::AuthError(_err)) => {
-                // Token refresh logic
-                let auth = {
-                    let lock = games_manager.inner.lock().await;
-                    if let Err(err) = lock.auth.refresh_auth().await {
-                        return Err(GamesError::AuthError(err));
-                    }
-                    lock.auth.get_auth().await.unwrap()
-                };
-                match games_manager
-                    .client
-                    .get_json_with_auth::<GameBuilds>(&url, &auth.access_token)
-                    .await
-                    .map_err(GamesError::from)
-                {
-                    Ok(game_details) => game_details,
-                    Err(err) => {
-                        return Err(err);
-                    }
-                }
-            }
-            Err(err) => {
-                return Err(err);
-            }
+            Ok(game_builds) => game_builds,
+            Err(err) => return Err(err),
         };
+
         let mut lock = games_manager.inner.lock().await;
-        lock.game_builds.insert(game_id, game_details.clone());
-        Ok(game_details)
+        lock.game_builds.insert(game_id, game_builds.clone());
+        Ok(game_builds)
     }
 }

@@ -4,8 +4,8 @@ use reqwest::StatusCode;
 use thiserror::Error;
 
 use crate::{
-    client::ClientError, depot::DepotError, downloader::fs::FileSystemError, games::GamesError,
-    secure_links::SecureLinksError,
+    auth::AuthError, client::ClientError, depot::DepotError, downloader::fs::FileSystemError,
+    games::GamesError, secure_links::SecureLinksError,
 };
 
 #[derive(Error, Debug)]
@@ -15,9 +15,6 @@ pub enum DownloadError {
 
     #[error("Network error: {0}")]
     NetworkError(#[from] reqwest::Error),
-
-    #[error("Unauthorized")]
-    Unauthorized,
 
     #[error("Http error: {body}, status: {status}")]
     Http { status: StatusCode, body: String },
@@ -45,6 +42,9 @@ pub enum DownloadError {
 
     #[error("File system error: {0}")]
     FileSystemError(#[from] FileSystemError),
+
+    #[error("Auth error: {0}")]
+    AuthError(#[from] AuthError),
 }
 
 impl From<ClientError> for DownloadError {
@@ -53,11 +53,12 @@ impl From<ClientError> for DownloadError {
             ClientError::UrlParseError(parse_error) => DownloadError::UrlParseError(parse_error),
             ClientError::NetworkError(error) => DownloadError::NetworkError(error),
             ClientError::Http { status, body } => match status {
-                StatusCode::UNAUTHORIZED => DownloadError::Unauthorized,
+                StatusCode::UNAUTHORIZED => DownloadError::AuthError(AuthError::Unauthorized),
                 _ => DownloadError::Http { status, body },
             },
             ClientError::DecodeError(error) => DownloadError::DecodeError(error),
             ClientError::DeflateError(error) => DownloadError::DeflateError(error),
+            ClientError::AuthError(auth_error) => DownloadError::AuthError(auth_error),
         }
     }
 }

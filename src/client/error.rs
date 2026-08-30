@@ -3,6 +3,8 @@ use std::io;
 use reqwest::StatusCode;
 use thiserror::Error;
 
+use crate::auth::AuthError;
+
 #[derive(Error, Debug)]
 pub enum ClientError {
     #[error("Url parse error: {0}")]
@@ -19,4 +21,7 @@ pub enum ClientError {
 
     #[error("Deflate error: {0}")]
     DeflateError(#[from] io::Error),
+
+    #[error("Auth error: {0}")]
+    AuthError(#[from] AuthError),
 }

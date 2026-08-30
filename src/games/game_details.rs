@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use crate::games::{GamesError, GamesManager, owned_games::GameId};
+use crate::{
+    client::Request,
+    games::{GamesError, GamesManager, owned_games::GameId},
+};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct GameDetails {
@@ -24,51 +27,22 @@ impl GameDetails {
             }
         }
 
-        let auth = {
+        let auth_manager = {
             let lock = games_manager.inner.lock().await;
             if let Err(err) = lock.auth.get_auth().await {
                 return Err(GamesError::AuthError(err));
             }
-            lock.auth.get_auth().await.unwrap()
+            lock.auth.clone()
         };
         let url = format!("https://embed.gog.com/account/gameDetails/{}.json", game_id);
 
         let game_details: GameDetails = match games_manager
             .client
-            .get_json_with_auth::<GameDetails>(&url, &auth.access_token)
+            .fetch(Request::GetAuth { url, auth_manager })
             .await
-            .map_err(GamesError::from)
         {
             Ok(game_details) => game_details,
-            Err(GamesError::AuthError(_err)) => {
-                // Token refresh logic
-                let auth = {
-                    let lock = games_manager.inner.lock().await;
-                    if let Err(err) = lock.auth.refresh_auth().await {
-                        return Err(GamesError::AuthError(err));
-                    }
-                    lock.auth.get_auth().await.unwrap()
-                };
-                match games_manager
-                    .client
-                    .get_json_with_auth::<GameDetails>(&url, &auth.access_token)
-                    .await
-                    .map_err(GamesError::from)
-                {
-                    Ok(game_details) => game_details,
-                    Err(err) => {
-                        return Err(err);
-                    }
-                }
-            }
-            Err(GamesError::DecodeError(_err)) => {
-                let mut lock = games_manager.inner.lock().await;
-                lock.game_details.insert(game_id, None);
-                return Err(GamesError::ProductNotAGame);
-            }
-            Err(err) => {
-                return Err(err);
-            }
+            Err(err) => return Err(GamesError::from(err)),
         };
 
         let mut lock = games_manager.inner.lock().await;

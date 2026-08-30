@@ -1,7 +1,10 @@
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-use crate::secure_links::{SecureLinksManager, error::SecureLinksError};
+use crate::{
+    client::Request,
+    secure_links::{SecureLinksManager, error::SecureLinksError},
+};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct CdnUrlParams {
@@ -35,49 +38,25 @@ impl SecureLinks {
         secure_links_manager: &SecureLinksManager,
         game_id: &str,
     ) -> Result<SecureLinks, SecureLinksError> {
-        let auth = {
+        let auth_manager = {
             let lock = secure_links_manager.inner.lock().await;
             if let Err(err) = lock.auth.get_auth().await {
                 return Err(SecureLinksError::AuthError(err));
             }
-            lock.auth.get_auth().await.unwrap()
+            lock.auth.clone()
         };
         let url = format!(
             "https://content-system.gog.com/products/{}/secure_link?generation=2&_version=2&path=/",
             game_id
         );
-        let secure_links: SecureLinks = match secure_links_manager
+        let secure_links: SecureLinks = secure_links_manager
             .client
-            .get_json_with_auth::<SecureLinks>(&url, &auth.access_token)
-            .await
-            .map_err(SecureLinksError::from)
-        {
-            Ok(secure_links) => secure_links,
-            Err(SecureLinksError::AuthError(_err)) => {
-                // Token refresh logic
-                let auth = {
-                    let lock = secure_links_manager.inner.lock().await;
-                    if let Err(err) = lock.auth.refresh_auth().await {
-                        return Err(SecureLinksError::AuthError(err));
-                    }
-                    lock.auth.get_auth().await.unwrap()
-                };
-                match secure_links_manager
-                    .client
-                    .get_json_with_auth::<SecureLinks>(&url, &auth.access_token)
-                    .await
-                    .map_err(SecureLinksError::from)
-                {
-                    Ok(secure_links) => secure_links,
-                    Err(err) => {
-                        return Err(err);
-                    }
-                }
-            }
-            Err(err) => {
-                return Err(err);
-            }
-        };
+            .fetch(Request::GetAuth {
+                url,
+                auth_manager: auth_manager,
+            })
+            .await?;
+
         Ok(secure_links)
     }
     pub fn get_highest_priority_url(&self) -> Result<&UrlFormat, SecureLinksError> {

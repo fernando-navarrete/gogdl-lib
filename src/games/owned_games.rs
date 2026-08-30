@@ -2,7 +2,10 @@ use std::vec::Vec;
 
 use serde::{Deserialize, Serialize};
 
-use crate::games::{GamesError, GamesManager};
+use crate::{
+    client::Request,
+    games::{GamesError, GamesManager},
+};
 
 pub type GameId = i32;
 
@@ -22,47 +25,23 @@ impl OwnedGames {
         if !owned_games.owned.is_empty() {
             return Ok(owned_games);
         }
-        let auth = {
+        let auth_manager = {
             let lock = game_manager.inner.lock().await;
             if let Err(err) = lock.auth.get_auth().await {
                 return Err(GamesError::AuthError(err));
             }
-            lock.auth.get_auth().await.unwrap()
+            lock.auth.clone()
         };
-        let url = "https://embed.gog.com/user/data/games";
+        let url = format!("https://embed.gog.com/user/data/games");
 
-        let owned_games: OwnedGames = match game_manager
+        let owned_games: OwnedGames = game_manager
             .client
-            .get_json_with_auth::<OwnedGames>(url, &auth.access_token)
-            .await
-            .map_err(GamesError::from)
-        {
-            Ok(owned_games) => owned_games,
-            Err(GamesError::AuthError(_err)) => {
-                // Token refresh logic
-                let auth = {
-                    let lock = game_manager.inner.lock().await;
-                    if let Err(err) = lock.auth.refresh_auth().await {
-                        return Err(GamesError::AuthError(err));
-                    }
-                    lock.auth.get_auth().await.unwrap()
-                };
-                match game_manager
-                    .client
-                    .get_json_with_auth::<OwnedGames>(url, &auth.access_token)
-                    .await
-                    .map_err(GamesError::from)
-                {
-                    Ok(owned_games) => owned_games,
-                    Err(err) => {
-                        return Err(err);
-                    }
-                }
-            }
-            Err(err) => {
-                return Err(err);
-            }
-        };
+            .fetch(Request::GetAuth {
+                url: url,
+                auth_manager: auth_manager,
+            })
+            .await?;
+
         let mut lock = game_manager.inner.lock().await;
         lock.owned_games = owned_games.clone();
         Ok(owned_games)

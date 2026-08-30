@@ -40,6 +40,7 @@ impl From<ClientError> for GamesError {
             },
             ClientError::DecodeError(error) => GamesError::DecodeError(error),
             ClientError::DeflateError(error) => GamesError::DeflateError(error),
+            ClientError::AuthError(auth_error) => GamesError::AuthError(auth_error),
         }
     }
 }

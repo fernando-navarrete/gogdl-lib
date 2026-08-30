@@ -40,6 +40,7 @@ impl From<ClientError> for AuthError {
             },
             ClientError::DecodeError(error) => AuthError::DecodeError(error),
             ClientError::DeflateError(error) => AuthError::DeflateError(error),
+            ClientError::AuthError(auth_error) => auth_error,
         }
     }
 }

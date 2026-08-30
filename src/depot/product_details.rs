@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use crate::depot::{depot_manager::DepotManager, error::DepotError};
+use crate::{
+    client::Request,
+    depot::{depot_manager::DepotManager, error::DepotError},
+};
 
 type ProductId = i32;
 
@@ -38,24 +41,21 @@ impl ProductDetails {
         }
         let url = format!("https://api.gog.com/v2/games/{}", product_id);
 
-        let mut game_details: ProductDetails = match download_manager
-            .client
-            .get_json::<ProductDetails>(&url)
-            .await
-            .map_err(DepotError::from)
-        {
-            Ok(game_details) => game_details,
-            Err(err) => {
-                return Err(err);
-            }
-        };
-        game_details.title = game_details.embedded.product.title.clone();
+        let mut product_details: ProductDetails =
+            match download_manager.client.fetch(Request::Get { url }).await {
+                Ok(product_details) => product_details,
+                Err(err) => {
+                    return Err(DepotError::from(err));
+                }
+            };
+
+        product_details.title = product_details.embedded.product.title.clone();
         {
             let mut lock = download_manager.inner.lock().await;
             lock.product_details
-                .insert(product_id.to_string(), game_details.clone());
+                .insert(product_id.to_string(), product_details.clone());
         }
-        Ok(game_details)
+        Ok(product_details)
     }
     pub fn get_product_type(&self) -> String {
         self.embedded.product_type.clone()
