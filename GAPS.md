@@ -2,8 +2,9 @@
 
 Findings from a full read-through of `gogdl-lib` on the `restart` branch (all `src/*.rs`, `Cargo.toml`,
 `cargo build`, `cargo clippy --all -- -W clippy::all`) on 2026-08-30. Grouped by severity, each item has
-a checkbox so they can be worked one at a time. File:line references are accurate as of commit
-`377314c`.
+a checkbox so they can be worked one at a time. File:line references were accurate as of commit
+`377314c`; the auth section was re-checked against `998829d` (`src/auth/model.rs` is now
+`src/auth/auth.rs`).
 
 No automated tests exist yet (`grep -r '#\[test\]' src/` is empty), so treat every fix here as
 untested until you add coverage for it.
@@ -12,26 +13,51 @@ untested until you add coverage for it.
 
 ## High — correctness bugs
 
-- [ ] **`refresh_auth` persists tokens without `valid_until`.**
-  `src/auth/auth_manager.rs:59-66` builds the JSON string returned to the caller *before* setting
-  `response.valid_until`, then sets `valid_until` only on the in-memory copy stored afterwards.
-  `login_with_code` (lines 33-43) does it in the opposite, correct order. Any app that persists the
-  string returned by `refresh_auth()` to disk will save `"valid_until":null` every time, silently
-  losing the computed expiry.
+- [x] **`refresh_auth` persists tokens without `valid_until`.** *Fixed in `998829d`.*
+  `refresh_auth` no longer returns a JSON string at all (`Result<(), AuthError>`), and `valid_until`
+  is now computed on the response *before* it is stored, so the ordering hazard is gone.
 
-- [ ] **Silent, internal token refreshes are invisible to callers.**
-  Six call sites (`depot/depot_info.rs`, `depot/build_metadata.rs`, `games/owned_games.rs`,
-  `games/game_details.rs`, `games/game_build.rs`, `secure_links/secure_links.rs`) each catch a 401,
-  call `auth.refresh_auth()`, and retry — but discard the returned JSON string. `GogDl::refresh_auth()`
-  is the only path that surfaces a refreshed token to the app. Since GOG rotates refresh tokens, an
-  app that only persists tokens when it explicitly calls `refresh_auth()` can end up with a stale
-  refresh token on disk after a transparent in-request refresh, and fail to log back in on next
-  launch even though the session was healthy seconds before.
+- [ ] **Silent, internal token refreshes are invisible to callers.** *Partially addressed in
+  `998829d`* — `AuthManager` now holds an optional `TokenObserver`
+  (`src/auth/token_observer.rs`) that `refresh_auth` notifies, so the six internal 401-retry call
+  sites (`depot/depot_info.rs`, `depot/build_metadata.rs`, `games/owned_games.rs`,
+  `games/game_details.rs`, `games/game_build.rs`, `secure_links/secure_links.rs`) no longer refresh
+  invisibly. **The original risk remains**: the callback receives only `&str` access_token
+  (`src/auth/auth_manager.rs:77`), so the rotated *refresh* token still cannot be persisted — see
+  "Token observer only emits the access token" below. `GogDl::refresh_auth()` was removed in the same
+  commit, so the observer is now the *only* channel by which an app can learn about a refresh.
 
-- [ ] **`valid_until` is dead.** It's computed and stored on every login/refresh
-  (`src/auth/model.rs:15`) but nothing ever reads it — there is no proactive "is my token about to
-  expire" check anywhere. Expiry is only ever discovered reactively via a 401. Either wire it into a
-  pre-flight check or remove it.
+- [x] **`valid_until` is dead.** *Addressed in `998829d`* — `Auth::is_valid()`
+  (`src/auth/auth.rs:27-30`) compares it against `chrono::Utc::now()`, and `AuthManager::get_auth`
+  now gates on it. It is wired as a hard gate rather than a pre-flight refresh, which introduces
+  three new problems tracked separately below (restore lockout, no proactive refresh, reachable
+  `unwrap()` panics).
+
+- [ ] **Restoring persisted tokens now locks the app out entirely.** *Regression introduced by
+  `998829d`.* `Auth::valid_until` is `#[serde(skip_deserializing)]` (`src/auth/auth.rs:14`), so
+  `restore_from_string` always produces `valid_until: None`, and `is_valid()` returns `false` for
+  `None`. Every fetcher's pre-flight `if let None = lock.auth.get_auth().await { return
+  Err(Unauthorized) }` therefore fires immediately after `GogDl::restore_auth`, before any request is
+  made — so the 401 branch that would have refreshed is never reached, and with `GogDl::refresh_auth`
+  removed there is no other way to recover. An app that restores a session on launch can no longer
+  make a single API call. Fix by deserializing `valid_until` (or recomputing it from `expires_in` at
+  restore time) *and* by refreshing rather than failing when the stored token is expired.
+
+- [ ] **Local expiry is a hard failure, not a refresh trigger.**
+  `AuthManager::get_auth` (`src/auth/auth_manager.rs:82-92`) returns `None` for an expired token,
+  which is indistinguishable at every call site from "never logged in" — all six map it to
+  `Unauthorized`. A session with a perfectly good refresh token is reported as logged out. `get_auth`
+  (or a new `get_valid_auth`) should attempt a refresh when the token is expired but a refresh token
+  exists, and only then report `Unauthorized`.
+
+- [ ] **Token observer only emits the access token.** `TokenObserver::on_token_refreshed(&self, token:
+  &str)` (`src/auth/token_observer.rs:2`) hands out `response.access_token` only. GOG rotates refresh
+  tokens on every refresh, so an app persisting what the callback gives it still writes a stale
+  refresh token — the exact failure the observer was added to prevent. It is also inconsistent with
+  the rest of the persistence surface: `login_with_code` returns and `restore_auth` consumes the full
+  `Auth` JSON. Pass the serialized `Auth` (or an exported `Auth` type) instead. Note `Auth` is
+  crate-private and `Auth::to_string()` is not reachable from outside the crate, so today a consumer
+  cannot round-trip a refresh into `restore_auth` at all.
 
 ## High — panics on untrusted data
 
@@ -46,6 +72,21 @@ untested until you add coverage for it.
     `.parse().unwrap_or(0)` — i.e. the two near-duplicate code paths (`get_downloadable_products` vs
     `get_download_files`) handle the same possible failure inconsistently, one by panicking and one by
     silently substituting `0`.
+
+- [ ] **Twelve `get_auth().await.unwrap()` calls became reachable panics in `998829d`.** Before that
+  commit `get_auth()` returned `None` only when no tokens were stored; now it also returns `None`
+  whenever the token is expired, which is a *time-dependent* condition. Both duplicated shapes are
+  unsound:
+  - pre-flight: `if let None = lock.auth.get_auth().await { return Err(Unauthorized) }` followed by a
+    second `lock.auth.get_auth().await.unwrap()` (`games/owned_games.rs:27-30`,
+    `games/game_details.rs:29-32`, `games/game_build.rs:35-38`, `depot/build_metadata.rs:33-36`,
+    `depot/depot_info.rs:42-45`, `secure_links/secure_links.rs:40-43`) — two separate `await`s over
+    the same mutex, with expiry able to flip between them.
+  - post-refresh: `lock.auth.get_auth().await.unwrap()` (`games/owned_games.rs:48` and the same line
+    in the other five files) assumes a successful `refresh_auth` always leaves a valid token; a clock
+    jump or a zero/negative `expires_in` from the API panics the process.
+
+  Both go away with a single `get_valid_auth() -> Result<Auth, AuthError>` that checks once.
 
 ## High — downloader reliability
 
@@ -89,13 +130,53 @@ untested until you add coverage for it.
   nothing calls. This looks like an unfinished feature (likely for GOG's whole-file-hash manifest
   entries) rather than intentional dead code.
 
+## Medium — auth concurrency & lifetime
+
+- [ ] **The `inner` mutex is held across the refresh/login network round-trip.**
+  `self.inner.lock().await.client.get_json::<Auth>(&url).await` (`src/auth/auth_manager.rs:38` and
+  `:67`) keeps the guard alive for the whole statement, so every `get_auth()` in the crate — i.e.
+  every in-flight request's pre-flight check — blocks for the duration of an HTTP call. `HttpClient`
+  is `Clone` (`src/client/client.rs:11`), so the fix is to clone it out of the guard and drop the
+  lock before awaiting. The six call sites make this worse by holding *their* manager's mutex across
+  `refresh_auth()` too.
+
+- [ ] **`refresh_lock` serializes refreshes but doesn't collapse them.**
+  `refresh_auth` (`src/auth/auth_manager.rs:56-81`) takes `refresh_lock` and then unconditionally
+  performs a refresh. With N concurrent requests hitting 401 together, all N queue on the lock and
+  each fires its own refresh round-trip; because GOG rotates refresh tokens, each one invalidates the
+  token the previous call just persisted, and the observer fires N times. After acquiring the lock,
+  re-read the stored token and return early if it is already valid (i.e. someone else refreshed while
+  we waited).
+
+- [ ] **The observer callback runs while the `inner` mutex is held.**
+  `observer.on_token_refreshed(...)` is invoked inside the `let mut inner = self.inner.lock().await`
+  block (`src/auth/auth_manager.rs:73-79`). It's a synchronous callback into consumer code — over FFI
+  into Dart, in this project's case — so a slow observer stalls all auth access and one that re-enters
+  the crate (e.g. to make an API call while persisting) deadlocks. Clone what's needed and drop the
+  guard before calling out.
+
+- [ ] **`is_valid()` has no clock-skew / in-flight margin.**
+  `src/auth/auth.rs:27-30` accepts a token that expires one second from now, which will then 401
+  mid-request. Subtract a margin (30–60s) so a token about to expire is refreshed up front.
+
+- [ ] **`AuthManager::set_auth` is unreachable dead code.** `src/auth/auth_manager.rs:93-95` takes an
+  `Auth`, but neither `Auth` nor `AuthManager` is exported from `src/lib.rs` (only `TokenObserver`
+  is), and nothing in the crate calls it. Either drop it or export `Auth` — the latter would also
+  solve the observer-payload gap above.
+
+- [ ] **A registered `TokenObserver` can never be replaced with "none".**
+  `set_token_observer` (`src/auth/auth_manager.rs:36-38`) only ever sets `Some`, so a consumer cannot
+  detach on logout/teardown; the `Arc<dyn TokenObserver>` lives as long as the `AuthManager`.
+
 ## Medium — duplication & consistency
 
 - [ ] **The "fetch → on 401 refresh → retry once" block is copy-pasted six times** nearly verbatim:
   `depot/depot_info.rs`, `depot/build_metadata.rs`, `games/owned_games.rs`, `games/game_details.rs`,
   `games/game_build.rs`, `secure_links/secure_links.rs`. This is exactly the kind of duplication that
-  let the `refresh_auth` ordering bug above go unnoticed in one spot — extracting a shared helper would
-  both remove ~150 lines and make the next auth-related fix apply everywhere at once.
+  let the `refresh_auth` ordering bug above go unnoticed in one spot — and it is now the reason the
+  reachable-`unwrap()` panic and the lock-held-across-refresh problem each exist in six places at
+  once. Extracting a shared helper would both remove ~150 lines and make the next auth-related fix
+  apply everywhere at once.
 
 - [ ] **"Not a game" handling is inconsistent across near-identical fetchers.**
   Only `GameDetails::get_game_details` (`src/games/game_details.rs:64-68`) turns a `DecodeError` into
@@ -127,7 +208,9 @@ untested until you add coverage for it.
 
 - [ ] **No automated tests anywhere in the crate.** Given the `restart` branch's explicit goal of a
   careful, from-scratch rebuild (per the workspace `CLAUDE.md`), this is worth addressing before the
-  crate grows further rather than after.
+  crate grows further rather than after. The auth logic added in `998829d` is the clearest candidate
+  to start with: `Auth::is_valid` boundaries, the restore round-trip (which currently fails, see
+  above), and concurrent `refresh_auth` collapsing are all unit-testable without network access.
 
 - [ ] **No `CLAUDE.md`/`api.md` on the `restart` branch.** Both exist on `master` and are treated as
   canonical specs for consumers (`gogdl_flutter`); the `restart` branch currently has neither, so
@@ -135,7 +218,8 @@ untested until you add coverage for it.
 
 ## Low — style / clippy
 
-`cargo clippy --lib -- -W clippy::all` reports 34 warnings, mostly minor:
+`cargo clippy --lib -- -W clippy::all` reports 37 warnings as of `998829d` (was 34), mostly minor:
+- [ ] `Auth::is_valid`'s `map_or(false, ...)` should be `is_some_and(...)` (`src/auth/auth.rs:28`).
 - [ ] Redundant `if let None = ... ` patterns instead of `.is_none()` in five files (`game_build.rs`,
   `game_details.rs`, `owned_games.rs`, `secure_links.rs`, and the `depot_info`/`build_metadata`
   equivalents).
