@@ -3,8 +3,8 @@
 Findings from a full read-through of `gogdl-lib` on the `restart` branch (all `src/*.rs`, `Cargo.toml`,
 `cargo build`, `cargo clippy --all -- -W clippy::all`) on 2026-08-30. Grouped by severity, each item has
 a checkbox so they can be worked one at a time. File:line references were accurate as of commit
-`377314c`; the auth section was re-checked against `6c76f03` (`src/auth/model.rs` is now
-`src/auth/auth.rs`).
+`377314c`; the auth section and the auth-related call sites were re-checked against `a962ef7`
+(`src/auth/model.rs` is now `src/auth/auth.rs`).
 
 No automated tests exist yet (`grep -r '#\[test\]' src/` is empty), so treat every fix here as
 untested until you add coverage for it.
@@ -41,14 +41,16 @@ untested until you add coverage for it.
   — that case belongs to the next item.
 
 - [ ] **Local expiry is a hard failure, not a refresh trigger.** *This is now the whole of the
-  restart-lockout problem, and the common case.* `AuthManager::get_auth`
-  (`src/auth/auth_manager.rs:84-94`) returns `None` for an expired token, which is indistinguishable
-  at every call site from "never logged in" — all six map it to `Unauthorized` in their pre-flight
-  check, before any request is made, so the 401 branch that would have refreshed is never reached.
-  GOG access tokens live about an hour, so any relaunch after the app has been closed that long is
-  locked out with a valid refresh token sitting on disk, and with `GogDl::refresh_auth()` removed
-  there is no way for the app to force a recovery. `get_auth` (or a new `get_valid_auth`) should
-  refresh when the token is expired but a refresh token exists, and only then report `Unauthorized`.
+  restart-lockout problem, and the common case.* `a962ef7` made the condition *legible* —
+  `AuthManager::get_auth` (`src/auth/auth_manager.rs:84-98`) now returns
+  `Result<Auth, AuthError>` and distinguishes `AuthError::AuthExpired` from
+  `AuthError::Unauthorized` — but not *actionable*: all six call sites still convert either one
+  straight into their own `AuthError(err)` and return, in a pre-flight check that runs before any
+  request is made, so the 401 branch that would have refreshed is never reached. GOG access tokens
+  live about an hour, so any relaunch after the app has been closed that long is still locked out
+  with a valid refresh token sitting on disk, and with `GogDl::refresh_auth()` removed there is no
+  way for the app to force a recovery. `get_auth` (or a new `get_valid_auth`) should refresh when the
+  token is expired but a refresh token exists, and only then report `Unauthorized`.
 
 - [x] **Token observer only emits the access token.** *Fixed in `b87d8dd`* —
   `TokenObserver::on_token_refreshed(&self, auth: Auth)` (`src/auth/token_observer.rs:4`) now hands
@@ -65,6 +67,17 @@ untested until you add coverage for it.
   is dead from `gogdl_flutter`'s side until `Auth` is exported from `src/lib.rs` (and `to_string` /
   `from_string` along with it). This is the one gap that gates the token-persistence work as a whole.
 
+- [ ] **The error detail added in `a962ef7` is invisible to consumers.** `src/lib.rs` exports
+  `GogDlError` but none of the error types nested inside it — `AuthError`, `GamesError`,
+  `DepotError`, `SecureLinksError`, `DownloadError` all live in private modules. A consumer can match
+  `GogDlError::AuthError(_)` (binding with `_` needs no name) but cannot write
+  `AuthError::AuthExpired`, so the `AuthExpired`/`Unauthorized` split that commit introduced is
+  reachable only by string-matching `Display` output. It also can't reach the same condition arriving
+  by the other route: an auth failure surfaces as either `GogDlError::AuthError(..)` or
+  `GogDlError::GameError(GamesError::AuthError(..))` (and the `Depot`/`SecureLinks` equivalents)
+  depending on which layer produced it, and the nested match can't be written at all. Export the
+  error enums, or flatten auth failures to a single top-level variant.
+
 ## High — panics on untrusted data
 
 - [ ] **Two `.parse().unwrap()` calls can crash the process on bad input**, with no handling for the
@@ -80,17 +93,21 @@ untested until you add coverage for it.
     silently substituting `0`.
 
 - [ ] **Twelve `get_auth().await.unwrap()` calls became reachable panics in `998829d`.** Before that
-  commit `get_auth()` returned `None` only when no tokens were stored; now it also returns `None`
-  whenever the token is expired, which is a *time-dependent* condition. Both duplicated shapes are
-  unsound:
-  - pre-flight: `if let None = lock.auth.get_auth().await { return Err(Unauthorized) }` followed by a
+  commit `get_auth()` failed only when no tokens were stored; now it also fails whenever the token is
+  expired, which is a *time-dependent* condition. `a962ef7` changed the error type (`Option` →
+  `Result`) but not the shape, so both duplicated forms are still unsound:
+  - pre-flight: `if let Err(err) = lock.auth.get_auth().await { return Err(..) }` followed by a
     second `lock.auth.get_auth().await.unwrap()` (`games/owned_games.rs:27-30`,
     `games/game_details.rs:29-32`, `games/game_build.rs:35-38`, `depot/build_metadata.rs:33-36`,
     `depot/depot_info.rs:42-45`, `secure_links/secure_links.rs:40-43`) — two separate `await`s over
-    the same mutex, with expiry able to flip between them.
-  - post-refresh: `lock.auth.get_auth().await.unwrap()` (`games/owned_games.rs:48` and the same line
-    in the other five files) assumes a successful `refresh_auth` always leaves a valid token; a clock
-    jump or a zero/negative `expires_in` from the API panics the process.
+    the same mutex, with expiry able to flip between them. The `Result` now returned makes this a
+    one-line fix at each site (bind the `Ok` instead of re-calling), so it is the cheapest of the
+    open auth items.
+  - post-refresh: `lock.auth.get_auth().await.unwrap()` (`games/owned_games.rs:48`,
+    `games/game_details.rs:50`, `games/game_build.rs:59`, `depot/build_metadata.rs:53`,
+    `depot/depot_info.rs:68`, `secure_links/secure_links.rs:63`) assumes a successful `refresh_auth`
+    always leaves a valid token; a clock jump or a zero/negative `expires_in` from the API panics the
+    process.
 
   Both go away with a single `get_valid_auth() -> Result<Auth, AuthError>` that checks once.
 
@@ -166,7 +183,7 @@ untested until you add coverage for it.
   `src/auth/auth.rs:26-29` accepts a token that expires one second from now, which will then 401
   mid-request. Subtract a margin (30–60s) so a token about to expire is refreshed up front.
 
-- [ ] **`AuthManager::set_auth` is unreachable dead code.** `src/auth/auth_manager.rs:95-97` takes an
+- [ ] **`AuthManager::set_auth` is unreachable dead code.** `src/auth/auth_manager.rs:99-101` takes an
   `Auth`, but neither `Auth` nor `AuthManager` is exported from `src/lib.rs` (only `TokenObserver`
   is), and nothing in the crate calls it. Either drop it or keep it as the counterpart to the `Auth`
   export the observer now needs.
@@ -182,8 +199,17 @@ untested until you add coverage for it.
   `games/game_build.rs`, `secure_links/secure_links.rs`. This is exactly the kind of duplication that
   let the `refresh_auth` ordering bug above go unnoticed in one spot — and it is now the reason the
   reachable-`unwrap()` panic and the lock-held-across-refresh problem each exist in six places at
-  once. Extracting a shared helper would both remove ~150 lines and make the next auth-related fix
-  apply everywhere at once.
+  once, and why `a962ef7` had to make the same edit six times to change one error type. Extracting a
+  shared helper would both remove ~150 lines and make the next auth-related fix apply everywhere at
+  once.
+
+- [ ] **`DownloadError` was left out of the `a962ef7` error unification.** Five error enums now carry
+  `AuthError(#[from] AuthError)` in place of a bare `Unauthorized` variant, but
+  `src/downloader/error.rs:19-20` still declares `DownloadError::Unauthorized`, and `:56` still maps
+  a 401 to it. So a 401 means two different things depending on which module produced it, and the
+  `AuthExpired`/`Unauthorized` distinction stops at the downloader boundary. The downloader also has
+  no 401-refresh-retry of its own — see the secure-links expiry item above, which is the same problem
+  from the CDN side.
 
 - [ ] **"Not a game" handling is inconsistent across near-identical fetchers.**
   Only `GameDetails::get_game_details` (`src/games/game_details.rs:64-68`) turns a `DecodeError` into
@@ -226,11 +252,12 @@ untested until you add coverage for it.
 
 ## Low — style / clippy
 
-`cargo clippy --lib -- -W clippy::all` reports 37 warnings as of `998829d` (was 34), mostly minor:
+`cargo clippy --lib -- -W clippy::all` reports 30 warnings as of `a962ef7` (34 at `377314c`, 37 at
+`998829d`), mostly minor:
 - [ ] `Auth::is_valid`'s `map_or(false, ...)` should be `is_some_and(...)` (`src/auth/auth.rs:27`).
-- [ ] Redundant `if let None = ... ` patterns instead of `.is_none()` in five files (`game_build.rs`,
-  `game_details.rs`, `owned_games.rs`, `secure_links.rs`, and the `depot_info`/`build_metadata`
-  equivalents).
+- [x] Redundant `if let None = ... ` patterns instead of `.is_none()` in five files. *Fixed as a side
+  effect of `a962ef7`* — those six pre-flight checks are now `if let Err(err) = ...`, which clears
+  the whole `redundant_pattern_matching` family (the bulk of the 37 → 30 drop).
 - [ ] `OwnedGames::default()` is a hand-written inherent method that shadows/confuses with
   `std::default::Default` (`src/games/owned_games.rs:14`) — implement the trait instead.
 - [ ] Module inception (`mod gogdl` inside `gogdl/mod.rs`, `mod secure_links` inside
