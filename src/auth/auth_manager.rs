@@ -4,7 +4,7 @@ use tokio::sync::Mutex;
 
 use crate::{
     auth::{auth::Auth, error::AuthError, token_observer::TokenObserver},
-    client::{HttpClient, Request},
+    client::HttpClient,
     constants::{AUTH_URL, LOGIN_URL, REFRESH_URL},
 };
 
@@ -45,7 +45,7 @@ impl AuthManager {
             lock.client.clone()
         };
 
-        let mut auth: Auth = client.fetch(Request::Get { url }).await?;
+        let mut auth: Auth = client.fetch_no_retry(&url, None, false).await?;
 
         auth.valid_until = Some(auth.expires_in as i64 + chrono::Utc::now().timestamp());
         let json_str = auth.to_string()?;
@@ -75,7 +75,8 @@ impl AuthManager {
             lock.client.clone()
         };
 
-        let auth: Auth = client.fetch(Request::Get { url }).await?;
+        let mut auth: Auth = client.fetch_no_retry(&url, None, false).await?;
+        auth.valid_until = Some(auth.expires_in as i64 + chrono::Utc::now().timestamp());
 
         {
             let mut inner = self.inner.lock().await;

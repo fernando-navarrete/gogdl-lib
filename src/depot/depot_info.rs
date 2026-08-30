@@ -1,9 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    client::Request,
-    depot::{depot_manager::DepotManager, error::DepotError},
-};
+use crate::depot::{depot_manager::DepotManager, error::DepotError};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct DepotInfo {
@@ -54,18 +51,10 @@ impl DepotInfo {
             &depot_manifest
         );
 
-        let depot_info: DepotInfo = match download_manager
+        let depot_info: DepotInfo = download_manager
             .client
-            .fetch(Request::AuthDecode {
-                url,
-                auth_manager: auth_manager,
-            })
-            .await
-            .map_err(DepotError::from)
-        {
-            Ok(depot_info) => depot_info,
-            Err(err) => return Err(err),
-        };
+            .fetch(&url, Some(auth_manager), true)
+            .await?;
 
         Ok(depot_info)
     }

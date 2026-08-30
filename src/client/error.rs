@@ -24,4 +24,7 @@ pub enum ClientError {
 
     #[error("Auth error: {0}")]
     AuthError(#[from] AuthError),
+
+    #[error("Request reached max retires without a known error")]
+    Unknown,
 }

@@ -33,6 +33,9 @@ pub enum SecureLinksError {
 
     #[error("Auth error: {0}")]
     AuthError(#[from] AuthError),
+
+    #[error("Unknown error")]
+    Unknown,
 }
 
 impl From<ClientError> for SecureLinksError {
@@ -47,6 +50,7 @@ impl From<ClientError> for SecureLinksError {
             ClientError::DecodeError(error) => SecureLinksError::DecodeError(error),
             ClientError::DeflateError(error) => SecureLinksError::DeflateError(error),
             ClientError::AuthError(auth_error) => SecureLinksError::AuthError(auth_error),
+            ClientError::Unknown => SecureLinksError::Unknown,
         }
     }
 }

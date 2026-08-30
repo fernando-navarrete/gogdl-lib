@@ -1,10 +1,7 @@
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-use crate::{
-    client::Request,
-    secure_links::{SecureLinksManager, error::SecureLinksError},
-};
+use crate::secure_links::{SecureLinksManager, error::SecureLinksError};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct CdnUrlParams {
@@ -51,10 +48,7 @@ impl SecureLinks {
         );
         let secure_links: SecureLinks = secure_links_manager
             .client
-            .fetch(Request::GetAuth {
-                url,
-                auth_manager: auth_manager,
-            })
+            .fetch(&url, Some(auth_manager), false)
             .await?;
 
         Ok(secure_links)

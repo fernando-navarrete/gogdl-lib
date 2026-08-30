@@ -1,9 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    client::Request,
-    games::{GamesError, GamesManager, owned_games::GameId},
-};
+use crate::games::{GamesError, GamesManager, owned_games::GameId};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct GameDetails {
@@ -36,14 +33,10 @@ impl GameDetails {
         };
         let url = format!("https://embed.gog.com/account/gameDetails/{}.json", game_id);
 
-        let game_details: GameDetails = match games_manager
+        let game_details: GameDetails = games_manager
             .client
-            .fetch(Request::GetAuth { url, auth_manager })
-            .await
-        {
-            Ok(game_details) => game_details,
-            Err(err) => return Err(GamesError::from(err)),
-        };
+            .fetch(&url, Some(auth_manager), false)
+            .await?;
 
         let mut lock = games_manager.inner.lock().await;
         lock.game_details

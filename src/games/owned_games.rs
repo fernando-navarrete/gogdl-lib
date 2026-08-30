@@ -2,10 +2,7 @@ use std::vec::Vec;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    client::Request,
-    games::{GamesError, GamesManager},
-};
+use crate::games::{GamesError, GamesManager};
 
 pub type GameId = i32;
 
@@ -36,10 +33,7 @@ impl OwnedGames {
 
         let owned_games: OwnedGames = game_manager
             .client
-            .fetch(Request::GetAuth {
-                url: url,
-                auth_manager: auth_manager,
-            })
+            .fetch(&url, Some(auth_manager), false)
             .await?;
 
         let mut lock = game_manager.inner.lock().await;

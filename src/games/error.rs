@@ -27,6 +27,9 @@ pub enum GamesError {
 
     #[error("Auth error: {0}")]
     AuthError(#[from] AuthError),
+
+    #[error("Unknown error")]
+    Unknown,
 }
 
 impl From<ClientError> for GamesError {
@@ -41,6 +44,7 @@ impl From<ClientError> for GamesError {
             ClientError::DecodeError(error) => GamesError::DecodeError(error),
             ClientError::DeflateError(error) => GamesError::DeflateError(error),
             ClientError::AuthError(auth_error) => GamesError::AuthError(auth_error),
+            ClientError::Unknown => GamesError::Unknown,
         }
     }
 }

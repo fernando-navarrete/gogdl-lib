@@ -45,6 +45,9 @@ pub enum DownloadError {
 
     #[error("Auth error: {0}")]
     AuthError(#[from] AuthError),
+
+    #[error("Unknown error")]
+    Unknown,
 }
 
 impl From<ClientError> for DownloadError {
@@ -58,6 +61,7 @@ impl From<ClientError> for DownloadError {
             },
             ClientError::DecodeError(error) => DownloadError::DecodeError(error),
             ClientError::DeflateError(error) => DownloadError::DeflateError(error),
+            ClientError::Unknown => DownloadError::Unknown,
             ClientError::AuthError(auth_error) => DownloadError::AuthError(auth_error),
         }
     }

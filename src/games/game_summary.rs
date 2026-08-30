@@ -1,9 +1,6 @@
 use serde::Deserialize;
 
-use crate::{
-    client::Request,
-    games::{GamesError, GamesManager, owned_games::GameId},
-};
+use crate::games::{GamesError, GamesManager, owned_games::GameId};
 
 #[derive(Deserialize, Clone)]
 pub struct GameSummary {
@@ -35,7 +32,7 @@ impl GameSummary {
             game_id
         );
 
-        let game_summary: GameSummary = games_manager.client.fetch(Request::Get { url }).await?;
+        let game_summary: GameSummary = games_manager.client.fetch(&url, None, false).await?;
 
         let mut lock = games_manager.inner.lock().await;
         lock.game_summary.insert(game_id, game_summary.clone());

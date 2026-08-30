@@ -1,9 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    client::Request,
-    depot::{depot_manager::DepotManager, error::DepotError},
-};
+use crate::depot::{depot_manager::DepotManager, error::DepotError};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct BuildMetadata {
@@ -39,18 +36,10 @@ impl BuildMetadata {
             lock.auth.clone()
         };
 
-        let mut build_metadata: BuildMetadata = match download_manager
+        let mut build_metadata: BuildMetadata = download_manager
             .client
-            .fetch(Request::AuthDecode {
-                url: game_link.to_string(),
-                auth_manager,
-            })
-            .await
-            .map_err(DepotError::from)
-        {
-            Ok(build_metadata) => build_metadata,
-            Err(err) => return Err(err),
-        };
+            .fetch(game_link, Some(auth_manager), true)
+            .await?;
 
         build_metadata.filter_languages("en-US");
         Ok(build_metadata)

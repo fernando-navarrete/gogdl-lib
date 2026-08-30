@@ -6,7 +6,10 @@ use futures_util::StreamExt;
 use reqwest::Client;
 use serde::de::DeserializeOwned;
 
-use crate::client::{ClientError::AuthError, Request, error::ClientError};
+use crate::{
+    auth::AuthManager,
+    client::{ClientError::AuthError, error::ClientError},
+};
 
 #[derive(Clone)]
 pub struct HttpClient {
@@ -17,28 +20,58 @@ impl HttpClient {
     pub fn new_with_client(client: Client) -> Self {
         Self { client }
     }
-    pub async fn fetch<T: DeserializeOwned>(&self, request: Request) -> Result<T, ClientError> {
-        match request {
-            Request::AuthDecode { url, auth_manager } => {
-                let auth = match auth_manager.get_auth().await {
-                    Ok(auth) => auth,
-                    Err(err) => return Err(AuthError(err)),
-                };
-                let result = self.get_and_decode(&url, &auth.access_token).await?;
-                Ok(result)
+    pub async fn fetch_no_retry<T: DeserializeOwned>(
+        &self,
+        url: &str,
+        auth_manager: Option<AuthManager>,
+        decode: bool,
+    ) -> Result<T, ClientError> {
+        self.inner_fetch(url, auth_manager.clone(), decode).await
+    }
+    pub async fn fetch<T: DeserializeOwned>(
+        &self,
+        url: &str,
+        auth_manager: Option<AuthManager>,
+        decode: bool,
+    ) -> Result<T, ClientError> {
+        let mut attempts = 0;
+        while attempts < 3 {
+            attempts += 1;
+            match self.inner_fetch(url, auth_manager.clone(), decode).await {
+                Ok(result) => return Ok(result),
+                Err(ClientError::AuthError(_err)) => {
+                    if let Some(auth_manager) = &auth_manager {
+                        auth_manager.refresh_auth().await?;
+                    }
+                    continue;
+                }
+                Err(err) => {
+                    return Err(err);
+                }
             }
-            Request::Get { url } => {
-                let result = self.get_json(&url).await?;
-                Ok(result)
+        }
+        Err(ClientError::Unknown)
+    }
+    async fn inner_fetch<T: DeserializeOwned>(
+        &self,
+        url: &str,
+        auth_manager: Option<AuthManager>,
+        decode: bool,
+    ) -> Result<T, ClientError> {
+        if let Some(auth_manager) = &auth_manager {
+            let auth = match auth_manager.get_auth().await {
+                Ok(auth) => auth,
+                Err(err) => return Err(AuthError(err)),
+            };
+            if decode {
+                let result = self.get_and_decode(url, &auth.access_token).await?;
+                return Ok(result);
             }
-            Request::GetAuth { url, auth_manager } => {
-                let auth = match auth_manager.get_auth().await {
-                    Ok(auth) => auth,
-                    Err(err) => return Err(AuthError(err)),
-                };
-                let result = self.get_json_with_auth(&url, &auth.access_token).await?;
-                Ok(result)
-            }
+            let result = self.get_json_with_auth(url, &auth.access_token).await?;
+            return Ok(result);
+        } else {
+            let result = self.get_json(url).await?;
+            return Ok(result);
         }
     }
     async fn get_json<T: DeserializeOwned>(&self, url: &str) -> Result<T, ClientError> {

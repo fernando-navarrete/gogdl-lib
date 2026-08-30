@@ -1,10 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    client::Request,
-    games::{GamesError, GamesManager, owned_games::GameId},
-};
+use crate::games::{GamesError, GamesManager, owned_games::GameId};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct GameBuild {
@@ -45,19 +42,7 @@ impl GameBuilds {
             game_id
         );
 
-        let game_builds: GameBuilds = match games_manager
-            .client
-            .fetch(Request::GetAuth {
-                url,
-                auth_manager: auth,
-            })
-            .await
-            .map_err(GamesError::from)
-        {
-            Ok(game_builds) => game_builds,
-            Err(err) => return Err(err),
-        };
-
+        let game_builds: GameBuilds = games_manager.client.fetch(&url, Some(auth), false).await?;
         let mut lock = games_manager.inner.lock().await;
         lock.game_builds.insert(game_id, game_builds.clone());
         Ok(game_builds)
