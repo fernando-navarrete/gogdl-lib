@@ -5,8 +5,8 @@ use futures_util::{StreamExt, stream};
 use tokio::sync::mpsc;
 
 use crate::{
-    DepotFile,
     client::HttpClient,
+    depot::DepotFile,
     downloader::{
         DownloadError, DownloadEvent, DownloadUnit, PathResolver, ProductBundle,
         download_unit::FileType,

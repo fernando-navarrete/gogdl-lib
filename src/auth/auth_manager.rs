@@ -3,19 +3,21 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::{
-    auth::{error::AuthError, model::Auth},
+    auth::{auth::Auth, error::AuthError, token_observer::TokenObserver},
     client::HttpClient,
     constants::{AUTH_URL, LOGIN_URL, REFRESH_URL},
 };
 
 #[derive(Clone)]
 pub struct AuthManager {
-    pub inner: Arc<Mutex<AuthManagerInner>>,
+    inner: Arc<Mutex<AuthManagerInner>>,
+    refresh_lock: Arc<Mutex<()>>,
 }
 
 pub struct AuthManagerInner {
-    pub client: HttpClient,
-    pub tokens: Option<Auth>,
+    client: HttpClient,
+    tokens: Option<Auth>,
+    token_observer: Option<Arc<dyn TokenObserver>>,
 }
 
 impl AuthManager {
@@ -24,11 +26,16 @@ impl AuthManager {
             inner: Arc::new(Mutex::new(AuthManagerInner {
                 client,
                 tokens: None,
+                token_observer: None,
             })),
+            refresh_lock: Arc::new(Mutex::new(())),
         }
     }
     pub fn get_login_url(&self) -> &str {
         LOGIN_URL
+    }
+    pub async fn set_token_observer(&self, observer: Arc<dyn TokenObserver>) {
+        self.inner.lock().await.token_observer = Some(observer);
     }
     pub async fn login_with_code(&self, code: &str) -> Result<String, AuthError> {
         let url = format!("{AUTH_URL}&code={code}");
@@ -46,7 +53,9 @@ impl AuthManager {
         self.inner.lock().await.tokens = Some(tokens);
         Ok(())
     }
-    pub async fn refresh_auth(&self) -> Result<String, AuthError> {
+    pub async fn refresh_auth(&self) -> Result<(), AuthError> {
+        // Lock to prevent concurrent refresh attempts
+        let _lock = self.refresh_lock.lock().await;
         let tokens = {
             let tokens = self.inner.lock().await.tokens.clone();
             if tokens.is_none() {
@@ -56,17 +65,32 @@ impl AuthManager {
         };
         let refresh_token = tokens.refresh_token;
         let url = format!("{REFRESH_URL}&refresh_token={refresh_token}");
-        let mut response = match self.inner.lock().await.client.get_json::<Auth>(&url).await {
-            Ok(auth) => auth,
+        let response = match self.inner.lock().await.client.get_json::<Auth>(&url).await {
+            Ok(mut auth) => {
+                auth.valid_until = Some(auth.expires_in as i64 + chrono::Utc::now().timestamp());
+                auth
+            }
             Err(err) => return Err(AuthError::from(err)),
         };
-        let json_str = response.to_string()?;
-        response.valid_until = Some(response.expires_in as i64 + chrono::Utc::now().timestamp());
-        self.inner.lock().await.tokens = Some(response);
-        Ok(json_str)
+        {
+            let mut inner = self.inner.lock().await;
+            inner.tokens = Some(response.clone());
+            if let Some(observer) = &inner.token_observer {
+                observer.on_token_refreshed(&response.access_token);
+            }
+        }
+        Ok(())
     }
     pub async fn get_auth(&self) -> Option<Auth> {
-        self.inner.lock().await.tokens.clone()
+        let auth = {
+            let lock = self.inner.lock().await;
+            if let Some(auth) = lock.tokens.as_ref() {
+                auth.clone()
+            } else {
+                return None;
+            }
+        };
+        if auth.is_valid() { Some(auth) } else { None }
     }
     pub async fn set_auth(&self, auth: Auth) {
         self.inner.lock().await.tokens = Some(auth);

@@ -1,4 +1,4 @@
-use crate::DepotFile;
+use crate::depot::DepotFile;
 
 #[derive(Clone)]
 pub enum FileType {

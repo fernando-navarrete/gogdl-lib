@@ -1,6 +1,7 @@
+use std::sync::Arc;
+
 use tokio::sync::mpsc;
 
-use crate::DownloadStageEvent;
 use crate::auth::AuthManager;
 use crate::client::HttpClient;
 use crate::depot::{DepotManager, ProductDetails};
@@ -10,6 +11,7 @@ use crate::games::{
 };
 use crate::gogdl::error::GogDlError;
 use crate::secure_links::{SecureLinks, SecureLinksManager};
+use crate::{DownloadStageEvent, TokenObserver};
 
 pub struct GogDl {
     auth: AuthManager,
@@ -52,10 +54,6 @@ impl GogDl {
     }
     pub fn get_login_url(&self) -> &str {
         self.auth.get_login_url()
-    }
-    pub async fn refresh_auth(&self) -> Result<String, GogDlError> {
-        let auth_string = self.auth.refresh_auth().await?;
-        Ok(auth_string)
     }
     pub async fn login_with_code(&self, code: &str) -> Result<String, GogDlError> {
         let auth_string = self.auth.login_with_code(code).await?;
@@ -136,5 +134,8 @@ impl GogDl {
     ) -> Result<(), GogDlError> {
         self.downloader.download_game(bundles, path, tx).await?;
         Ok(())
+    }
+    pub async fn set_token_observer(&self, observer: Arc<dyn TokenObserver>) {
+        self.auth.set_token_observer(observer).await;
     }
 }
