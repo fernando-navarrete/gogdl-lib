@@ -25,7 +25,7 @@ impl OwnedGames {
         let auth = {
             let lock = game_manager.inner.lock().await;
             if let None = lock.auth.get_auth().await {
-                return Err(GamesError::NotAuthenticated);
+                return Err(GamesError::Unauthorized);
             }
             lock.auth.get_auth().await.unwrap()
         };

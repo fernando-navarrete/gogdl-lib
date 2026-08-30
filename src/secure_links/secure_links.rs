@@ -38,7 +38,7 @@ impl SecureLinks {
         let auth = {
             let lock = secure_links_manager.inner.lock().await;
             if let None = lock.auth.get_auth().await {
-                return Err(SecureLinksError::NotAuthenticated);
+                return Err(SecureLinksError::Unauthorized);
             }
             lock.auth.get_auth().await.unwrap()
         };

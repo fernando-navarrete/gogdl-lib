@@ -7,9 +7,6 @@ use crate::{client::ClientError, games::GamesError};
 
 #[derive(Error, Debug)]
 pub enum SecureLinksError {
-    #[error("not authenticated")]
-    NotAuthenticated,
-
     #[error("Url parse error: {0}")]
     UrlParseError(#[from] url::ParseError),
 
@@ -44,7 +41,7 @@ impl From<ClientError> for SecureLinksError {
             ClientError::UrlParseError(parse_error) => SecureLinksError::UrlParseError(parse_error),
             ClientError::NetworkError(error) => SecureLinksError::NetworkError(error),
             ClientError::Http { status, body } => match status {
-                StatusCode::UNAUTHORIZED => SecureLinksError::NotAuthenticated,
+                StatusCode::UNAUTHORIZED => SecureLinksError::Unauthorized,
                 _ => SecureLinksError::Http { status, body },
             },
             ClientError::DecodeError(error) => SecureLinksError::DecodeError(error),

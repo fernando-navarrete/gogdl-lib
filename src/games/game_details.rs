@@ -27,7 +27,7 @@ impl GameDetails {
         let auth = {
             let lock = games_manager.inner.lock().await;
             if let None = lock.auth.get_auth().await {
-                return Err(GamesError::NotAuthenticated);
+                return Err(GamesError::Unauthorized);
             }
             lock.auth.get_auth().await.unwrap()
         };
