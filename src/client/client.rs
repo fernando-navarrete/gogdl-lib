@@ -1,6 +1,8 @@
 use std::io::Read;
 
+use bytes::Bytes;
 use flate2::read::ZlibDecoder;
+use futures_util::StreamExt;
 use reqwest::Client;
 use serde::de::DeserializeOwned;
 
@@ -32,8 +34,26 @@ impl HttpClient {
         let result: T = serde_json::from_str(&response_text)?;
         Ok(result)
     }
-    pub async fn stream_chunk(&self, url: &str) {
-        todo!()
+    pub async fn stream_chunk(
+        &self,
+        url: &str,
+        mut f: impl FnMut(Bytes) -> (),
+    ) -> Result<(), ClientError> {
+        let url = reqwest::Url::parse(url)?;
+        let request = self.client.get(url);
+
+        let response = request.send().await?;
+
+        let mut stream = response.bytes_stream();
+
+        while let Some(chunk) = stream.next().await {
+            let chunk = match chunk {
+                Ok(chunk) => chunk,
+                Err(e) => return Err(ClientError::NetworkError(e)),
+            };
+            f(chunk);
+        }
+        Ok(())
     }
     pub async fn get_and_decode<T: DeserializeOwned>(
         &self,

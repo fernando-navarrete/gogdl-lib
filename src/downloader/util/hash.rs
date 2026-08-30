@@ -1,4 +1,7 @@
-use std::{io::Seek, path::PathBuf};
+use std::{
+    io::{Seek, Write},
+    path::PathBuf,
+};
 
 use md5::{Digest as Md5DigestTrait, Md5};
 use sha2::Sha256;

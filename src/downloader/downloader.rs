@@ -1,5 +1,6 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{io::Write, path::PathBuf, sync::Arc};
 
+use flate2::write::ZlibDecoder as ZlibStreamDecoder;
 use futures_util::{StreamExt, stream};
 use tokio::sync::mpsc;
 
@@ -167,7 +168,14 @@ impl Downloader {
                         highest_priority_link.parse_url_redist(&download_unit.compressed_md5)
                     }
                 };
-                println!("{url}")
+
+                let mut decoder = ZlibStreamDecoder::new(Vec::new());
+                let _ = self
+                    .client
+                    .stream_chunk(&url, |chunk| {
+                        decoder.write_all(&chunk).unwrap();
+                    })
+                    .await;
             })
             .buffer_unordered(self.threads)
             .collect::<Vec<_>>()
@@ -199,7 +207,7 @@ impl Downloader {
                         Err(_) => {
                             tx.send(FileAllocationEvent::CouldNotResolvePath(
                                 file.path.clone(),
-                                0,
+                                expected_file_size,
                             ))
                             .ok();
                             return Some(file);
@@ -213,7 +221,7 @@ impl Downloader {
                         Ok(_) => {
                             tx.send(FileAllocationEvent::FileAllocationSuccess(
                                 file.path.clone(),
-                                0,
+                                expected_file_size,
                             ))
                             .ok();
                             None
