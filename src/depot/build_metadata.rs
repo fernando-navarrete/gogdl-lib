@@ -31,7 +31,7 @@ impl BuildMetadata {
         let auth = {
             let lock = download_manager.inner.lock().await;
             if let None = lock.auth.get_auth().await {
-                return Err(DepotError::NotAuthenticated);
+                return Err(DepotError::Unauthorized);
             }
             lock.auth.get_auth().await.unwrap()
         };

@@ -19,9 +19,6 @@ pub enum DepotError {
     #[error("Http error: {body}, status: {status}")]
     Http { status: StatusCode, body: String },
 
-    #[error("Not authenticated")]
-    NotAuthenticated,
-
     #[error("Decode error: {0}")]
     DecodeError(#[from] serde_json::Error),
 
