@@ -5,8 +5,7 @@ use futures_util::{StreamExt, stream};
 use tokio::sync::mpsc;
 
 use crate::{
-    Depot, DepotFile, SecureLinks,
-    auth::AuthManager,
+    DepotFile,
     client::HttpClient,
     downloader::{
         DownloadError, DownloadEvent, DownloadUnit, PathResolver, ProductBundle,
@@ -22,12 +21,11 @@ use crate::{
 pub struct Downloader {
     pub client: HttpClient,
     pub secure_links: SecureLinksManager,
-    pub auth: AuthManager,
     threads: usize,
 }
 
 impl Downloader {
-    pub fn new(client: HttpClient, secure_links: SecureLinksManager, auth: AuthManager) -> Self {
+    pub fn new(client: HttpClient, secure_links: SecureLinksManager) -> Self {
         let threads = std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(1)
@@ -35,7 +33,6 @@ impl Downloader {
         Self {
             client,
             secure_links,
-            auth,
             threads,
         }
     }

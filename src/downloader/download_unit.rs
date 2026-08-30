@@ -11,7 +11,7 @@ pub struct DownloadUnit {
     pub md5: String,
     pub size: u64,
     pub compressed_md5: String,
-    pub compressed_size: u64,
+    pub _compressed_size: u64,
     pub path: String,
     pub offset: u64,
     pub file_type: FileType,
@@ -28,7 +28,7 @@ impl DownloadUnit {
                     md5: chunk.md5.clone(),
                     size: chunk.size,
                     compressed_md5: chunk.compressed_md5.clone(),
-                    compressed_size: chunk.compressed_size,
+                    _compressed_size: chunk.compressed_size,
                     path: depot_file.path.clone(),
                     offset: offset,
                     file_type: match depot_file.file_type.as_ref() {

@@ -68,13 +68,12 @@ impl DownloadManager {
         path: &str,
         tx: mpsc::UnboundedSender<VerificationEvent>,
     ) -> Result<(), DownloadError> {
-        let (auth, links) = {
+        let links = {
             let inner = self.inner.lock().await;
-            let auth = inner.auth.clone();
             let links = inner.secure_links.clone();
-            (auth, links)
+            links
         };
-        let downloader = Downloader::new(self.client.clone(), links, auth);
+        let downloader = Downloader::new(self.client.clone(), links);
         downloader.verify(bundles, path, tx).await?;
         Ok(())
     }
@@ -84,13 +83,12 @@ impl DownloadManager {
         path: &str,
         tx: mpsc::UnboundedSender<DownloadStageEvent>,
     ) -> Result<(), DownloadError> {
-        let (auth, links) = {
+        let links = {
             let inner = self.inner.lock().await;
-            let auth = inner.auth.clone();
             let links = inner.secure_links.clone();
-            (auth, links)
+            links
         };
-        let downloader = Downloader::new(self.client.clone(), links, auth);
+        let downloader = Downloader::new(self.client.clone(), links);
         downloader.download(bundles, path, tx).await?;
         Ok(())
     }
