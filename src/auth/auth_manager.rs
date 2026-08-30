@@ -81,16 +81,20 @@ impl AuthManager {
         }
         Ok(())
     }
-    pub async fn get_auth(&self) -> Option<Auth> {
+    pub async fn get_auth(&self) -> Result<Auth, AuthError> {
         let auth = {
             let lock = self.inner.lock().await;
             if let Some(auth) = lock.tokens.as_ref() {
                 auth.clone()
             } else {
-                return None;
+                return Err(AuthError::Unauthorized);
             }
         };
-        if auth.is_valid() { Some(auth) } else { None }
+        if auth.is_valid() {
+            Ok(auth)
+        } else {
+            Err(AuthError::AuthExpired)
+        }
     }
     pub async fn set_auth(&self, auth: Auth) {
         self.inner.lock().await.tokens = Some(auth);

@@ -24,8 +24,8 @@ impl OwnedGames {
         }
         let auth = {
             let lock = game_manager.inner.lock().await;
-            if let None = lock.auth.get_auth().await {
-                return Err(GamesError::Unauthorized);
+            if let Err(err) = lock.auth.get_auth().await {
+                return Err(GamesError::AuthError(err));
             }
             lock.auth.get_auth().await.unwrap()
         };
@@ -38,12 +38,12 @@ impl OwnedGames {
             .map_err(GamesError::from)
         {
             Ok(owned_games) => owned_games,
-            Err(GamesError::Unauthorized) => {
+            Err(GamesError::AuthError(_err)) => {
                 // Token refresh logic
                 let auth = {
                     let lock = game_manager.inner.lock().await;
-                    if let Err(_err) = lock.auth.refresh_auth().await {
-                        return Err(GamesError::Unauthorized);
+                    if let Err(err) = lock.auth.refresh_auth().await {
+                        return Err(GamesError::AuthError(err));
                     }
                     lock.auth.get_auth().await.unwrap()
                 };

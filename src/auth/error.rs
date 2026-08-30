@@ -24,6 +24,9 @@ pub enum AuthError {
 
     #[error("Deflate error: {0}")]
     DeflateError(#[from] io::Error),
+
+    #[error("Auth expired")]
+    AuthExpired,
 }
 
 impl From<ClientError> for AuthError {

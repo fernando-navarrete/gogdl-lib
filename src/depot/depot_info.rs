@@ -39,8 +39,8 @@ impl DepotInfo {
     ) -> Result<DepotInfo, DepotError> {
         let auth = {
             let lock = download_manager.inner.lock().await;
-            if let None = lock.auth.get_auth().await {
-                return Err(DepotError::Unauthorized);
+            if let Err(err) = lock.auth.get_auth().await {
+                return Err(DepotError::AuthError(err));
             }
             lock.auth.get_auth().await.unwrap()
         };
@@ -58,12 +58,12 @@ impl DepotInfo {
             .map_err(DepotError::from)
         {
             Ok(game_details) => game_details,
-            Err(DepotError::Unauthorized) => {
+            Err(DepotError::AuthError(_err)) => {
                 // Token refresh logic
                 let auth = {
                     let lock = download_manager.inner.lock().await;
-                    if let Err(_err) = lock.auth.refresh_auth().await {
-                        return Err(DepotError::Unauthorized);
+                    if let Err(err) = lock.auth.refresh_auth().await {
+                        return Err(DepotError::AuthError(err));
                     }
                     lock.auth.get_auth().await.unwrap()
                 };

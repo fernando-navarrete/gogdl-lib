@@ -3,7 +3,7 @@ use std::io;
 use reqwest::StatusCode;
 use thiserror::Error;
 
-use crate::client::ClientError;
+use crate::{auth::AuthError, client::ClientError};
 
 #[derive(Error, Debug)]
 pub enum DepotError {
@@ -13,9 +13,6 @@ pub enum DepotError {
     #[error("Network error: {0}")]
     NetworkError(#[from] reqwest::Error),
 
-    #[error("Unauthorized")]
-    Unauthorized,
-
     #[error("Http error: {body}, status: {status}")]
     Http { status: StatusCode, body: String },
 
@@ -24,6 +21,9 @@ pub enum DepotError {
 
     #[error("Deflate error: {0}")]
     DeflateError(#[from] io::Error),
+
+    #[error("Auth error: {0}")]
+    AuthError(#[from] AuthError),
 }
 
 impl From<ClientError> for DepotError {
@@ -32,7 +32,7 @@ impl From<ClientError> for DepotError {
             ClientError::UrlParseError(parse_error) => DepotError::UrlParseError(parse_error),
             ClientError::NetworkError(error) => DepotError::NetworkError(error),
             ClientError::Http { status, body } => match status {
-                StatusCode::UNAUTHORIZED => DepotError::Unauthorized,
+                StatusCode::UNAUTHORIZED => DepotError::AuthError(AuthError::Unauthorized),
                 _ => DepotError::Http { status, body },
             },
             ClientError::DecodeError(error) => DepotError::DecodeError(error),

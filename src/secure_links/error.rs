@@ -3,7 +3,7 @@ use std::io;
 use reqwest::StatusCode;
 use thiserror::Error;
 
-use crate::{client::ClientError, games::GamesError};
+use crate::{auth::AuthError, client::ClientError, games::GamesError};
 
 #[derive(Error, Debug)]
 pub enum SecureLinksError {
@@ -12,9 +12,6 @@ pub enum SecureLinksError {
 
     #[error("Network error: {0}")]
     NetworkError(#[from] reqwest::Error),
-
-    #[error("Unauthorized")]
-    Unauthorized,
 
     #[error("Http error: {body}, status: {status}")]
     Http { status: StatusCode, body: String },
@@ -33,6 +30,9 @@ pub enum SecureLinksError {
 
     #[error("No secure link available")]
     NoSecureLink,
+
+    #[error("Auth error: {0}")]
+    AuthError(#[from] AuthError),
 }
 
 impl From<ClientError> for SecureLinksError {
@@ -41,7 +41,7 @@ impl From<ClientError> for SecureLinksError {
             ClientError::UrlParseError(parse_error) => SecureLinksError::UrlParseError(parse_error),
             ClientError::NetworkError(error) => SecureLinksError::NetworkError(error),
             ClientError::Http { status, body } => match status {
-                StatusCode::UNAUTHORIZED => SecureLinksError::Unauthorized,
+                StatusCode::UNAUTHORIZED => SecureLinksError::AuthError(AuthError::Unauthorized),
                 _ => SecureLinksError::Http { status, body },
             },
             ClientError::DecodeError(error) => SecureLinksError::DecodeError(error),

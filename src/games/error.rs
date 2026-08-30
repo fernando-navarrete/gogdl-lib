@@ -3,13 +3,10 @@ use std::io;
 use reqwest::StatusCode;
 use thiserror::Error;
 
-use crate::client::ClientError;
+use crate::{auth::AuthError, client::ClientError};
 
 #[derive(Error, Debug)]
 pub enum GamesError {
-    #[error("Unauthorized")]
-    Unauthorized,
-
     #[error("Url parse error: {0}")]
     UrlParseError(#[from] url::ParseError),
 
@@ -27,6 +24,9 @@ pub enum GamesError {
 
     #[error("Product not a game")]
     ProductNotAGame,
+
+    #[error("Auth error: {0}")]
+    AuthError(#[from] AuthError),
 }
 
 impl From<ClientError> for GamesError {
@@ -35,7 +35,7 @@ impl From<ClientError> for GamesError {
             ClientError::UrlParseError(parse_error) => GamesError::UrlParseError(parse_error),
             ClientError::NetworkError(error) => GamesError::NetworkError(error),
             ClientError::Http { status, body } => match status {
-                StatusCode::UNAUTHORIZED => GamesError::Unauthorized,
+                StatusCode::UNAUTHORIZED => GamesError::AuthError(AuthError::Unauthorized),
                 _ => GamesError::Http { status, body },
             },
             ClientError::DecodeError(error) => GamesError::DecodeError(error),

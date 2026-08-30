@@ -37,8 +37,8 @@ impl SecureLinks {
     ) -> Result<SecureLinks, SecureLinksError> {
         let auth = {
             let lock = secure_links_manager.inner.lock().await;
-            if let None = lock.auth.get_auth().await {
-                return Err(SecureLinksError::Unauthorized);
+            if let Err(err) = lock.auth.get_auth().await {
+                return Err(SecureLinksError::AuthError(err));
             }
             lock.auth.get_auth().await.unwrap()
         };
@@ -53,12 +53,12 @@ impl SecureLinks {
             .map_err(SecureLinksError::from)
         {
             Ok(secure_links) => secure_links,
-            Err(SecureLinksError::Unauthorized) => {
+            Err(SecureLinksError::AuthError(_err)) => {
                 // Token refresh logic
                 let auth = {
                     let lock = secure_links_manager.inner.lock().await;
-                    if let Err(_err) = lock.auth.refresh_auth().await {
-                        return Err(SecureLinksError::Unauthorized);
+                    if let Err(err) = lock.auth.refresh_auth().await {
+                        return Err(SecureLinksError::AuthError(err));
                     }
                     lock.auth.get_auth().await.unwrap()
                 };
