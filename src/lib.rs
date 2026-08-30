@@ -7,6 +7,7 @@ mod games;
 mod gogdl;
 mod secure_links;
 
+pub use auth::Auth;
 pub use auth::TokenObserver;
 pub use depot::ProductDetails;
 pub use downloader::DownloadEvent;
