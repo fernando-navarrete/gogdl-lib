@@ -80,8 +80,11 @@ impl SecureLinks {
         };
         Ok(secure_links)
     }
-    pub fn get_highest_priority_url(&self) -> Option<&UrlFormat> {
-        self.urls.iter().max_by_key(|url| url.priority)
+    pub fn get_highest_priority_url(&self) -> Result<&UrlFormat, SecureLinksError> {
+        self.urls
+            .iter()
+            .max_by_key(|url| url.priority)
+            .ok_or(SecureLinksError::NoSecureLink)
     }
 }
 

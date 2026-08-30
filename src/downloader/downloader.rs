@@ -163,14 +163,13 @@ impl Downloader {
                     {
                         Ok(link) => link,
                         Err(e) => {
-                            println!("{e}");
-                            return Ok(());
+                            return Err(DownloadError::SecureLinksError(e));
                         }
                     };
                     let highest_priority_link = match secure_link.get_highest_priority_url() {
-                        Some(link) => link,
-                        None => {
-                            return Ok(());
+                        Ok(link) => link,
+                        Err(e) => {
+                            return Err(DownloadError::SecureLinksError(e));
                         }
                     };
                     let url = match download_unit.file_type {
@@ -182,8 +181,7 @@ impl Downloader {
                         }
                     };
 
-                    let path = path_resolver.resolve_path(&download_unit.path).await?;
-                    let file = std::fs::OpenOptions::new().write(true).open(&path)?;
+                    let file = path_resolver.open_file(&download_unit.path, true).await?;
 
                     let sink = HashingWriter::new(OffsetWriter::new(
                         file,
@@ -199,7 +197,7 @@ impl Downloader {
                         })
                         .await?;
 
-                    let sink = decoder.finish()?;
+                    let sink = decoder.finish().map_err(|err| DownloadError::DeflateError(err))?;
                     let (writer, actual_md5) = sink.into_parts();
 
                     if writer.remaining() != 0 || actual_md5 != download_unit.md5 {

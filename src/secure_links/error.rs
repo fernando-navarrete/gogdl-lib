@@ -33,6 +33,9 @@ pub enum SecureLinksError {
 
     #[error("Product not owned: {0}")]
     ProductNotOwned(String),
+
+    #[error("No secure link available")]
+    NoSecureLink,
 }
 
 impl From<ClientError> for SecureLinksError {

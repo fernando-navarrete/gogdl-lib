@@ -3,7 +3,10 @@ use std::io;
 use reqwest::StatusCode;
 use thiserror::Error;
 
-use crate::{client::ClientError, depot::DepotError, games::GamesError};
+use crate::{
+    client::ClientError, depot::DepotError, downloader::fs::FileSystemError, games::GamesError,
+    secure_links::SecureLinksError,
+};
 
 #[derive(Error, Debug)]
 pub enum DownloadError {
@@ -23,7 +26,7 @@ pub enum DownloadError {
     DecodeError(#[from] serde_json::Error),
 
     #[error("Deflate error: {0}")]
-    DeflateError(#[from] io::Error),
+    DeflateError(io::Error),
 
     #[error("Game error: {0}")]
     GamesError(#[from] GamesError),
@@ -36,6 +39,12 @@ pub enum DownloadError {
 
     #[error("File allocation error")]
     FileAllocationError,
+
+    #[error("Secure links error: {0}")]
+    SecureLinksError(#[from] SecureLinksError),
+
+    #[error("File system error: {0}")]
+    FileSystemError(#[from] FileSystemError),
 }
 
 impl From<ClientError> for DownloadError {
