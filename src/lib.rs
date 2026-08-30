@@ -28,4 +28,3 @@ pub use games::OwnedGames;
 pub use gogdl::GogDl;
 pub use gogdl::GogDlError;
 pub use reqwest::Client;
-pub use secure_links::SecureLinks;
