@@ -65,3 +65,33 @@ pub async fn compute_chunk_checksum(
     .await
     .map_err(|join_err| io::Error::new(io::ErrorKind::Other, join_err.to_string()))?
 }
+
+pub struct HashingWriter<W: Write> {
+    inner: W,
+    hasher: Md5,
+}
+
+impl<W: Write> HashingWriter<W> {
+    pub fn new(inner: W) -> Self {
+        Self {
+            inner,
+            hasher: Md5::new(),
+        }
+    }
+
+    pub fn into_parts(self) -> (W, String) {
+        (self.inner, hex::encode(self.hasher.finalize()))
+    }
+}
+
+impl<W: Write> Write for HashingWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let n = self.inner.write(buf)?;
+        self.hasher.update(&buf[..n]);
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
+}

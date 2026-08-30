@@ -14,7 +14,7 @@ use crate::{
         progress_reporting::{
             DownloadStageEvent, FileAllocationEvent, FileSizeVerificationEvent, VerificationEvent,
         },
-        util::{ChecksumAlgorithm, compute_chunk_checksum},
+        util::{ChecksumAlgorithm, HashingWriter, OffsetWriter, compute_chunk_checksum},
     },
     secure_links::SecureLinksManager,
 };
@@ -91,8 +91,17 @@ impl Downloader {
         // Download step
 
         let (files_download_tx, mut files_download_rx) = mpsc::unbounded_channel();
-        self.download_files(&bundles, &path_resolver, files_download_tx)
-            .await?;
+        let downloader_future = self.download_files(&bundles, &path_resolver, files_download_tx);
+        let tx_stage3 = tx.clone();
+        let progress_future = async move {
+            while let Some(event) = files_download_rx.recv().await {
+                tx_stage3
+                    .send(DownloadStageEvent::DownloadStage(event))
+                    .ok();
+            }
+        };
+        let (res, _) = tokio::join!(downloader_future, progress_future);
+        res?;
         Ok(())
     }
     pub async fn verify(
@@ -120,7 +129,7 @@ impl Downloader {
         &self,
         bundles: &[ProductBundle],
         path_resolver: &PathResolver,
-        tx: mpsc::UnboundedSender<DownloadEvent>,
+        _tx: mpsc::UnboundedSender<DownloadEvent>,
     ) -> Result<(), DownloadError> {
         let download_units: Vec<(String, DownloadUnit)> = bundles
             .iter()
@@ -145,42 +154,72 @@ impl Downloader {
             .collect::<Vec<()>>()
             .await;
 
-        stream::iter(download_units)
-            .map(|(product_id, download_unit)| async move {
-                let secure_link = match self.secure_links.get_secure_links(&product_id).await {
-                    Ok(link) => link,
-                    Err(e) => {
-                        println!("{e}");
-                        return;
-                    }
-                };
-                let highest_priority_link = match secure_link.get_highest_priority_url() {
-                    Some(link) => link,
-                    None => {
-                        return;
-                    }
-                };
-                let url = match download_unit.file_type {
-                    FileType::DepotFile => {
-                        highest_priority_link.parse_url(&download_unit.compressed_md5)
-                    }
-                    FileType::Other => {
-                        highest_priority_link.parse_url_redist(&download_unit.compressed_md5)
-                    }
-                };
+        let results: Vec<Result<(), DownloadError>> = stream::iter(download_units)
+            .map(|(product_id, download_unit)| {
+                let path_resolver = path_resolver;
+                async move {
+                    let secure_link = match self.secure_links.get_secure_links(&product_id).await
+                    {
+                        Ok(link) => link,
+                        Err(e) => {
+                            println!("{e}");
+                            return Ok(());
+                        }
+                    };
+                    let highest_priority_link = match secure_link.get_highest_priority_url() {
+                        Some(link) => link,
+                        None => {
+                            return Ok(());
+                        }
+                    };
+                    let url = match download_unit.file_type {
+                        FileType::DepotFile => {
+                            highest_priority_link.parse_url(&download_unit.compressed_md5)
+                        }
+                        FileType::Other => {
+                            highest_priority_link.parse_url_redist(&download_unit.compressed_md5)
+                        }
+                    };
 
-                let mut decoder = ZlibStreamDecoder::new(Vec::new());
-                let _ = self
-                    .client
-                    .stream_chunk(&url, |chunk| {
-                        decoder.write_all(&chunk).unwrap();
-                    })
-                    .await;
+                    let path = path_resolver.resolve_path(&download_unit.path).await?;
+                    let file = std::fs::OpenOptions::new().write(true).open(&path)?;
+
+                    let sink = HashingWriter::new(OffsetWriter::new(
+                        file,
+                        download_unit.offset,
+                        download_unit.size,
+                    ));
+                    let mut decoder = ZlibStreamDecoder::new(sink);
+
+                    self.client
+                        .stream_chunk(&url, |chunk| decoder.write_all(&chunk))
+                        .await?;
+
+                    let sink = decoder.finish()?;
+                    let (writer, actual_md5) = sink.into_parts();
+
+                    if writer.remaining() != 0 || actual_md5 != download_unit.md5 {
+                        return Err(DownloadError::DeflateError(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!(
+                                "chunk verification failed for '{}' at offset {} (short by {} byte(s), checksum {})",
+                                download_unit.path,
+                                download_unit.offset,
+                                writer.remaining(),
+                                if actual_md5 == download_unit.md5 { "ok" } else { "mismatch" },
+                            ),
+                        )));
+                    }
+
+                    Ok(())
+                }
             })
             .buffer_unordered(self.threads)
             .collect::<Vec<_>>()
             .await;
-        todo!()
+
+        results.into_iter().collect::<Result<(), DownloadError>>()?;
+        Ok(())
     }
 
     async fn allocate_missing_files(

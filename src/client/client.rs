@@ -37,12 +37,21 @@ impl HttpClient {
     pub async fn stream_chunk(
         &self,
         url: &str,
-        mut f: impl FnMut(Bytes) -> (),
+        mut f: impl FnMut(Bytes) -> std::io::Result<()>,
     ) -> Result<(), ClientError> {
         let url = reqwest::Url::parse(url)?;
         let request = self.client.get(url);
 
         let response = request.send().await?;
+
+        if !response.status().is_success() {
+            let response_status = response.status();
+            let response_text = response.text().await?;
+            return Err(ClientError::Http {
+                status: response_status,
+                body: response_text,
+            });
+        }
 
         let mut stream = response.bytes_stream();
 
@@ -51,7 +60,7 @@ impl HttpClient {
                 Ok(chunk) => chunk,
                 Err(e) => return Err(ClientError::NetworkError(e)),
             };
-            f(chunk);
+            f(chunk)?;
         }
         Ok(())
     }
