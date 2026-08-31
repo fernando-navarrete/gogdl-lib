@@ -1,50 +1,19 @@
-use std::io;
-
-use reqwest::StatusCode;
 use thiserror::Error;
-
-use crate::client::ClientError;
 
 #[derive(Error, Debug)]
 pub enum AuthError {
-    #[error("Url parse error: {0}")]
-    UrlParseError(#[from] url::ParseError),
+    #[error("Not yet authenticated")]
+    NotAuthenticated,
 
-    #[error("Network error: {0}")]
-    NetworkError(#[from] reqwest::Error),
+    #[error("Auth token expired locally")]
+    TokenExpired,
 
-    #[error("Unauthorized")]
-    Unauthorized,
+    #[error("Could not decode local auth token: {0}")]
+    AuthDecodeError(serde_json::Error),
 
-    #[error("Http error: {body}, status: {status}")]
-    Http { status: StatusCode, body: String },
+    #[error("Could not encode token: {0}")]
+    AuthEncodeError(serde_json::Error),
 
-    #[error("Decode error: {0}")]
-    DecodeError(#[from] serde_json::Error),
-
-    #[error("Deflate error: {0}")]
-    DeflateError(#[from] io::Error),
-
-    #[error("Auth expired")]
-    AuthExpired,
-
-    #[error("Unknown error")]
-    Unknown,
-}
-
-impl From<ClientError> for AuthError {
-    fn from(err: ClientError) -> Self {
-        match err {
-            ClientError::UrlParseError(parse_error) => AuthError::UrlParseError(parse_error),
-            ClientError::NetworkError(error) => AuthError::NetworkError(error),
-            ClientError::Http { status, body } => match status {
-                StatusCode::UNAUTHORIZED => AuthError::Unauthorized,
-                _ => AuthError::Http { status, body },
-            },
-            ClientError::DecodeError(error) => AuthError::DecodeError(error),
-            ClientError::DeflateError(error) => AuthError::DeflateError(error),
-            ClientError::AuthError(auth_error) => auth_error,
-            ClientError::Unknown => AuthError::Unknown,
-        }
-    }
+    #[error("Client error: {inner}")]
+    ClientError { inner: String },
 }

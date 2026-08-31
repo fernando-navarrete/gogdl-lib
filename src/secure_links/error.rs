@@ -34,23 +34,6 @@ pub enum SecureLinksError {
     #[error("Auth error: {0}")]
     AuthError(#[from] AuthError),
 
-    #[error("Unknown error")]
-    Unknown,
-}
-
-impl From<ClientError> for SecureLinksError {
-    fn from(value: ClientError) -> Self {
-        match value {
-            ClientError::UrlParseError(parse_error) => SecureLinksError::UrlParseError(parse_error),
-            ClientError::NetworkError(error) => SecureLinksError::NetworkError(error),
-            ClientError::Http { status, body } => match status {
-                StatusCode::UNAUTHORIZED => SecureLinksError::AuthError(AuthError::Unauthorized),
-                _ => SecureLinksError::Http { status, body },
-            },
-            ClientError::DecodeError(error) => SecureLinksError::DecodeError(error),
-            ClientError::DeflateError(error) => SecureLinksError::DeflateError(error),
-            ClientError::AuthError(auth_error) => SecureLinksError::AuthError(auth_error),
-            ClientError::Unknown => SecureLinksError::Unknown,
-        }
-    }
+    #[error("Client error: {0}")]
+    ClientError(#[from] ClientError),
 }

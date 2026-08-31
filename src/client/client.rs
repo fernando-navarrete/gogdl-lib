@@ -6,10 +6,7 @@ use futures_util::StreamExt;
 use reqwest::Client;
 use serde::de::DeserializeOwned;
 
-use crate::{
-    auth::AuthManager,
-    client::{ClientError::AuthError, error::ClientError},
-};
+use crate::{auth::AuthManager, client::error::ClientError};
 
 #[derive(Clone)]
 pub struct HttpClient {
@@ -39,9 +36,12 @@ impl HttpClient {
             attempts += 1;
             match self.inner_fetch(url, auth_manager.clone(), decode).await {
                 Ok(result) => return Ok(result),
-                Err(ClientError::AuthError(_err)) => {
-                    if let Some(auth_manager) = &auth_manager {
-                        auth_manager.refresh_auth().await?;
+                Err(ClientError::HttpError { status, body }) => {
+                    let _ = body;
+                    if status == reqwest::StatusCode::UNAUTHORIZED {
+                        if let Some(auth_manager) = &auth_manager {
+                            auth_manager.refresh_auth().await?;
+                        }
                     }
                     continue;
                 }
@@ -50,7 +50,7 @@ impl HttpClient {
                 }
             }
         }
-        Err(ClientError::Unknown)
+        Err(ClientError::MaxRetriesReached)
     }
     async fn inner_fetch<T: DeserializeOwned>(
         &self,
@@ -61,7 +61,7 @@ impl HttpClient {
         if let Some(auth_manager) = &auth_manager {
             let auth = match auth_manager.get_auth().await {
                 Ok(auth) => auth,
-                Err(err) => return Err(AuthError(err)),
+                Err(err) => return Err(ClientError::AuthError(err)),
             };
             if decode {
                 let result = self.get_and_decode(url, &auth.access_token).await?;
@@ -82,7 +82,7 @@ impl HttpClient {
         if !response.status().is_success() {
             let response_status = response.status();
             let response_text = response.text().await?;
-            return Err(ClientError::Http {
+            return Err(ClientError::HttpError {
                 status: response_status,
                 body: response_text,
             });
@@ -104,7 +104,7 @@ impl HttpClient {
         if !response.status().is_success() {
             let response_status = response.status();
             let response_text = response.text().await?;
-            return Err(ClientError::Http {
+            return Err(ClientError::HttpError {
                 status: response_status,
                 body: response_text,
             });
@@ -117,7 +117,9 @@ impl HttpClient {
                 Ok(chunk) => chunk,
                 Err(e) => return Err(ClientError::NetworkError(e)),
             };
-            f(chunk)?;
+            if let Err(e) = f(chunk) {
+                return Err(ClientError::ChunkStreamCallbackError(e));
+            }
         }
         Ok(())
     }
@@ -135,7 +137,7 @@ impl HttpClient {
         if !response.status().is_success() {
             let response_status = response.status();
             let response_text = response.text().await?;
-            return Err(ClientError::Http {
+            return Err(ClientError::HttpError {
                 status: response_status,
                 body: response_text,
             });
@@ -144,7 +146,11 @@ impl HttpClient {
         let response_bytes = response.bytes().await?;
         let mut z = ZlibDecoder::new(&response_bytes[..]);
         let mut s = String::new();
-        z.read_to_string(&mut s)?;
+
+        if let Err(e) = z.read_to_string(&mut s) {
+            return Err(ClientError::DecodeError(e));
+        }
+
         let data: T = serde_json::from_str(&s)?;
 
         Ok(data)
@@ -163,7 +169,7 @@ impl HttpClient {
         if !response.status().is_success() {
             let response_status = response.status();
             let response_text = response.text().await?;
-            return Err(ClientError::Http {
+            return Err(ClientError::HttpError {
                 status: response_status,
                 body: response_text,
             });

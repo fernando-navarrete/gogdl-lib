@@ -1,6 +1,3 @@
-use std::io;
-
-use reqwest::StatusCode;
 use thiserror::Error;
 
 use crate::auth::AuthError;
@@ -13,18 +10,24 @@ pub enum ClientError {
     #[error("Network error: {0}")]
     NetworkError(#[from] reqwest::Error),
 
-    #[error("Http error: {body}, status: {status}")]
-    Http { status: StatusCode, body: String },
+    #[error("Http error: status: {status}, body: {body}")]
+    HttpError {
+        status: reqwest::StatusCode,
+        body: String,
+    },
+
+    #[error("Deserialization error: {0}")]
+    DeserializationError(#[from] serde_json::Error),
 
     #[error("Decode error: {0}")]
-    DecodeError(#[from] serde_json::Error),
+    DecodeError(std::io::Error),
 
-    #[error("Deflate error: {0}")]
-    DeflateError(#[from] io::Error),
+    #[error("Chunk stream callback error: {0}")]
+    ChunkStreamCallbackError(std::io::Error),
+
+    #[error("Max retires reached")]
+    MaxRetriesReached,
 
     #[error("Auth error: {0}")]
     AuthError(#[from] AuthError),
-
-    #[error("Request reached max retires without a known error")]
-    Unknown,
 }

@@ -46,23 +46,6 @@ pub enum DownloadError {
     #[error("Auth error: {0}")]
     AuthError(#[from] AuthError),
 
-    #[error("Unknown error")]
-    Unknown,
-}
-
-impl From<ClientError> for DownloadError {
-    fn from(err: ClientError) -> Self {
-        match err {
-            ClientError::UrlParseError(parse_error) => DownloadError::UrlParseError(parse_error),
-            ClientError::NetworkError(error) => DownloadError::NetworkError(error),
-            ClientError::Http { status, body } => match status {
-                StatusCode::UNAUTHORIZED => DownloadError::AuthError(AuthError::Unauthorized),
-                _ => DownloadError::Http { status, body },
-            },
-            ClientError::DecodeError(error) => DownloadError::DecodeError(error),
-            ClientError::DeflateError(error) => DownloadError::DeflateError(error),
-            ClientError::Unknown => DownloadError::Unknown,
-            ClientError::AuthError(auth_error) => DownloadError::AuthError(auth_error),
-        }
-    }
+    #[error("Client error: {0}")]
+    ClientError(#[from] ClientError),
 }

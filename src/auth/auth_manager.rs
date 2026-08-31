@@ -4,7 +4,7 @@ use tokio::sync::Mutex;
 
 use crate::{
     auth::{auth::Auth, error::AuthError, token_observer::TokenObserver},
-    client::HttpClient,
+    client::{ClientError, HttpClient},
     constants::{AUTH_URL, LOGIN_URL, REFRESH_URL},
 };
 
@@ -45,7 +45,15 @@ impl AuthManager {
             lock.client.clone()
         };
 
-        let mut auth: Auth = client.fetch_no_retry(&url, None, false).await?;
+        let mut auth: Auth = match client.fetch_no_retry(&url, None, false).await {
+            Ok(auth) => auth,
+            Err(ClientError::AuthError(e)) => return Err(e),
+            Err(e) => {
+                return Err(AuthError::ClientError {
+                    inner: e.to_string(),
+                });
+            }
+        };
 
         auth.valid_until = Some(auth.expires_in as i64 + chrono::Utc::now().timestamp());
         let json_str = auth.to_string()?;
@@ -63,7 +71,7 @@ impl AuthManager {
         let tokens = {
             let tokens = self.inner.lock().await.tokens.clone();
             if tokens.is_none() {
-                return Err(AuthError::Unauthorized);
+                return Err(AuthError::NotAuthenticated);
             }
             tokens.unwrap()
         };
@@ -75,7 +83,15 @@ impl AuthManager {
             lock.client.clone()
         };
 
-        let mut auth: Auth = client.fetch_no_retry(&url, None, false).await?;
+        let mut auth: Auth = match client.fetch_no_retry(&url, None, false).await {
+            Ok(auth) => auth,
+            Err(ClientError::AuthError(e)) => return Err(e),
+            Err(e) => {
+                return Err(AuthError::ClientError {
+                    inner: e.to_string(),
+                });
+            }
+        };
         auth.valid_until = Some(auth.expires_in as i64 + chrono::Utc::now().timestamp());
 
         {
@@ -93,13 +109,13 @@ impl AuthManager {
             if let Some(auth) = lock.tokens.as_ref() {
                 auth.clone()
             } else {
-                return Err(AuthError::Unauthorized);
+                return Err(AuthError::NotAuthenticated);
             }
         };
         if auth.is_valid() {
             Ok(auth)
         } else {
-            Err(AuthError::AuthExpired)
+            Err(AuthError::TokenExpired)
         }
     }
     pub async fn set_auth(&self, auth: Auth) {

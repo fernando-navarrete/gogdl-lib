@@ -28,23 +28,6 @@ pub enum GamesError {
     #[error("Auth error: {0}")]
     AuthError(#[from] AuthError),
 
-    #[error("Unknown error")]
-    Unknown,
-}
-
-impl From<ClientError> for GamesError {
-    fn from(value: ClientError) -> Self {
-        match value {
-            ClientError::UrlParseError(parse_error) => GamesError::UrlParseError(parse_error),
-            ClientError::NetworkError(error) => GamesError::NetworkError(error),
-            ClientError::Http { status, body } => match status {
-                StatusCode::UNAUTHORIZED => GamesError::AuthError(AuthError::Unauthorized),
-                _ => GamesError::Http { status, body },
-            },
-            ClientError::DecodeError(error) => GamesError::DecodeError(error),
-            ClientError::DeflateError(error) => GamesError::DeflateError(error),
-            ClientError::AuthError(auth_error) => GamesError::AuthError(auth_error),
-            ClientError::Unknown => GamesError::Unknown,
-        }
-    }
+    #[error("Client error: {0}")]
+    ClientError(#[from] ClientError),
 }

@@ -3,15 +3,23 @@
 Findings from a full read-through of `gogdl-lib` on the `restart` branch (all `src/*.rs`, `Cargo.toml`,
 `cargo build`, `cargo clippy --all -- -W clippy::all`) on 2026-08-30. Grouped by severity, each item has
 a checkbox so they can be worked one at a time. File:line references were originally accurate as of
-commit `377314c`, then re-checked against `a962ef7`, then against `v0.0.4-restart` (`32e8786`), and now
-against the uncommitted changes staged on top of `32e8786` — `9a1f780` ("Centralize HTTP requests
-through typed request variants") rewrote all six fetchers and `auth_manager.rs` in between, and this
-latest pass deletes the `Request` enum it introduced (`src/client/request.rs` is gone) in favor of
-`HttpClient::fetch(url, auth_manager, decode)` taking its arguments directly, adds a bounded
-retry-with-refresh loop inside `fetch` itself, and adds a `ClientError::Unknown` variant (mirrored onto
-`AuthError`/`GamesError`/`DepotError`/`SecureLinksError`/`DownloadError`) for when that loop is
-exhausted. Most line numbers moved again; every reference below was re-derived with `grep -n`/`Read`
-against the current staged tree, not carried forward.
+commit `377314c`, then re-checked against `a962ef7`, then against `v0.0.4-restart` (`32e8786`), then
+against the uncommitted changes staged on top of `32e8786` (`9a1f780` "Centralize HTTP requests through
+typed request variants" rewrote all six fetchers and `auth_manager.rs`; that pass then deleted the
+`Request` enum in favor of `HttpClient::fetch(url, auth_manager, decode)`, added the retry-with-refresh
+loop inside `fetch`, and added a `ClientError::Unknown` variant mirrored onto all five other error
+enums) — that whole sequence landed as commit `c7d39b9` ("Centralize HTTP Fetching With Retry Logic").
+
+Re-checked again on 2026-08-31 against a further uncommitted rewrite staged on top of `c7d39b9`. This
+pass renames things again (`ClientError::Http`→`HttpError`, `ClientError::Unknown`→`MaxRetriesReached`),
+rewrites `AuthError` from scratch (`Unauthorized`→`NotAuthenticated`, `AuthExpired`→`TokenExpired`, the
+old `UrlParseError`/`NetworkError`/`Http`/`DecodeError`/`DeflateError`/`Unknown` variants and the manual
+`impl From<ClientError> for AuthError` are all gone, replaced by `AuthDecodeError`/`AuthEncodeError`/
+`ClientError { inner: String }` and per-call-site `match`es in `auth_manager.rs`), and — the largest
+change — deletes the four remaining hand-written `impl From<ClientError> for XError` blocks
+(`Depot`/`Games`/`SecureLinks`/`DownloadError`) in favor of a single `ClientError(#[from] ClientError)`
+variant on each. Most line numbers moved again; every reference below was re-derived with `grep -n`/
+`Read`/`cargo build` against the current staged tree, not carried forward.
 
 No automated tests exist yet (`grep -r '#\[test\]' src/` is empty), so treat every fix here as
 untested until you add coverage for it.
@@ -71,36 +79,30 @@ untested until you add coverage for it.
   Fixing this needs the pre-flight checks themselves to attempt a refresh (or to be removed so the
   call reaches `fetch`'s loop at all), not just retry logic added downstream of them.
 
-- [ ] **The new retry-with-refresh loop in `HttpClient::fetch` only catches a *local* re-check of
-  `get_auth()`, never an actual HTTP 401 from the server — so it doesn't yet retry either of the two
-  cases that matter.** The current uncommitted change deletes `src/client/request.rs`/the `Request`
-  enum entirely and gives `HttpClient::fetch` a new signature, `fetch(url: &str, auth_manager:
-  Option<AuthManager>, decode: bool)` (`src/client/client.rs:31-54`), backed by a private `inner_fetch`
-  (`:55-76`) and a new `fetch_no_retry` (`:23-30`, used by `login_with_code`/`refresh_auth` themselves
-  so refreshing can't recurse into its own retry loop). `fetch` loops up to 3 attempts; on
-  `Err(ClientError::AuthError(_))` from `inner_fetch` it calls `auth_manager.refresh_auth().await?` and
-  retries, returning `ClientError::Unknown` (new variant, `src/client/error.rs:28-29`, mirrored onto
-  the other five error enums) if attempts run out. This is real, previously-missing plumbing — it does
-  make `refresh_lock`, the `TokenObserver` callback, and the `Auth` export reachable again (see the two
-  Medium items below) — but it doesn't close this gap, for two compounding reasons:
-  1. `inner_fetch` only produces `ClientError::AuthError` when `auth_manager.get_auth()` itself fails
-     *locally* (`:61-65`) — i.e. the exact same in-memory `valid_until` check the caller's own
-     pre-flight already just performed a few lines earlier (previous item). By the time `inner_fetch`
-     re-checks, there's essentially no time for that in-memory value to have changed, so this branch
-     is reachable only through a vanishingly narrow TOCTOU window, not the "just launched after an
-     hour" case.
-  2. A genuine server-issued 401 (revoked token, wrong scope, whatever) never reaches this branch at
-     all: `get_json_with_auth`/`get_and_decode`/`get_json` (`:77-93`, `:124-151`, `:152-175`) only ever
-     check `response.status().is_success()` and turn a non-2xx into `ClientError::Http { status, body
-     }` (e.g. `:82-89`) — a variant `fetch`'s match falls through to `Err(err) => return Err(err)`
-     (`:48-50`) and never retries. So the one case a "refresh-on-401" mechanism exists for — the CDN or
-     API actually rejecting the token — is not retried by this loop at all.
+- [ ] **The retry-with-refresh loop in `HttpClient::fetch` now catches a real server 401 — half of this
+  gap is closed — but the local-expiry half is still bypassed, and a new regression sits right next to
+  the fix.** *Partially addressed by the 2026-08-31 staged rewrite.* `fetch` (`src/client/client.rs:28-54`)
+  no longer matches on `ClientError::AuthError`; it now matches `Err(ClientError::HttpError { status,
+  body })` directly (`:39-47`) and, when `status == StatusCode::UNAUTHORIZED`, calls
+  `auth_manager.refresh_auth().await?` before looping again — so a genuine server-issued 401 (the CDN or
+  API actually rejecting the token, item 2 from the previous check) is now retried. Reason 1 from the
+  previous check is unchanged, though: the six fetchers' own pre-flight `lock.auth.get_auth().await`
+  calls (see the item above) still `return Err(...)` before ever reaching `fetch`, so a token that's
+  merely expired *locally* (the common "just launched after an hour" case) still never reaches this
+  loop at all — closing this still needs those pre-flight checks folded into (or replaced by) this path.
 
-  Net effect: the infrastructure for centralized retry now exists, and is a reasonable shape to build
-  on, but as staged it retries neither of the two real trigger conditions. Closing this needs (a) the
-  six pre-flight checks folded into (or replaced by) this path so local expiry reaches it, and (b)
-  `inner_fetch`'s HTTP-status handling to translate a 401 into `ClientError::AuthError` (or an
-  equivalent the retry match recognizes) instead of the generic `Http` variant.
+- [ ] **New regression: any non-401 HTTP error now gets silently retried up to 3 times and its detail
+  discarded.** In the same match arm (`src/client/client.rs:39-46`), a non-401 status — 404, 403, 500,
+  anything — still falls into the `Err(ClientError::HttpError { status, body })` arm (the `if` only
+  gates the refresh call, not the branch itself), so `status`/`body` are bound, thrown away
+  (`let _ = body;`, `:40`), and the loop just `continue`s with no backoff. After 3 pointless identical
+  attempts, `fetch` returns the generic `ClientError::MaxRetriesReached` (`:53`) instead of the original
+  status/body. Before this rewrite, a non-auth `Http` error fell through to `Err(err) => return Err(err)`
+  immediately, preserving the status and response body. Concretely: a request for a nonexistent
+  depot/product manifest that used to fail fast with a `404` + body now burns two extra network
+  round-trips and then reports an uninformative "Max retires reached" with no indication it was ever a
+  404. Fix needs the `if status == UNAUTHORIZED { .. } else { return Err(..) }` split reinstated inside
+  that arm.
 
 - [x] **Token observer only emits the access token.** *Fixed in `b87d8dd`* —
   `TokenObserver::on_token_refreshed(&self, auth: Auth)` (`src/auth/token_observer.rs:4`) now hands
@@ -119,16 +121,15 @@ untested until you add coverage for it.
 - [ ] **The error detail added in `a962ef7` is invisible to consumers.** `src/lib.rs` exports
   `GogDlError` but none of the error types nested inside it — `AuthError`, `GamesError`,
   `DepotError`, `SecureLinksError`, `DownloadError` all live in private modules. A consumer can match
-  `GogDlError::AuthError(_)` (binding with `_` needs no name) but cannot write
-  `AuthError::AuthExpired`, so the `AuthExpired`/`Unauthorized` split that commit introduced is
-  reachable only by string-matching `Display` output. It also can't reach the same condition arriving
-  by the other route: an auth failure surfaces as either `GogDlError::AuthError(..)` or
-  `GogDlError::GameError(GamesError::AuthError(..))` (and the `Depot`/`SecureLinks` equivalents)
-  depending on which layer produced it, and the nested match can't be written at all. Export the
-  error enums, or flatten auth failures to a single top-level variant. The current diff adds a new
-  `Unknown` variant to all six error enums (`ClientError`, `AuthError`, `GamesError`, `DepotError`,
-  `SecureLinksError`, `DownloadError`) for the new retry loop's exhausted-attempts case — one more
-  variant a consumer still can't name until this export gap is closed.
+  `GogDlError::AuthError(_)` (binding with `_` needs no name) but cannot write `AuthError::TokenExpired`,
+  so the local-expired-vs-not-yet-authenticated split that commit introduced is reachable only by
+  string-matching `Display` output. (`AuthError`'s shape moved again in the 2026-08-31 rewrite — it's
+  now `NotAuthenticated`/`TokenExpired`/`AuthDecodeError`/`AuthEncodeError`/`ClientError { inner: String
+  }`, renamed from `Unauthorized`/`AuthExpired`; the point stands regardless of the current names.) It
+  also can't reach the same condition arriving by the other route: an auth failure surfaces as either
+  `GogDlError::AuthError(..)` or `GogDlError::GameError(GamesError::AuthError(..))` (and the
+  `Depot`/`SecureLinks` equivalents) depending on which layer produced it, and the nested match can't be
+  written at all. Export the error enums, or flatten auth failures to a single top-level variant.
 
 ## High — panics on untrusted data
 
@@ -257,10 +258,13 @@ untested until you add coverage for it.
 
 - [x] **`DownloadError` was left out of the `a962ef7` error unification.** *Fixed in `9a1f780`.*
   `DownloadError::Unauthorized` is gone; `src/downloader/error.rs:46-47` now carries `AuthError(#[from]
-  AuthError)` like the other four enums, with the 401 mapped to it at `:59`. The current diff added a
-  `DownloadError::Unknown` variant alongside it (`:49-50`, mirroring `ClientError::Unknown`), keeping
-  all six error enums in lockstep on both fronts. The second half of the original item is still open,
-  restated below as its own Medium finding — the downloader's transfer path (`stream_chunk`) still has
+  AuthError)` like the other four enums, with the 401 mapped to it at `:59`. `c7d39b9` added a
+  `DownloadError::Unknown` variant alongside it (mirroring `ClientError::Unknown`), keeping all six
+  error enums in lockstep on both fronts; the 2026-08-31 rewrite replaced that with `ClientError(#[from]
+  ClientError)` (`src/downloader/error.rs:49-50`) — same lockstep, new shape (see the dead-variant
+  finding under Medium below for what that change actually did to the *other* variants on this enum).
+  The second half of the original item is still open, restated below as its own Medium finding — the
+  downloader's transfer path (`stream_chunk`) still has
   no 401-refresh-retry of its own.
 
 - [ ] **"Not a game" handling is inconsistent across near-identical fetchers.**
@@ -315,20 +319,46 @@ untested until you add coverage for it.
   not just the test fixtures that also construct `Chunk` directly) names both. Either re-export all
   three or narrow the public methods/fields that leak them.
 
-- [ ] **`AuthError`/`ClientError` convert in both directions — worth getting right before retry adds
-  more variants.** `ClientError::AuthError(#[from] AuthError)` (`src/client/error.rs:26`) wraps an
-  `AuthError` going one way; `impl From<ClientError> for AuthError` (`src/auth/error.rs:32-45`) unwraps
-  it back out going the other (`ClientError::AuthError(auth_error) => auth_error`, `:43`). Not a bug on
-  its own today, but it's exactly the seam where the previously-reverted `982dc82` broke: per
-  `lumen-cli/CLAUDE.md`'s "Auth refresh regression" section, that attempt added a
-  `ClientError::AuthRefreshError` variant and every `From<ClientError> for XError` impl collapsed it to
-  a plain `Unauthorized`, discarding whether the failure was an expired access token (refreshable) or a
-  dead refresh token (not) — so a permanently-failed refresh looked identical to a routine expiry and
-  the retry logic looped on it. The current diff's own new variant, `ClientError::Unknown` (and its
-  mirror on all five other enums), went in cleanly by contrast — it's a 1:1 addition with no collapsing
-  — but it's a reminder that whatever finally makes `fetch`'s retry loop catch a real 401 (per the
-  High-severity item above) needs to preserve the `AuthExpired`/`Unauthorized` distinction through
-  exactly this conversion, not flatten it the way `982dc82` did.
+- [ ] **The `982dc82` collapsing regression has effectively recurred: a dead refresh token and a
+  routine expiry now both surface as the same opaque, unstructured error.** This item used to describe
+  a *risk* — `ClientError::AuthError(#[from] AuthError)` wrapping one way and a manual `impl
+  From<ClientError> for AuthError` unwrapping the other, at the exact seam where `982dc82` previously
+  collapsed "expired access token" and "dead refresh token" into an indistinguishable `Unauthorized`
+  (per `lumen-cli/CLAUDE.md`'s "Auth refresh regression" section). The 2026-08-31 rewrite deleted that
+  `impl From<ClientError> for AuthError` entirely (it no longer exists in `src/auth/error.rs`) and
+  replaced it with ad hoc `match`es at the two call sites in `auth_manager.rs` (`login_with_code:48-56`,
+  `refresh_auth:86-94`): both call `client.fetch_no_retry(&url, None, false)`, match
+  `Err(ClientError::AuthError(e)) => return Err(e)` first, and otherwise fall to `Err(e) =>
+  AuthError::ClientError { inner: e.to_string() }`. But because `auth_manager` is hardcoded to `None` in
+  both calls, `inner_fetch` (`src/client/client.rs:61-65`) can *never* produce `ClientError::AuthError`
+  on these paths — that branch only fires when `Some(auth_manager)` is passed and its own `get_auth()`
+  fails locally. So every real failure from `AUTH_URL`/`REFRESH_URL` — including a 401 because the
+  refresh token is dead, not just refreshable — falls straight to the stringified `ClientError { inner:
+  String }` arm. That's `982dc82`'s exact failure mode back in a new shape: a dead-refresh-token 401 and
+  a transient network blip are now both just an opaque string a caller can only distinguish by parsing
+  `Display` output, with no `AuthExpired`/`Unauthorized`-style variant to match on at all. Fix needs
+  either a real status-aware variant on `AuthError` for this case, or at minimum removing the dead
+  `Err(ClientError::AuthError(e))` arm so the code doesn't imply a distinction it can't actually make.
+
+- [ ] **`Http`/`UrlParseError`/`NetworkError`/`DecodeError`/`DeflateError` on `DepotError`, `GamesError`,
+  `SecureLinksError`, and `DownloadError` are now dead code.** The 2026-08-31 rewrite deleted the four
+  hand-written `impl From<ClientError> for XError` blocks that used to translate a `ClientError` into
+  one of these per-type variants (e.g. `ClientError::Http{status: 401,..}` → `DepotError::AuthError(...)`,
+  everything else → the matching `Depot`-flavored variant), replacing each with a single blanket
+  `ClientError(#[from] ClientError)` variant. But every network call in `depot/`, `games/`, and
+  `secure_links/` already goes exclusively through `HttpClient` (confirmed: `grep -rn
+  "reqwest::\|url::Url::parse\|serde_json::from_str" src/depot src/games src/secure_links` matches
+  nothing outside `error.rs` itself), and `downloader/` is the same except for its own directly-
+  constructed `DeflateError` (`src/downloader/downloader.rs:200,204`). So with the translation gone,
+  `.fetch()?` now always arrives as `XError::ClientError(..)`, and nothing in the crate can construct
+  `DepotError::Http`/`UrlParseError`/`NetworkError`/`DecodeError`/`DeflateError` (or the `Games`/
+  `SecureLinks`/`Download` equivalents, `DeflateError` excepted for `Download`) anymore — confirmed with
+  `grep -rn "::Http {" src/` and the equivalent per-variant greps, all empty. Because these enums are
+  `pub`, `dead_code` doesn't warn on them, so this won't show up in `cargo clippy`. Either delete the
+  now-unreachable variants (and their `use reqwest::StatusCode`/`use std::io` imports, e.g.
+  `src/depot/error.rs:1,3`) or reinstate a translation that actually uses them — leaving both a working
+  wrapper *and* five dead siblings per enum is confusing surface for whoever reads these error types
+  next.
 
 ## Medium — missing coverage
 
@@ -345,10 +375,14 @@ untested until you add coverage for it.
 
 ## Low — style / clippy
 
-`cargo clippy --lib -- -W clippy::all` reports 31 warnings on the current staged tree (33 at
-`v0.0.4-restart`/`32e8786`, 30 at `a962ef7`, 34 at `377314c`, 37 at `998829d`) — the net −2 from
-`32e8786` is entirely attributable to this diff's client/fetcher rewrite, and is a mix of a real
-cleanup and a new, minor regression:
+`cargo clippy --lib -- -W clippy::all` reports 32 warnings on the current (2026-08-31) staged tree (31
+at `c7d39b9`, 33 at `v0.0.4-restart`/`32e8786`, 30 at `a962ef7`, 34 at `377314c`, 37 at `998829d`). The
++1 from `c7d39b9` is a single new hit inside this diff's own code — "this `if` statement can be
+collapsed" at `src/client/client.rs:41`, the nested `if status == UNAUTHORIZED { if let
+Some(auth_manager) = ... }` in `fetch`'s retry arm, collapsible to `if status == UNAUTHORIZED && let
+Some(auth_manager) = &auth_manager`. Everything else below carries forward unchanged in count from
+`c7d39b9`; the previous pass's own two deltas are described as they were found, against the prior
+tree:
 - **−4** "redundant field names in struct initialization": deleting the `Request` enum removed the
   `Request::GetAuth { url: url, auth_manager: auth_manager }`-style literals `9a1f780` had introduced
   (`depot/depot_info.rs`, `games/owned_games.rs` ×2, `secure_links/secure_links.rs`) in favor of
@@ -378,10 +412,14 @@ live in `downloader.rs`/`download_manager.rs`/`product_bundle.rs`, none of which
   per containing module of the same name).
 - [ ] 1 "all variants have the same postfix: `Error`" on `FileSystemError`
   (`downloader/fs/error.rs:6-21`, `enum_variant_names`) — `ClientError` still isn't flagged for this
-  despite now having *two* non-`Error`-suffixed variants (`Http`, and the new `Unknown`) among its six.
+  despite still having a non-`Error`-suffixed variant among its six (`MaxRetriesReached`, renamed from
+  `Unknown` by the 2026-08-31 rewrite; `Http` was renamed to `HttpError` in the same pass, which does
+  now match the postfix).
 - [ ] A handful of smaller one-offs: an explicit-closure-for-cloning in `build_metadata.rs:48-55`, a
   `len_zero` at `downloader.rs:82`, two `redundant_closure`s (`downloader.rs:115,200`), `io_other_error`
-  at `util/hash.rs:66`, and a redundant `&` in a `format!` call at `depot_info.rs:51`.
+  at `util/hash.rs:66`, a redundant `&` in a `format!` call at `depot_info.rs:51`, and two
+  `or_insert_with(Vec::new)` that should be `or_default()` (`downloader/downloadable_product.rs:50`,
+  `downloader/product_bundle.rs:42`).
 
 Run `cargo clippy --fix --lib -p gogdl-lib -- -W clippy::all` for a current full list and to
 auto-apply most of these — but only against a clean tree; it will also try to "fix" whatever's
