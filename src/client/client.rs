@@ -6,7 +6,11 @@ use futures_util::StreamExt;
 use reqwest::Client;
 use serde::de::DeserializeOwned;
 
-use crate::client::{TokenObserver, auth::AuthManager, error::ClientError};
+use crate::client::{
+    TokenObserver,
+    auth::{AuthError, AuthManager},
+    error::ClientError,
+};
 
 #[derive(Clone)]
 pub struct HttpClient {
@@ -46,8 +50,12 @@ impl HttpClient {
                         if require_auth {
                             self.auth_manager.refresh_auth(&self).await?;
                         }
+                    } else {
+                        return Err(ClientError::HttpError { status, body: body });
                     }
-                    continue;
+                }
+                Err(ClientError::AuthError(AuthError::TokenExpired)) => {
+                    self.auth_manager.refresh_auth(&self).await?;
                 }
                 Err(err) => {
                     return Err(err);

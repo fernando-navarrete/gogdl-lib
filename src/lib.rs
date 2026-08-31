@@ -26,3 +26,10 @@ pub use games::OwnedGames;
 pub use gogdl::GogDl;
 pub use gogdl::GogDlError;
 pub use reqwest::Client;
+
+pub use client::AuthError;
+pub use client::ClientError;
+pub use depot::DepotError;
+pub use downloader::DownloadError;
+pub use games::GamesError;
+pub use secure_links::SecureLinksError;
