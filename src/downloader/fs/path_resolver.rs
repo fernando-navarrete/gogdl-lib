@@ -1,9 +1,8 @@
 use dashmap::DashMap;
-use std::fs::File;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
-use tokio::fs;
+use tokio::fs::{self, File};
 use tokio::sync::OnceCell;
 
 use crate::downloader::fs::error::FileSystemError;
@@ -116,7 +115,7 @@ impl PathResolver {
         write: bool,
     ) -> Result<File, FileSystemError> {
         let path = self.resolve_path(raw_relative_path).await?;
-        match std::fs::OpenOptions::new().write(write).open(&path) {
+        match tokio::fs::OpenOptions::new().write(write).open(&path).await {
             Ok(file) => Ok(file),
             Err(e) => Err(FileSystemError::FileOpenError(e)),
         }

@@ -11,8 +11,7 @@ pub struct OffsetWriter {
 }
 
 impl OffsetWriter {
-    pub async fn new(file: std::fs::File, offset: u64, size: u64) -> io::Result<Self> {
-        let mut file = tokio::fs::File::from_std(file);
+    pub async fn new(mut file: tokio::fs::File, offset: u64, size: u64) -> io::Result<Self> {
         file.seek(io::SeekFrom::Start(offset)).await?;
         Ok(Self {
             file,
