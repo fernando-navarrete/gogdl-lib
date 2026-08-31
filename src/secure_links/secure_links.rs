@@ -40,7 +40,7 @@ impl SecureLinks {
             game_id
         );
         let secure_links: SecureLinks =
-            secure_links_manager.client.fetch(&url, true, false).await?;
+            secure_links_manager.client.fetch(&url, false, true).await?;
 
         Ok(secure_links)
     }

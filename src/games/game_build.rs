@@ -35,7 +35,7 @@ impl GameBuilds {
             game_id
         );
 
-        let game_builds: GameBuilds = games_manager.client.fetch(&url, true, false).await?;
+        let game_builds: GameBuilds = games_manager.client.fetch(&url, false, true).await?;
         let mut lock = games_manager.inner.lock().await;
         lock.game_builds.insert(game_id, game_builds.clone());
         Ok(game_builds)
