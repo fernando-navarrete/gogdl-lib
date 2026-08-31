@@ -10,12 +10,11 @@ use crate::games::{
     GameBuilds, GameDetails, GameLinks, GameScreenshots, GameSummary, GamesManager, OwnedGames,
 };
 use crate::gogdl::error::GogDlError;
-use crate::secure_links::{SecureLinks, SecureLinksManager};
+use crate::secure_links::SecureLinksManager;
 
 pub struct GogDl {
     games: GamesManager,
     depot: DepotManager,
-    secure_links: SecureLinksManager,
     downloader: DownloadManager,
     client: HttpClient,
 }
@@ -37,7 +36,6 @@ impl GogDl {
         Self {
             games: games_manager,
             depot: depot_manager,
-            secure_links: secure_links_manager,
             downloader: download_manager,
             client: http_client,
         }
@@ -76,10 +74,6 @@ impl GogDl {
     pub async fn get_game_screenshots(&self, game_id: i32) -> Result<GameScreenshots, GogDlError> {
         let game_screenshots = self.games.get_game_screenshots(game_id).await?;
         Ok(game_screenshots)
-    }
-    pub async fn get_secure_links(&self, game_id: &str) -> Result<SecureLinks, GogDlError> {
-        let secure_links = self.secure_links.get_secure_links(game_id).await?;
-        Ok(secure_links)
     }
     pub async fn get_product_details(
         &self,
