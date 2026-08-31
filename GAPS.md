@@ -36,55 +36,61 @@ order) and the module move silently dropped two public re-exports that a downstr
 pass was re-derived with `grep -n`/`Read`/`cargo build`/`cargo clippy` against the current staged tree,
 not carried forward from the `43c1d85` pass.
 
+The third pass above landed as commit `9cd8d0a` ("Move authentication into HttpClient"), regressions and
+all. Two follow-up commits the same day fix one regression outright and half-fix the other:
+- `22bf182` ("Correct Fetch Authentication Parameters") swaps the two bool arguments back at exactly the
+  four call sites this doc flagged (`game_build.rs`, `game_details.rs`, `owned_games.rs`,
+  `secure_links.rs`), each now `.fetch(&url, false, true)` — the "four authenticated endpoints fetch with
+  no auth token" item below is fixed, confirmed by re-reading all four call sites directly.
+- `2ae200d` ("Remove secure links API and expose TokenObserver") does two unrelated things in one commit:
+  it deletes `GogDl::get_secure_links` and `secure_links/mod.rs`'s `pub use secure_links::SecureLinks;`
+  entirely (so `SecureLinks` is no longer emitted by any public method — a design choice, not a bug fix,
+  but it does close the `SecureLinks` half of the "three types not exported" item below), and it adds
+  `pub use client::TokenObserver;` to `src/lib.rs`. That second change was only a *half* fix for the
+  export-regression item below — `Auth` itself wasn't re-exported yet, so `TokenObserver`'s
+  `on_token_refreshed(&self, auth: Auth)` still couldn't be spelled out in an external `impl`.
+
+A fourth, uncommitted change staged on top of `2ae200d` closes that other half: `src/client/mod.rs` now
+also has `pub use auth::Auth;`, and `src/lib.rs` has `pub use client::Auth;` alongside the existing
+`TokenObserver` re-export. Confirmed fixed — a throwaway external test (`impl TokenObserver for Dummy {
+fn on_token_refreshed(&self, _auth: gogdl_lib::Auth) {} }`) now compiles cleanly against this tree, where
+the same test previously failed with `E0425: cannot find type 'Auth'`. This closes the export-regression
+item below in full: both halves (`Auth` and `TokenObserver`) are reachable from the crate root again,
+matching the state `32e8786` originally established before `9cd8d0a` regressed it.
+
 No automated tests exist yet (`grep -r '#\[test\]' src/` is empty), so treat every fix here as
-untested until you add coverage for it — this pass in particular ships two regressions that any test
-exercising `get_owned_games`/`get_game_details`/`get_game_builds`/`get_secure_links` against a real
-token, or a mock `TokenObserver`, would have caught immediately.
+untested until you add coverage for it.
 
 ---
 
 ## High — correctness bugs
 
-- [ ] **New regression: four authenticated endpoints now fetch with no auth token at all**, because the
-  two new `bool` parameters on `HttpClient::fetch` got swapped at the call site. The old signature was
-  `fetch(url, auth_manager: Option<AuthManager>, decode: bool)`; the new one (`src/client/client.rs:32-37`)
-  is `fetch(url, decode: bool, require_auth: bool)` — same two trailing slots, reordered. Two call sites
-  that needed `decode: true` (`build_metadata.rs:32`, `depot_info.rs:47`, both `.fetch(url, true, true)`)
-  translated correctly by accident, since both new args happen to be `true`. But the four call sites that
-  needed `decode: false, require_auth: true` were mechanically rewritten to `.fetch(url, true, false)`
-  instead of `.fetch(url, false, true)` — decode and require-auth swapped:
+- [x] **Four authenticated endpoints were fetching with no auth token at all.** *Fixed in `22bf182`
+  ("Correct Fetch Authentication Parameters").* The two new `bool` parameters on `HttpClient::fetch`
+  (`decode`, `require_auth`) had been swapped at four call sites when `9cd8d0a` changed the signature
+  from `fetch(url, auth_manager: Option<AuthManager>, decode: bool)` to `fetch(url, decode: bool,
+  require_auth: bool)`. `22bf182` corrects exactly the four flagged call sites, each now
+  `.fetch(&url, false, true)` — confirmed by re-reading the current files:
   - `src/games/game_build.rs:38` (`GameBuilds::get_game_builds`)
   - `src/games/game_details.rs:29` (`GameDetails::get_game_details`)
   - `src/games/owned_games.rs:27` (`OwnedGames::get_owned_games`)
   - `src/secure_links/secure_links.rs:43` (`SecureLinks::get_secure_links`)
 
-  With `require_auth: false`, `inner_fetch` (`src/client/client.rs:73-94`) skips the auth branch
-  entirely and calls plain `get_json` — no `Authorization: Bearer` header is sent, and the `decode: true`
-  that was meant to matter is silently ignored too (the `if decode {}` branch only exists inside the
-  `if require_auth {}` arm, so it's dead here). Every call to these four methods now hits a
-  GOG-authenticated endpoint with no token. Compounding this: `fetch`'s retry loop
-  (`src/client/client.rs:41-58`) only calls `refresh_auth` when `require_auth` is true (`:46-48`), so the
-  resulting 401 doesn't even trigger a refresh — it just burns three identical unauthenticated attempts
-  and returns the opaque `ClientError::MaxRetriesReached`, per the sibling item below. Net effect: owned
-  games, game details, game builds, and secure links (i.e. everything needed to actually download or
-  display a game) are all broken by this diff. Fix is a one-line swap at each of the four call sites.
+  All six authed fetchers (these four plus `build_metadata`/`depot_info`, which were already correct)
+  now send the bearer token and route real 401s into `fetch`'s refresh-and-retry loop correctly. No test
+  exists to pin this down, though — see the missing-coverage item below.
 
-- [ ] **New regression: `Auth` and `TokenObserver` are no longer exported from the crate root**,
-  un-fixing two items marked resolved below. `src/auth/mod.rs` (which had `pub use auth::Auth;
-  pub use auth::TokenObserver;` re-exported again from `src/lib.rs:10-11`) was deleted as part of the
-  `src/auth/*` → `src/client/auth/*` move; the new `src/client/auth/mod.rs` still does
-  `pub use auth::Auth; pub use token_observer::TokenObserver;`, but `mod client;` in `src/lib.rs:1` is
-  private and nothing re-exports either type from the crate root any more — confirmed by writing a
-  one-off external test (`use gogdl_lib::TokenObserver` / `gogdl_lib::Auth`) and getting
-  `E0432: unresolved import` / `E0425: cannot find type`. `GogDl::set_token_observer`
-  (`src/gogdl/gogdl.rs:132-134`) still takes `Arc<dyn TokenObserver>` and `GogDl::restore_auth` still
-  round-trips through `Auth::to_string`/`from_string`, so the crate itself builds fine (`cargo build
-  --lib` is clean) — this only breaks *consumers*. This silently reverts `32e8786` ("Export Auth publicly
-  from the crate") and re-blocks the two items below marked fixed by it/`998829d`+`b87d8dd`
-  ("`TokenObserver` cannot be implemented outside the crate", "Silent, internal token refreshes are
-  invisible to callers") — `gogdl_flutter`'s bridge wrapper, which implements `TokenObserver` to persist
-  rotated tokens, would fail to compile against this tree today. Fix: add
-  `pub use client::auth::{Auth, TokenObserver};` (or equivalent) back to `src/lib.rs`.
+- [x] **`Auth` and `TokenObserver` were dropped from the crate root by `9cd8d0a`'s `src/auth/*` →
+  `src/client/auth/*` move.** *Fixed in two steps: `TokenObserver` in `2ae200d`, `Auth` in an uncommitted
+  follow-up.* The old `src/auth/mod.rs` (which had `pub use auth::Auth; pub use auth::TokenObserver;`,
+  re-exported from `src/lib.rs`) no longer exists after the move, and nothing replaced the crate-root
+  re-export for either type. `2ae200d` added `pub use client::TokenObserver;` back; a further uncommitted
+  change adds `pub use auth::Auth;` to `src/client/mod.rs` and `pub use client::Auth;` to `src/lib.rs`.
+  Confirmed fixed end-to-end with an external test: `impl TokenObserver for Dummy { fn
+  on_token_refreshed(&self, _auth: gogdl_lib::Auth) {} }` now compiles against this tree (it previously
+  failed on `Auth` with `E0425`, and before that on `TokenObserver` with `E0432`). This restores what
+  `32e8786` originally established and `9cd8d0a` regressed — `gogdl_flutter`'s `TokenObserver` bridge
+  wrapper should compile against this tree again.
 
 - [x] **`refresh_auth` persists tokens without `valid_until`.** *Fixed in `998829d`, silently regressed
   by `9a1f780`, fixed again in the current uncommitted change.* `9a1f780`'s rewrite of `refresh_auth`
@@ -100,14 +106,13 @@ token, or a mock `TokenObserver`, would have caught immediately.
   refactors with no automated coverage to catch it — see the missing-coverage item below.
 
 - [x] **Silent, internal token refreshes are invisible to callers.** *Addressed in `998829d` +
-  `b87d8dd`, re-broken by the export regression at the top of this section.* `AuthManager` holds an
-  optional `TokenObserver` (`src/client/auth/token_observer.rs`) that `refresh_auth` notifies
+  `b87d8dd`; re-broken by `9cd8d0a`, fixed again by the `Auth`/`TokenObserver` export item above.* `AuthManager` holds an optional `TokenObserver`
+  (`src/client/auth/token_observer.rs`) that `refresh_auth` notifies
   (`src/client/auth/auth_manager.rs:86-93`), so the internal 401-retry path no longer refreshes
-  invisibly, and the callback hands over the whole `Auth`, so the rotated refresh token reaches the app
-  *in principle*. `GogDl::refresh_auth()` doesn't exist, so the observer is the only channel by which an
-  app can learn about a refresh — which is exactly why the "`Auth`/`TokenObserver` no longer exported"
-  item above is a hard regression of this one, not a separate concern: a consumer can no longer name
-  either type needed to register the observer at all.
+  invisibly, and the callback hands over the whole `Auth`, so the rotated refresh token reaches the app.
+  `GogDl::refresh_auth()` doesn't exist, so the observer is the only channel by which an app can learn
+  about a refresh — which is now usable again now that both types it needs are nameable outside the
+  crate.
 
 - [x] **`valid_until` is dead.** *Addressed in `998829d`* — `Auth::is_valid()`
   (`src/client/auth/auth.rs:32-35`) compares it against `chrono::Utc::now()`, and `AuthManager::get_auth`
@@ -138,16 +143,17 @@ token, or a mock `TokenObserver`, would have caught immediately.
   to also treat `ClientError::AuthError(AuthError::TokenExpired)` as a refresh-and-retry case, not just
   a real server `HttpError{status: 401}`.
 
-- [ ] **The retry-with-refresh loop in `HttpClient::fetch` catches a real server 401, but the
-  local-expiry half above is still bypassed, and it's now reachable through a second, buggier path
-  too.** `fetch` (`src/client/client.rs:32-58`) matches `Err(ClientError::HttpError { status, body })`
-  (`:43-51`) and, when `status == StatusCode::UNAUTHORIZED` *and* `require_auth` is true, calls
-  `self.auth_manager.refresh_auth(&self).await?` (`:46-48`) before looping again — so a genuine
-  server-issued 401 on a correctly-flagged call is retried after a refresh. But per the item above, this
-  is still the *only* thing that refreshes — local expiry never reaches it. And per the new
-  boolean-argument-swap item at the top of this section, four call sites now pass `require_auth: false`
-  on endpoints that actually need auth, so even a real 401 from *those* four never triggers a refresh
-  either — it just silently retries unauthenticated 3 times (see the `MaxRetriesReached` item below).
+- [x] **The retry-with-refresh loop in `HttpClient::fetch` now correctly catches a real server 401 on
+  every authed fetcher — the local-expiry half above is still bypassed, but the four-endpoint
+  boolean-swap bug that also blocked this is fixed.** `fetch` (`src/client/client.rs:32-58`) matches
+  `Err(ClientError::HttpError { status, body })` (`:43-51`) and, when `status ==
+  StatusCode::UNAUTHORIZED` *and* `require_auth` is true, calls `self.auth_manager.refresh_auth(&self)
+  .await?` (`:46-48`) before looping again. Since `22bf182` fixed the swapped arguments (see the item
+  above), all six authed fetchers now pass `require_auth: true`, so a genuine server-issued 401 on *any*
+  of them is retried after a refresh — not just `build_metadata`/`depot_info` as in the previous pass.
+  What's still open: this is only reachable by a real 401 from the server, per the item above — local
+  expiry (the common case) still never reaches it, since `ClientError::AuthError` doesn't match the
+  `HttpError{..}` arm this loop keys on.
 
 - [ ] **New regression: any non-401 HTTP error now gets silently retried up to 3 times and its detail
   discarded.** In the same match arm (`src/client/client.rs:43-51`), a non-401 status — 404, 403, 500,
@@ -157,23 +163,21 @@ token, or a mock `TokenObserver`, would have caught immediately.
   attempts, `fetch` returns the generic `ClientError::MaxRetriesReached` (`:57`) instead of the original
   status/body. Concretely: a request for a nonexistent depot/product manifest that used to fail fast
   with a `404` + body now burns two extra network round-trips and then reports an uninformative "Max
-  retires reached" with no indication it was ever a 404 — and, per the boolean-swap item at the top of
-  this section, this is now also what a real 401 looks like on the four broken endpoints, since they
-  never trigger the refresh branch. Fix needs the `if status == UNAUTHORIZED { .. } else { return
-  Err(..) }` split reinstated inside that arm.
+  retires reached" with no indication it was ever a 404. Fix needs the `if status == UNAUTHORIZED { .. }
+  else { return Err(..) }` split reinstated inside that arm.
 
 - [x] **Token observer only emits the access token.** *Fixed in `b87d8dd`, unaffected by this pass* —
   `TokenObserver::on_token_refreshed(&self, auth: Auth)` (`src/client/auth/token_observer.rs:4`) still
   hands over the full `Auth`, so the rotated refresh token and the computed `valid_until` are both
-  available to persist. Blocked in practice by the export regression at the top of this section.
+  available to persist, and both are now actually usable outside the crate per the export item above.
 
-- [x] **`TokenObserver` cannot be implemented outside the crate.** *Fixed in `32e8786`, re-broken by the
-  export regression at the top of this section.* `src/client/auth/mod.rs` still re-exports `Auth` and
-  `TokenObserver` *within the crate*, and the trait's `on_token_refreshed(&self, auth: Auth)` signature
-  is unchanged — but neither type reaches `src/lib.rs` any more (see that item for the exact break), so
-  this is functionally unfixed again despite no code in this trait or its surrounding module having
-  regressed. `AuthManager` and `AuthError` remain crate-private on top of that, unchanged from before —
-  see the error-export item below.
+- [x] **`TokenObserver` cannot be implemented outside the crate.** *Fixed in `32e8786`, re-broken by
+  `9cd8d0a`, re-fixed in full by `2ae200d` + the uncommitted `Auth` export.* Both `TokenObserver` and
+  `Auth` are exported from `src/lib.rs` again (see the item at the top of this section), so an external
+  `impl TokenObserver for Foo { fn on_token_refreshed(&self, auth: Auth) { .. } }` compiles again —
+  confirmed directly. `AuthManager` and `AuthError` remain crate-private, unchanged from before — that's
+  a narrower, still-open gap (a consumer can register an observer and receive `Auth`, but still can't
+  hold or match on `AuthManager`/`AuthError` directly) — see the error-export item below.
 
 - [ ] **The error detail added in `a962ef7` is invisible to consumers — and one rung of nesting deeper
   than before.** `src/lib.rs` exports `GogDlError` but none of the error types nested inside it —
@@ -266,19 +270,21 @@ token, or a mock `TokenObserver`, would have caught immediately.
 
 - [ ] **`refresh_lock` serializes refreshes but doesn't collapse them.** `refresh_auth`
   (`src/client/auth/auth_manager.rs:73-96`) still takes `refresh_lock` (`:75`) and then unconditionally
-  performs a refresh with no early-return if another waiter already refreshed — unchanged. Reachability
-  narrowed again by this pass: `AuthManager` now lives inside `HttpClient` and is called from `fetch`'s
-  retry loop only on a real `ClientError::HttpError{status: 401}` with `require_auth: true`
-  (`src/client/client.rs:43-49`) — per the High-severity items above, local expiry never reaches this at
-  all, and now neither do the four fetchers with the swapped `require_auth` argument. In practice the
-  only calls left that can drive concurrent refreshes today are `build_metadata`'s and `depot_info`'s
-  (the two correctly-wired authed fetchers) hitting a genuine server 401 at the same time. Re-verify once
-  local expiry actually reaches this path, since that's the common case that would exercise it.
+  performs a refresh with no early-return if another waiter already refreshed — unchanged. Reachability:
+  `AuthManager` now lives inside `HttpClient` and is called from `fetch`'s retry loop only on a real
+  `ClientError::HttpError{status: 401}` with `require_auth: true` (`src/client/client.rs:43-49`) — per
+  the High-severity items above, local expiry never reaches this path at all. But now that `22bf182`
+  fixed the swapped `require_auth` argument, all six authed fetchers (not just `build_metadata`/
+  `depot_info`) are correctly wired to reach it on a genuine server 401, so N-concurrent-401s is a
+  meaningfully broader surface than the previous pass found — still not the common case (local expiry
+  is), but no longer a narrow two-fetcher corner. Re-verify once local expiry itself reaches this path,
+  since that's the case that would exercise it most.
 
 - [ ] **The observer callback runs while the `inner` mutex is held.**
   `observer.on_token_refreshed(...)` is invoked inside the `let mut inner = self.inner.lock().await`
   block (`src/client/auth/auth_manager.rs:88-93`), unchanged since `b87d8dd` beyond the file move. Same
-  narrowed-reachability note as `refresh_lock` above.
+  reachability note as `refresh_lock` above — real-401-driven, all six authed fetchers now, but not the
+  common local-expiry case.
 
 - [ ] **`is_valid()` has no clock-skew / in-flight margin.**
   `src/client/auth/auth.rs:32-35` accepts a token that expires one second from now, which will then 401
@@ -293,9 +299,9 @@ token, or a mock `TokenObserver`, would have caught immediately.
 
 - [ ] **A registered `TokenObserver` can never be replaced with "none".**
   `set_token_observer` (`src/client/auth/auth_manager.rs:29-31`) only ever sets `Some`, so a consumer
-  cannot detach on logout/teardown; the `Arc<dyn TokenObserver>` lives as long as the `AuthManager`. (In
-  practice currently moot: per the export-regression item above, no external consumer can name
-  `TokenObserver` to register one at all right now.)
+  cannot detach on logout/teardown; the `Arc<dyn TokenObserver>` lives as long as the `AuthManager`. Now
+  practically reachable again — `TokenObserver`/`Auth` are both exported (see above), so this is a real,
+  live gap for a consumer to hit, not a moot one.
 
 ## Medium — duplication & consistency
 
@@ -358,21 +364,27 @@ token, or a mock `TokenObserver`, would have caught immediately.
   it still won't reach `stream_chunk` — that needs its own, parallel retry/refresh implementation, or
   to be rewritten to go through `inner_fetch`/`fetch`.
 
-- [ ] **Three types a consumer must be able to name are not exported.** `GogDl::get_secure_links`
-  (`src/gogdl/gogdl.rs:80`) returns `SecureLinks`; the exported `ProductBundle` declares
-  `pub product_files: Vec<DepotFile>` (`src/downloader/product_bundle.rs:8-10`); `DepotFile.chunks`
-  (`src/depot/depot_info.rs:33`) is `Option<Vec<Chunk>>`. None of `SecureLinks`, `DepotFile`, `Chunk`
-  are re-exported from `src/lib.rs` — `998829d` dropped `Chunk`/`DepotFile` (in favor of exporting
-  `TokenObserver`) and `0418bc0` dropped `SecureLinks` outright, both without narrowing what still
-  *emits* them. A consumer that calls `get_secure_links` cannot bind its result to anything but an
-  immediately-consumed temporary; one that walks `ProductBundle.product_files` (which
-  `verify_files`/`download_game` require holding onto, since `ProductBundle` isn't `Clone`) receives a
-  `Vec` of a type it cannot name in a signature, `let` binding, or test fixture. Live proof: `lumen-cli`
-  (`ssh://git@thinkcentre.home:2200/gogdl/lumen-cli.git`, this workspace) fails to compile against
-  `v0.0.4-restart` with exactly this — `E0432: unresolved imports gogdl_lib::DepotFile,
-  gogdl_lib::SecureLinks` — because its manifest-walking and CDN-URL-resolution code (production code,
-  not just the test fixtures that also construct `Chunk` directly) names both. Either re-export all
-  three or narrow the public methods/fields that leak them.
+- [ ] **Two types a consumer must be able to name are not exported — down from three.** The exported
+  `ProductBundle` declares `pub product_files: Vec<DepotFile>` (`src/downloader/product_bundle.rs:8-10`);
+  `DepotFile.chunks` (`src/depot/depot_info.rs:33`) is `Option<Vec<Chunk>>`. Neither `DepotFile` nor
+  `Chunk` is re-exported from `src/lib.rs` — `998829d` dropped both (in favor of exporting
+  `TokenObserver`) without narrowing what still *emits* them. A consumer that walks
+  `ProductBundle.product_files` (which `verify_files`/`download_game` require holding onto, since
+  `ProductBundle` isn't `Clone`) receives a `Vec` of a type it cannot name in a signature, `let` binding,
+  or test fixture. `2ae200d` ("Remove secure links API and expose TokenObserver") closed the third leg of
+  this item by removing `GogDl::get_secure_links` and `SecureLinks`'s re-export from
+  `secure_links/mod.rs` entirely, rather than exporting the type — a bigger break for any consumer that
+  was calling it (the method itself is gone, not just the return type unnameable), but it does mean
+  `SecureLinks` is no longer a type a consumer needs to name at all. `lumen-cli`
+  (`/home/fernando/repo/lumen-project/lumen-cli`, sibling repo in this workspace), which previously
+  failed to compile with `E0432: unresolved imports gogdl_lib::DepotFile, gogdl_lib::SecureLinks`,
+  actively calls `gog.get_secure_links(product_id)` at two call sites
+  (`src/middleware/downloads.rs:131,200`) — its own doc comments there already note working around
+  `SecureLinks` not being nameable (`downloads.rs:176-182`). Once `lumen-cli` bumps its `gogdl-lib` pin
+  past this pass, both call sites become a hard `E0599: no method named 'get_secure_links'` compile
+  break, not the type-naming workaround it currently has code for — this consumer needs either the
+  method restored or a replacement API before that pin bump happens. Either re-export `DepotFile`/`Chunk`
+  or narrow the public field that leaks them.
 
 - [ ] **The `982dc82` collapsing regression has effectively recurred: a dead refresh token and a
   routine expiry now both surface as the same opaque, unstructured error.** This item used to describe
@@ -390,8 +402,9 @@ token, or a mock `TokenObserver`, would have caught immediately.
   `ClientError::AuthError` on these paths — that branch only fires when `require_auth: true` is passed
   and the internal `get_auth()` fails locally. So every real failure from `AUTH_URL`/`REFRESH_URL` —
   including a 401 because the refresh token is dead, not just refreshable — falls straight to the
-  stringified `ClientError { inner: String }` arm. That's `982dc82`'s exact failure mode back in a new shape: a dead-refresh-token 401 and
-  a transient network blip are now both just an opaque string a caller can only distinguish by parsing
+  stringified `ClientError { inner: String }` arm. That's `982dc82`'s exact failure mode back in a new
+  shape: a dead-refresh-token 401 and a transient network blip are now both just an opaque string a
+  caller can only distinguish by parsing
   `Display` output, with no `AuthExpired`/`Unauthorized`-style variant to match on at all. Fix needs
   either a real status-aware variant on `AuthError` for this case, or at minimum removing the dead
   `Err(ClientError::AuthError(e))` arm so the code doesn't imply a distinction it can't actually make.
