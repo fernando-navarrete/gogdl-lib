@@ -58,7 +58,16 @@ impl DownloadableProduct {
 
         let downloadable_products = products
             .into_iter()
-            .filter(|(product_id, _)| owned_products.owned.contains(&product_id.parse().unwrap()))
+            .filter(|(product_id, _)| {
+                println!("{}", product_id);
+                let product_id_i32 = match product_id.parse::<i32>() {
+                    Ok(id) => id,
+                    Err(_err) => {
+                        return false;
+                    }
+                };
+                owned_products.owned.contains(&product_id_i32)
+            })
             .map(|(product_id, depots)| DownloadableProduct {
                 product_id: product_id.to_string(),
                 depots,

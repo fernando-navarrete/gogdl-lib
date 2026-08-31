@@ -1,4 +1,4 @@
-use std::io;
+use std::{io, num::ParseIntError};
 
 use reqwest::StatusCode;
 use thiserror::Error;
@@ -33,4 +33,7 @@ pub enum SecureLinksError {
 
     #[error("Client error: {0}")]
     ClientError(#[from] ClientError),
+
+    #[error("Incorrect game id: {0}, parse error: {1}")]
+    IncorrectGameId(String, ParseIntError),
 }

@@ -43,7 +43,12 @@ impl SecureLinksManager {
             }
         }
 
-        if !available_games.contains(&game_id.parse().unwrap()) {
+        let game_id_i32 = match game_id.parse::<i32>() {
+            Ok(id) => id,
+            Err(err) => return Err(SecureLinksError::IncorrectGameId(game_id.to_string(), err)),
+        };
+
+        if !available_games.contains(&game_id_i32) {
             return Err(SecureLinksError::ProductNotOwned(game_id.to_string()));
         }
         let secure_links = SecureLinks::get_secure_links(self, game_id).await?;

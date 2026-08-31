@@ -58,7 +58,7 @@ same test previously failed with `E0425: cannot find type 'Auth'`. This closed t
 below in full: both halves (`Auth` and `TokenObserver`) are reachable from the crate root again, matching
 the state `32e8786` originally established before `9cd8d0a` regressed it.
 
-A fifth, uncommitted change staged on top of `3ed4dd0` is the biggest fix of the whole `9cd8d0a` lineage:
+A fifth change, staged on top of `3ed4dd0`, is the biggest fix of the whole `9cd8d0a` lineage:
 it rewrites `fetch`'s retry `match` (`src/client/client.rs:45-63`) to add a dedicated arm for
 `Err(ClientError::AuthError(AuthError::TokenExpired))` that calls `refresh_auth` and loops again, and
 splits the `HttpError{status,..}` arm so a non-401 status returns immediately with its original
@@ -74,7 +74,23 @@ other non-401 status. Separately, `src/lib.rs` now re-exports every per-layer er
 `ClientError`, `DepotError`, `DownloadError`, `GamesError`, `SecureLinksError`), closing the long-open
 "error detail
 invisible to consumers" item — confirmed with an external test matching all the way down to
-`GogDlError::ClientError(ClientError::AuthError(AuthError::TokenExpired))`.
+`GogDlError::ClientError(ClientError::AuthError(AuthError::TokenExpired))`. That whole sequence landed
+as commit `5b7ca2f` ("Handle Auth Failures And Re-Export Errors").
+
+A sixth, uncommitted change staged on top of `5b7ca2f` closes the "two `.parse().unwrap()` calls can
+crash" item below: `SecureLinksManager::get_secure_links` (`src/secure_links/links_manager.rs:46-49`)
+now matches on `game_id.parse::<i32>()` and returns a new `SecureLinksError::IncorrectGameId(String,
+ParseIntError)` variant (`src/secure_links/error.rs:37-38`) instead of unwrapping; and
+`DownloadableProduct::get_downloadable_products`'s filter closure
+(`src/downloader/downloadable_product.rs:61-70`) does the same, returning `false` (i.e. dropping the
+entry) on a parse failure instead of panicking. In the same edit, `ProductBundle::get_download_files`'s
+sibling filter (`src/downloader/product_bundle.rs:52-58`) was changed from `.parse().unwrap_or(0)` to
+the identical match-and-return-`false` shape — so the "one panics, one silently substitutes 0"
+inconsistency this item used to call out is also gone; both now filter the entry out the same way. This
+also introduced a leftover debug `println!(product_id)` in the `downloadable_product.rs` filter closure
+that doesn't match the fix's own error-handling intent (it's not gated behind any logging facade — none
+exists anywhere else in the crate, `grep -rn 'println!\|log::\|tracing::' src/` matches only this one
+line) — written up as its own new Low item below.
 
 No automated tests exist yet (`grep -r '#\[test\]' src/` is empty), so treat every fix here as
 untested until you add coverage for it.
@@ -210,17 +226,21 @@ untested until you add coverage for it.
 
 ## High — panics on untrusted data
 
-- [ ] **Two `.parse().unwrap()` calls can crash the process on bad input**, with no handling for the
-  identical failure a few lines away in a sibling file:
-  - `src/secure_links/links_manager.rs:46` — `game_id.parse().unwrap()`, where `game_id: &str` is a
-    public API parameter (ultimately comes from the Flutter/Dart side across FFI). A malformed
-    caller-supplied id panics the whole process rather than returning an error.
-  - `src/downloader/downloadable_product.rs:61` — `product_id.parse().unwrap()` on a value taken from
-    the GOG API response.
-  - Compare with `src/downloader/product_bundle.rs:52`, which parses the *same kind* of value with
-    `.parse().unwrap_or(0)` — i.e. the two near-duplicate code paths (`get_downloadable_products` vs
-    `get_download_files`) handle the same possible failure inconsistently, one by panicking and one by
-    silently substituting `0`.
+- [x] **Two `.parse().unwrap()` calls could crash the process on bad input, and a sibling file handled
+  the identical failure differently.** *Fixed in the uncommitted change on top of `5b7ca2f`.*
+  - `src/secure_links/links_manager.rs:46-49` — `game_id.parse::<i32>()` (where `game_id: &str` is a
+    public API parameter that ultimately comes from the Flutter/Dart side across FFI) is now matched,
+    returning the new `SecureLinksError::IncorrectGameId(String, ParseIntError)` variant
+    (`src/secure_links/error.rs:37-38`) instead of unwrapping. A malformed caller-supplied id now
+    returns an error instead of panicking the whole process.
+  - `src/downloader/downloadable_product.rs:61-70` — the filter closure now matches
+    `product_id.parse::<i32>()` and returns `false` (dropping the entry) on `Err` instead of unwrapping.
+  - `src/downloader/product_bundle.rs:52-58` — changed from `.parse().unwrap_or(0)` to the same
+    match-and-`false` shape as the item above, so the previous inconsistency (one path panicking, the
+    other silently substituting `0`) is gone too — both now filter the unparseable entry out the same
+    way.
+  - Caveat: the `downloadable_product.rs` filter closure also picked up a leftover debug
+    `println!("{}", product_id)` in this same edit — see the new Low item below.
 
 - [x] **Twelve `get_auth().await.unwrap()` calls became reachable panics in `998829d`.** *Fixed in
   `9a1f780`, and the residual double-`get_auth()` cost noted in the previous pass is now also gone.* —
@@ -463,6 +483,16 @@ untested until you add coverage for it.
   there's no single reference tracking what public surface has been rebuilt so far vs. still stubbed.
 
 ## Low — style / clippy
+
+- [ ] **Leftover debug `println!` in a filter closure.** `src/downloader/downloadable_product.rs:62`
+  prints every candidate `product_id` on each call to `get_downloadable_products`, introduced by the
+  same uncommitted edit that fixed the `.parse().unwrap()` panic above. Not gated behind any logging
+  facade — no `log`/`tracing` dependency or macro exists anywhere else in the crate (`grep -rn
+  'println!\|eprintln!\|log::\|tracing::' src/` matches only this one line) — and not flagged by
+  `cargo clippy --all -- -W clippy::all` since `print_stdout` is an allow-by-default restriction lint,
+  not part of the `clippy::all` group this doc's warning count tracks. Looks like debug output left in
+  by accident rather than intentional logging; remove it or route it through a real logging facade if
+  the crate adopts one.
 
 `cargo clippy --lib -- -W clippy::all` reports 34 warnings on the current (2026-08-31, sixth pass) staged
 tree (34 at the still-uncommitted `403` version reviewed in the previous pass, 33 at `3ed4dd0`, 32 at

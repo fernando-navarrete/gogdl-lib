@@ -49,7 +49,13 @@ impl ProductBundle {
 
         let filtered_products = products
             .iter()
-            .filter(|(product_id, _)| selected_products.contains(&product_id.parse().unwrap_or(0)))
+            .filter(|(product_id, _)| {
+                let product_id_i32 = match product_id.parse::<i32>() {
+                    Ok(id) => id,
+                    Err(_) => return false,
+                };
+                selected_products.contains(&product_id_i32)
+            })
             .collect::<Vec<_>>();
 
         let mut downloadable_files: Vec<ProductBundle> = Vec::new();
