@@ -3,7 +3,7 @@ use std::io;
 use reqwest::StatusCode;
 use thiserror::Error;
 
-use crate::{auth::AuthError, client::ClientError, games::GamesError};
+use crate::{client::ClientError, games::GamesError};
 
 #[derive(Error, Debug)]
 pub enum SecureLinksError {
@@ -30,9 +30,6 @@ pub enum SecureLinksError {
 
     #[error("No secure link available")]
     NoSecureLink,
-
-    #[error("Auth error: {0}")]
-    AuthError(#[from] AuthError),
 
     #[error("Client error: {0}")]
     ClientError(#[from] ClientError),

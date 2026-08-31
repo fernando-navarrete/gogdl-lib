@@ -35,21 +35,12 @@ impl SecureLinks {
         secure_links_manager: &SecureLinksManager,
         game_id: &str,
     ) -> Result<SecureLinks, SecureLinksError> {
-        let auth_manager = {
-            let lock = secure_links_manager.inner.lock().await;
-            if let Err(err) = lock.auth.get_auth().await {
-                return Err(SecureLinksError::AuthError(err));
-            }
-            lock.auth.clone()
-        };
         let url = format!(
             "https://content-system.gog.com/products/{}/secure_link?generation=2&_version=2&path=/",
             game_id
         );
-        let secure_links: SecureLinks = secure_links_manager
-            .client
-            .fetch(&url, Some(auth_manager), false)
-            .await?;
+        let secure_links: SecureLinks =
+            secure_links_manager.client.fetch(&url, true, false).await?;
 
         Ok(secure_links)
     }

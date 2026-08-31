@@ -1,4 +1,3 @@
-mod auth;
 mod client;
 mod constants;
 mod depot;
@@ -7,8 +6,6 @@ mod games;
 mod gogdl;
 mod secure_links;
 
-pub use auth::Auth;
-pub use auth::TokenObserver;
 pub use depot::ProductDetails;
 pub use downloader::DownloadEvent;
 pub use downloader::DownloadStageEvent;

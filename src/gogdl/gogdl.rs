@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use tokio::sync::mpsc;
 
-use crate::auth::AuthManager;
-use crate::client::HttpClient;
+use crate::DownloadStageEvent;
+use crate::client::{HttpClient, TokenObserver};
 use crate::depot::{DepotManager, ProductDetails};
 use crate::downloader::{DownloadManager, DownloadableProduct, ProductBundle, VerificationEvent};
 use crate::games::{
@@ -11,29 +11,23 @@ use crate::games::{
 };
 use crate::gogdl::error::GogDlError;
 use crate::secure_links::{SecureLinks, SecureLinksManager};
-use crate::{DownloadStageEvent, TokenObserver};
 
 pub struct GogDl {
-    auth: AuthManager,
     games: GamesManager,
     depot: DepotManager,
     secure_links: SecureLinksManager,
     downloader: DownloadManager,
+    client: HttpClient,
 }
 
 impl GogDl {
     pub fn new_from_client(client: reqwest::Client) -> Self {
         let http_client = HttpClient::new_with_client(client);
-        let auth_manager = AuthManager::new(http_client.clone());
-        let games_manager = GamesManager::new(http_client.clone(), auth_manager.clone());
-        let depot_manager = DepotManager::new(http_client.clone(), auth_manager.clone());
-        let secure_links_manager = SecureLinksManager::new(
-            http_client.clone(),
-            auth_manager.clone(),
-            games_manager.clone(),
-        );
+        let games_manager = GamesManager::new(http_client.clone());
+        let depot_manager = DepotManager::new(http_client.clone());
+        let secure_links_manager =
+            SecureLinksManager::new(http_client.clone(), games_manager.clone());
         let download_manager = DownloadManager::new(
-            auth_manager.clone(),
             depot_manager.clone(),
             secure_links_manager.clone(),
             games_manager.clone(),
@@ -41,22 +35,22 @@ impl GogDl {
         );
 
         Self {
-            auth: auth_manager,
             games: games_manager,
             depot: depot_manager,
             secure_links: secure_links_manager,
             downloader: download_manager,
+            client: http_client,
         }
     }
     pub async fn restore_auth(&self, json_str: &str) -> Result<(), GogDlError> {
-        self.auth.restore_from_string(json_str).await?;
+        self.client.restore_auth_from_string(json_str).await?;
         Ok(())
     }
     pub fn get_login_url(&self) -> &str {
-        self.auth.get_login_url()
+        self.client.get_login_url()
     }
     pub async fn login_with_code(&self, code: &str) -> Result<String, GogDlError> {
-        let auth_string = self.auth.login_with_code(code).await?;
+        let auth_string = self.client.login_with_code(code).await?;
         Ok(auth_string)
     }
     pub async fn get_owned_games(&self) -> Result<OwnedGames, GogDlError> {
@@ -136,6 +130,6 @@ impl GogDl {
         Ok(())
     }
     pub async fn set_token_observer(&self, observer: Arc<dyn TokenObserver>) {
-        self.auth.set_token_observer(observer).await;
+        self.client.set_token_observer(observer).await;
     }
 }

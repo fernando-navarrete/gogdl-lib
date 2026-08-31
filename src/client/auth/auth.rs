@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::auth::AuthError;
+use crate::client::auth::AuthError;
 
 #[derive(Deserialize, Serialize, Clone)]
 pub struct Auth {

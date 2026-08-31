@@ -3,8 +3,10 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::{
-    auth::{auth::Auth, error::AuthError, token_observer::TokenObserver},
-    client::{ClientError, HttpClient},
+    client::{
+        ClientError, HttpClient,
+        auth::{Auth, AuthError, TokenObserver},
+    },
     constants::{AUTH_URL, LOGIN_URL, REFRESH_URL},
 };
 
@@ -15,16 +17,14 @@ pub struct AuthManager {
 }
 
 pub struct AuthManagerInner {
-    client: HttpClient,
     tokens: Option<Auth>,
     token_observer: Option<Arc<dyn TokenObserver>>,
 }
 
 impl AuthManager {
-    pub fn new(client: HttpClient) -> Self {
+    pub fn new() -> Self {
         Self {
             inner: Arc::new(Mutex::new(AuthManagerInner {
-                client,
                 tokens: None,
                 token_observer: None,
             })),
@@ -37,15 +37,14 @@ impl AuthManager {
     pub async fn set_token_observer(&self, observer: Arc<dyn TokenObserver>) {
         self.inner.lock().await.token_observer = Some(observer);
     }
-    pub async fn login_with_code(&self, code: &str) -> Result<String, AuthError> {
+    pub async fn login_with_code(
+        &self,
+        code: &str,
+        client: &HttpClient,
+    ) -> Result<String, AuthError> {
         let url = format!("{AUTH_URL}&code={code}");
 
-        let client = {
-            let lock = self.inner.lock().await;
-            lock.client.clone()
-        };
-
-        let mut auth: Auth = match client.fetch_no_retry(&url, None, false).await {
+        let mut auth: Auth = match client.fetch_no_retry(&url, false, false).await {
             Ok(auth) => auth,
             Err(ClientError::AuthError(e)) => return Err(e),
             Err(e) => {
@@ -65,7 +64,7 @@ impl AuthManager {
         self.inner.lock().await.tokens = Some(tokens);
         Ok(())
     }
-    pub async fn refresh_auth(&self) -> Result<(), AuthError> {
+    pub async fn refresh_auth(&self, client: &HttpClient) -> Result<(), AuthError> {
         // Lock to prevent concurrent refresh attempts
         let _lock = self.refresh_lock.lock().await;
         let tokens = {
@@ -78,12 +77,7 @@ impl AuthManager {
         let refresh_token = tokens.refresh_token;
         let url = format!("{REFRESH_URL}&refresh_token={refresh_token}");
 
-        let client = {
-            let lock = self.inner.lock().await;
-            lock.client.clone()
-        };
-
-        let mut auth: Auth = match client.fetch_no_retry(&url, None, false).await {
+        let mut auth: Auth = match client.fetch_no_retry(&url, false, false).await {
             Ok(auth) => auth,
             Err(ClientError::AuthError(e)) => return Err(e),
             Err(e) => {
@@ -117,8 +111,5 @@ impl AuthManager {
         } else {
             Err(AuthError::TokenExpired)
         }
-    }
-    pub async fn set_auth(&self, auth: Auth) {
-        self.inner.lock().await.tokens = Some(auth);
     }
 }

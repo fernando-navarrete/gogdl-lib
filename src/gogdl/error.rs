@@ -1,15 +1,12 @@
 use thiserror::Error;
 
 use crate::{
-    auth::AuthError, depot::DepotError, downloader::DownloadError, games::GamesError,
+    client::ClientError, depot::DepotError, downloader::DownloadError, games::GamesError,
     secure_links::SecureLinksError,
 };
 
 #[derive(Error, Debug)]
 pub enum GogDlError {
-    #[error("AuthError: {0}")]
-    AuthError(#[from] AuthError),
-
     #[error("Game error: {0}")]
     GameError(#[from] GamesError),
 
@@ -21,4 +18,7 @@ pub enum GogDlError {
 
     #[error("Download error: {0}")]
     DownloadError(#[from] DownloadError),
+
+    #[error("Client error: {0}")]
+    ClientError(#[from] ClientError),
 }

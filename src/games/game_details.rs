@@ -24,19 +24,9 @@ impl GameDetails {
             }
         }
 
-        let auth_manager = {
-            let lock = games_manager.inner.lock().await;
-            if let Err(err) = lock.auth.get_auth().await {
-                return Err(GamesError::AuthError(err));
-            }
-            lock.auth.clone()
-        };
         let url = format!("https://embed.gog.com/account/gameDetails/{}.json", game_id);
 
-        let game_details: GameDetails = games_manager
-            .client
-            .fetch(&url, Some(auth_manager), false)
-            .await?;
+        let game_details: GameDetails = games_manager.client.fetch(&url, true, false).await?;
 
         let mut lock = games_manager.inner.lock().await;
         lock.game_details

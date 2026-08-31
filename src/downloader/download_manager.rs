@@ -3,7 +3,6 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{Mutex, mpsc};
 
 use crate::{
-    auth::AuthManager,
     client::HttpClient,
     depot::DepotManager,
     downloader::{
@@ -21,7 +20,6 @@ pub struct DownloadManager {
 }
 
 pub struct DownloadManagerInner {
-    pub auth: AuthManager,
     pub depot: DepotManager,
     pub secure_links: SecureLinksManager,
     pub games: GamesManager,
@@ -30,7 +28,6 @@ pub struct DownloadManagerInner {
 
 impl DownloadManager {
     pub fn new(
-        auth: AuthManager,
         depot: DepotManager,
         secure_links: SecureLinksManager,
         games: GamesManager,
@@ -38,7 +35,6 @@ impl DownloadManager {
     ) -> Self {
         Self {
             inner: Arc::new(Mutex::new(DownloadManagerInner {
-                auth,
                 depot,
                 secure_links,
                 games,

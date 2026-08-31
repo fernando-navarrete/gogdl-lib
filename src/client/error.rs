@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use crate::auth::AuthError;
+use crate::client::auth::AuthError;
 
 #[derive(Error, Debug)]
 pub enum ClientError {

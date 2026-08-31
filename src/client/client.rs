@@ -1,4 +1,4 @@
-use std::io::Read;
+use std::{io::Read, sync::Arc};
 
 use bytes::Bytes;
 use flate2::read::ZlibDecoder;
@@ -6,41 +6,45 @@ use futures_util::StreamExt;
 use reqwest::Client;
 use serde::de::DeserializeOwned;
 
-use crate::{auth::AuthManager, client::error::ClientError};
+use crate::client::{TokenObserver, auth::AuthManager, error::ClientError};
 
 #[derive(Clone)]
 pub struct HttpClient {
     client: Client,
+    auth_manager: AuthManager,
 }
 
 impl HttpClient {
     pub fn new_with_client(client: Client) -> Self {
-        Self { client }
+        Self {
+            client,
+            auth_manager: AuthManager::new(),
+        }
     }
     pub async fn fetch_no_retry<T: DeserializeOwned>(
         &self,
         url: &str,
-        auth_manager: Option<AuthManager>,
         decode: bool,
+        require_auth: bool,
     ) -> Result<T, ClientError> {
-        self.inner_fetch(url, auth_manager.clone(), decode).await
+        self.inner_fetch(url, decode, require_auth).await
     }
     pub async fn fetch<T: DeserializeOwned>(
         &self,
         url: &str,
-        auth_manager: Option<AuthManager>,
         decode: bool,
+        require_auth: bool,
     ) -> Result<T, ClientError> {
         let mut attempts = 0;
         while attempts < 3 {
             attempts += 1;
-            match self.inner_fetch(url, auth_manager.clone(), decode).await {
+            match self.inner_fetch(url, decode, require_auth).await {
                 Ok(result) => return Ok(result),
                 Err(ClientError::HttpError { status, body }) => {
                     let _ = body;
                     if status == reqwest::StatusCode::UNAUTHORIZED {
-                        if let Some(auth_manager) = &auth_manager {
-                            auth_manager.refresh_auth().await?;
+                        if require_auth {
+                            self.auth_manager.refresh_auth(&self).await?;
                         }
                     }
                     continue;
@@ -52,14 +56,28 @@ impl HttpClient {
         }
         Err(ClientError::MaxRetriesReached)
     }
+    pub async fn restore_auth_from_string(&self, json_str: &str) -> Result<(), ClientError> {
+        self.auth_manager.restore_from_string(json_str).await?;
+        Ok(())
+    }
+    pub fn get_login_url(&self) -> &str {
+        self.auth_manager.get_login_url()
+    }
+    pub async fn login_with_code(&self, code: &str) -> Result<String, ClientError> {
+        let token = self.auth_manager.login_with_code(code, self).await?;
+        Ok(token)
+    }
+    pub async fn set_token_observer(&self, observer: Arc<dyn TokenObserver>) {
+        self.auth_manager.set_token_observer(observer).await;
+    }
     async fn inner_fetch<T: DeserializeOwned>(
         &self,
         url: &str,
-        auth_manager: Option<AuthManager>,
         decode: bool,
+        require_auth: bool,
     ) -> Result<T, ClientError> {
-        if let Some(auth_manager) = &auth_manager {
-            let auth = match auth_manager.get_auth().await {
+        if require_auth {
+            let auth = match self.auth_manager.get_auth().await {
                 Ok(auth) => auth,
                 Err(err) => return Err(ClientError::AuthError(err)),
             };

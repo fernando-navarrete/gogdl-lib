@@ -30,19 +30,12 @@ impl GameBuilds {
                 return Ok(game_builds.clone());
             }
         }
-        let auth = {
-            let lock = games_manager.inner.lock().await;
-            if let Err(err) = lock.auth.get_auth().await {
-                return Err(GamesError::AuthError(err));
-            }
-            lock.auth.clone()
-        };
         let url = format!(
             "https://content-system.gog.com/products/{}/os/windows/builds?generation=2",
             game_id
         );
 
-        let game_builds: GameBuilds = games_manager.client.fetch(&url, Some(auth), false).await?;
+        let game_builds: GameBuilds = games_manager.client.fetch(&url, true, false).await?;
         let mut lock = games_manager.inner.lock().await;
         lock.game_builds.insert(game_id, game_builds.clone());
         Ok(game_builds)

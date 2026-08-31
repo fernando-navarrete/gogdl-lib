@@ -3,7 +3,7 @@ use std::io;
 use reqwest::StatusCode;
 use thiserror::Error;
 
-use crate::{auth::AuthError, client::ClientError};
+use crate::client::ClientError;
 
 #[derive(Error, Debug)]
 pub enum DepotError {
@@ -21,9 +21,6 @@ pub enum DepotError {
 
     #[error("Deflate error: {0}")]
     DeflateError(#[from] io::Error),
-
-    #[error("Auth error: {0}")]
-    AuthError(#[from] AuthError),
 
     #[error("Client error: {0}")]
     ClientError(#[from] ClientError),

@@ -37,13 +37,6 @@ impl DepotInfo {
         download_manager: &DepotManager,
         depot_manifest: &str,
     ) -> Result<DepotInfo, DepotError> {
-        let auth_manager = {
-            let lock = download_manager.inner.lock().await;
-            if let Err(err) = lock.auth.get_auth().await {
-                return Err(DepotError::AuthError(err));
-            }
-            lock.auth.clone()
-        };
         let url = format!(
             "https://cdn.gog.com/content-system/v2/meta/{}/{}/{}",
             &depot_manifest[0..2],
@@ -51,10 +44,7 @@ impl DepotInfo {
             &depot_manifest
         );
 
-        let depot_info: DepotInfo = download_manager
-            .client
-            .fetch(&url, Some(auth_manager), true)
-            .await?;
+        let depot_info: DepotInfo = download_manager.client.fetch(&url, true, true).await?;
 
         Ok(depot_info)
     }

@@ -37,7 +37,7 @@ impl GameLinks {
 
         let url = format!("https://api.gog.com/v2/games/{}", game_id);
 
-        let game_links: GameLinks = games_manager.client.fetch(&url, None, false).await?;
+        let game_links: GameLinks = games_manager.client.fetch(&url, false, false).await?;
 
         let mut lock = games_manager.inner.lock().await;
         lock.game_links.insert(game_id, game_links.clone());

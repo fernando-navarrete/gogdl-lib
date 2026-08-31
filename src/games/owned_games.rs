@@ -22,19 +22,9 @@ impl OwnedGames {
         if !owned_games.owned.is_empty() {
             return Ok(owned_games);
         }
-        let auth_manager = {
-            let lock = game_manager.inner.lock().await;
-            if let Err(err) = lock.auth.get_auth().await {
-                return Err(GamesError::AuthError(err));
-            }
-            lock.auth.clone()
-        };
         let url = format!("https://embed.gog.com/user/data/games");
 
-        let owned_games: OwnedGames = game_manager
-            .client
-            .fetch(&url, Some(auth_manager), false)
-            .await?;
+        let owned_games: OwnedGames = game_manager.client.fetch(&url, true, false).await?;
 
         let mut lock = game_manager.inner.lock().await;
         lock.owned_games = owned_games.clone();

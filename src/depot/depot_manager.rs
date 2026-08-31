@@ -3,7 +3,6 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
 
 use crate::{
-    auth::AuthManager,
     client::HttpClient,
     depot::{
         build_metadata::BuildMetadata, depot_info::DepotInfo, error::DepotError,
@@ -18,16 +17,14 @@ pub struct DepotManager {
 }
 
 pub struct DepotManagerInner {
-    pub auth: AuthManager,
     pub product_details: HashMap<String, ProductDetails>,
 }
 
 impl DepotManager {
-    pub fn new(client: HttpClient, auth: AuthManager) -> Self {
+    pub fn new(client: HttpClient) -> Self {
         Self {
             client,
             inner: Arc::new(Mutex::new(DepotManagerInner {
-                auth,
                 product_details: HashMap::new(),
             })),
         }

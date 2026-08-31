@@ -28,18 +28,8 @@ impl BuildMetadata {
         download_manager: &DepotManager,
         game_link: &str,
     ) -> Result<Self, DepotError> {
-        let auth_manager = {
-            let lock = download_manager.inner.lock().await;
-            if let Err(err) = lock.auth.get_auth().await {
-                return Err(DepotError::AuthError(err));
-            }
-            lock.auth.clone()
-        };
-
-        let mut build_metadata: BuildMetadata = download_manager
-            .client
-            .fetch(game_link, Some(auth_manager), true)
-            .await?;
+        let mut build_metadata: BuildMetadata =
+            download_manager.client.fetch(game_link, true, true).await?;
 
         build_metadata.filter_languages("en-US");
         Ok(build_metadata)

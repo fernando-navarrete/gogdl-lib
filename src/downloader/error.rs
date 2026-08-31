@@ -4,8 +4,8 @@ use reqwest::StatusCode;
 use thiserror::Error;
 
 use crate::{
-    auth::AuthError, client::ClientError, depot::DepotError, downloader::fs::FileSystemError,
-    games::GamesError, secure_links::SecureLinksError,
+    client::ClientError, depot::DepotError, downloader::fs::FileSystemError, games::GamesError,
+    secure_links::SecureLinksError,
 };
 
 #[derive(Error, Debug)]
@@ -42,9 +42,6 @@ pub enum DownloadError {
 
     #[error("File system error: {0}")]
     FileSystemError(#[from] FileSystemError),
-
-    #[error("Auth error: {0}")]
-    AuthError(#[from] AuthError),
 
     #[error("Client error: {0}")]
     ClientError(#[from] ClientError),

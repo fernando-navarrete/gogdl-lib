@@ -3,7 +3,6 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
 
 use crate::{
-    auth::AuthManager,
     client::HttpClient,
     games::GamesManager,
     secure_links::{error::SecureLinksError, secure_links::SecureLinks},
@@ -16,16 +15,14 @@ pub struct SecureLinksManager {
 }
 
 pub struct SecureLinksManagerInner {
-    pub auth: AuthManager,
     pub games: GamesManager,
     links_cache: HashMap<String, SecureLinks>,
 }
 
 impl SecureLinksManager {
-    pub fn new(client: HttpClient, auth: AuthManager, games: GamesManager) -> Self {
+    pub fn new(client: HttpClient, games: GamesManager) -> Self {
         Self {
             inner: Arc::new(Mutex::new(SecureLinksManagerInner {
-                auth,
                 games,
                 links_cache: HashMap::new(),
             })),

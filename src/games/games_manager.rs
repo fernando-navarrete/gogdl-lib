@@ -3,7 +3,6 @@ use std::sync::Arc;
 
 use tokio::sync::Mutex;
 
-use crate::auth::AuthManager;
 use crate::client::HttpClient;
 use crate::games::error::GamesError;
 use crate::games::game_build::GameBuilds;
@@ -26,11 +25,10 @@ pub struct GamesManagerInner {
     pub game_builds: HashMap<GameId, GameBuilds>,
     pub game_summary: HashMap<GameId, GameSummary>,
     pub game_screenshots: HashMap<GameId, GameScreenshots>,
-    pub auth: AuthManager,
 }
 
 impl GamesManager {
-    pub fn new(client: HttpClient, auth: AuthManager) -> Self {
+    pub fn new(client: HttpClient) -> Self {
         Self {
             inner: Arc::new(Mutex::new(GamesManagerInner {
                 owned_games: OwnedGames::default(),
@@ -39,7 +37,6 @@ impl GamesManager {
                 game_builds: HashMap::new(),
                 game_summary: HashMap::new(),
                 game_screenshots: HashMap::new(),
-                auth,
             })),
             client,
         }
