@@ -1,7 +1,8 @@
-use std::{io::Write, path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc};
 
-use flate2::write::ZlibDecoder as ZlibStreamDecoder;
+use async_compression::tokio::write::ZlibDecoder;
 use futures_util::{StreamExt, stream};
+use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::sync::mpsc;
 
 use crate::{
@@ -183,22 +184,27 @@ impl Downloader {
 
                     let file = path_resolver.open_file(&download_unit.path, true).await?;
 
-                    let sink = HashingWriter::new(OffsetWriter::new(
-                        file,
-                        download_unit.offset,
-                        download_unit.size,
-                    ));
-                    let mut decoder = ZlibStreamDecoder::new(sink);
+                    let offset_writer =
+                        OffsetWriter::new(file, download_unit.offset, download_unit.size)
+                            .await
+                            .map_err(DownloadError::DeflateError)?;
+                    let sink =
+                        HashingWriter::new(BufWriter::with_capacity(1024 * 1024, offset_writer));
+                    let mut decoder = ZlibDecoder::new(sink);
 
                     self.client
-                        .stream_chunk(&url, |chunk| {
+                        .stream_chunk(&url, async |chunk| {
                             tx.send(DownloadEvent::Progress(chunk.len())).ok();
-                            decoder.write_all(&chunk)
+                            decoder.write_all(&chunk).await
                         })
                         .await?;
 
-                    let sink = decoder.finish().map_err(|err| DownloadError::DeflateError(err))?;
-                    let (writer, actual_md5) = sink.into_parts();
+                    decoder
+                        .shutdown()
+                        .await
+                        .map_err(DownloadError::DeflateError)?;
+                    let (buf_writer, actual_md5) = decoder.into_inner().into_parts();
+                    let writer = buf_writer.into_inner();
 
                     if writer.remaining() != 0 || actual_md5 != download_unit.md5 {
                         return Err(DownloadError::DeflateError(std::io::Error::new(

@@ -1,12 +1,9 @@
-use std::{
-    io::{Seek, Write},
-    path::PathBuf,
-};
+use std::{io::Seek, path::PathBuf, pin::Pin, task::{Context, Poll}};
 
 use md5::{Digest as Md5DigestTrait, Md5};
 use sha2::Sha256;
 use std::io::Read;
-use tokio::io;
+use tokio::io::{self, AsyncWrite};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChecksumAlgorithm {
@@ -66,12 +63,12 @@ pub async fn compute_chunk_checksum(
     .map_err(|join_err| io::Error::new(io::ErrorKind::Other, join_err.to_string()))?
 }
 
-pub struct HashingWriter<W: Write> {
+pub struct HashingWriter<W: AsyncWrite + Unpin> {
     inner: W,
     hasher: Md5,
 }
 
-impl<W: Write> HashingWriter<W> {
+impl<W: AsyncWrite + Unpin> HashingWriter<W> {
     pub fn new(inner: W) -> Self {
         Self {
             inner,
@@ -84,14 +81,27 @@ impl<W: Write> HashingWriter<W> {
     }
 }
 
-impl<W: Write> Write for HashingWriter<W> {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let n = self.inner.write(buf)?;
-        self.hasher.update(&buf[..n]);
-        Ok(n)
+impl<W: AsyncWrite + Unpin> AsyncWrite for HashingWriter<W> {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        let this = self.get_mut();
+        match Pin::new(&mut this.inner).poll_write(cx, buf) {
+            Poll::Ready(Ok(n)) => {
+                this.hasher.update(&buf[..n]);
+                Poll::Ready(Ok(n))
+            }
+            other => other,
+        }
     }
 
-    fn flush(&mut self) -> io::Result<()> {
-        self.inner.flush()
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().inner).poll_shutdown(cx)
     }
 }

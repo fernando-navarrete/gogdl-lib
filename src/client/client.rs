@@ -120,7 +120,7 @@ impl HttpClient {
     pub async fn stream_chunk(
         &self,
         url: &str,
-        mut f: impl FnMut(Bytes) -> std::io::Result<()>,
+        mut f: impl AsyncFnMut(Bytes) -> std::io::Result<()>,
     ) -> Result<(), ClientError> {
         let url = reqwest::Url::parse(url)?;
         let request = self.client.get(url);
@@ -143,7 +143,7 @@ impl HttpClient {
                 Ok(chunk) => chunk,
                 Err(e) => return Err(ClientError::NetworkError(e)),
             };
-            if let Err(e) = f(chunk) {
+            if let Err(e) = f(chunk).await {
                 return Err(ClientError::ChunkStreamCallbackError(e));
             }
         }
