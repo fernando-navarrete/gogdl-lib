@@ -13,7 +13,7 @@ use crate::{
         progress_reporting::{
             DownloadStageEvent, FileAllocationEvent, FileSizeVerificationEvent, VerificationEvent,
         },
-        util::{ChecksumAlgorithm, HashingWriter, OffsetWriter, compute_chunk_checksum},
+        util::{HashingWriter, OffsetWriter, compute_chunk_checksum},
     },
     secure_links::SecureLinksManager,
 };
@@ -62,6 +62,20 @@ impl Downloader {
             }
         };
         let (missing_files, _) = tokio::join!(missing_files_fut, progress_future);
+
+        // Check if there is space available on disk
+        let required_space = missing_files
+            .iter()
+            .map(|depot_file| depot_file.size().unwrap_or(0))
+            .sum::<u64>();
+
+        let available_space = match path_resolver.get_free_space() {
+            Ok(space) => space,
+            Err(_) => return Err(DownloadError::CouldNotResolveFreeSpace),
+        };
+        if required_space > available_space {
+            return Err(DownloadError::NotEnoughFreeSpace);
+        }
 
         // File allocation step
         let (files_allocation_tx, mut files_allocation_rx) = mpsc::unbounded_channel();
@@ -402,13 +416,10 @@ impl Downloader {
                         }
                     };
 
-                    let hashing_algorithm = ChecksumAlgorithm::Md5;
-
                     let actual_checksum = match compute_chunk_checksum(
                         final_path,
                         download_unit.offset,
                         download_unit.size,
-                        hashing_algorithm,
                     )
                     .await
                     {

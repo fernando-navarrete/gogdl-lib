@@ -25,11 +25,20 @@ pub struct Chunk {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct DepotFile {
     pub md5: Option<String>,
-    pub sha256: Option<String>,
     pub path: String,
     pub chunks: Option<Vec<Chunk>>,
     #[serde(alias = "type")]
     pub file_type: String,
+}
+
+impl DepotFile {
+    pub fn size(&self) -> Option<u64> {
+        if let Some(chunks) = &self.chunks {
+            Some(chunks.iter().map(|chunk| chunk.size).sum())
+        } else {
+            None
+        }
+    }
 }
 
 impl DepotInfo {

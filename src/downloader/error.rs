@@ -48,4 +48,10 @@ pub enum DownloadError {
 
     #[error("Chunk integrity check failed: incomplete chunks: {0}")]
     ChunkIntegrityCheckFailed(usize),
+
+    #[error("Could not resolve free space")]
+    CouldNotResolveFreeSpace,
+
+    #[error("Not enough free space")]
+    NotEnoughFreeSpace,
 }

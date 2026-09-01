@@ -1,4 +1,4 @@
-use std::io;
+use std::{io, path::PathBuf};
 
 use thiserror::Error;
 
@@ -18,4 +18,7 @@ pub enum FileSystemError {
 
     #[error("File open error: {0}")]
     FileOpenError(io::Error),
+
+    #[error("No disk matching path: {0}")]
+    NoDiskMatchingPath(PathBuf),
 }

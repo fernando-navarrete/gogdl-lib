@@ -2,6 +2,7 @@ use dashmap::DashMap;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
+use sysinfo::Disks;
 use tokio::fs::{self, File};
 use tokio::sync::OnceCell;
 
@@ -33,6 +34,27 @@ impl PathResolver {
             Err(e) => return Err(FileSystemError::FileMetadataError(e)),
         };
         Ok(metadata.len())
+    }
+
+    pub fn get_free_space(&self) -> Result<u64, FileSystemError> {
+        let disks = Disks::new_with_refreshed_list();
+
+        let disk = disks
+            .list()
+            .iter()
+            .find(|&disk| self.canonical_base.starts_with(disk.mount_point()));
+
+        match disk {
+            None => {
+                return Err(FileSystemError::NoDiskMatchingPath(
+                    self.canonical_base.clone(),
+                ));
+            }
+            Some(disk) => {
+                let free_space = disk.available_space();
+                Ok(free_space)
+            }
+        }
     }
 
     pub async fn allocate_file(

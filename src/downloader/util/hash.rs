@@ -1,24 +1,15 @@
-use std::{io::Seek, path::PathBuf, pin::Pin, task::{Context, Poll}};
+use std::{
+    io::Seek,
+    path::PathBuf,
+    pin::Pin,
+    task::{Context, Poll},
+};
 
 use md5::{Digest as Md5DigestTrait, Md5};
-use sha2::Sha256;
 use std::io::Read;
 use tokio::io::{self, AsyncWrite};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ChecksumAlgorithm {
-    // Sha 256 not used, but available
-    #[allow(dead_code)]
-    Sha256,
-    Md5,
-}
-
-pub async fn compute_chunk_checksum(
-    path: PathBuf,
-    offset: u64,
-    size: u64,
-    algo: ChecksumAlgorithm,
-) -> io::Result<String> {
+pub async fn compute_chunk_checksum(path: PathBuf, offset: u64, size: u64) -> io::Result<String> {
     tokio::task::spawn_blocking(move || {
         let mut file = std::fs::File::open(&path)?;
         file.seek(std::io::SeekFrom::Start(offset))?;
@@ -44,19 +35,9 @@ pub async fn compute_chunk_checksum(
             Ok(())
         };
 
-        let hex_digest = match algo {
-            ChecksumAlgorithm::Sha256 => {
-                let mut hasher = Sha256::new();
-                read_range(&mut |chunk| hasher.update(chunk))?;
-                hex::encode(hasher.finalize())
-            }
-            ChecksumAlgorithm::Md5 => {
-                let mut hasher = Md5::new();
-                read_range(&mut |chunk| hasher.update(chunk))?;
-                hex::encode(hasher.finalize())
-            }
-        };
-
+        let mut hasher = Md5::new();
+        read_range(&mut |chunk| hasher.update(chunk))?;
+        let hex_digest = hex::encode(hasher.finalize());
         Ok::<String, io::Error>(hex_digest)
     })
     .await
