@@ -45,4 +45,7 @@ pub enum DownloadError {
 
     #[error("Client error: {0}")]
     ClientError(#[from] ClientError),
+
+    #[error("Chunk integrity check failed: incomplete chunks: {0}")]
+    ChunkIntegrityCheckFailed(usize),
 }

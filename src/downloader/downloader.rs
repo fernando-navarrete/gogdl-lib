@@ -116,9 +116,17 @@ impl Downloader {
             .flat_map(|depot_file| DownloadUnit::from_depot_file(depot_file))
             .collect::<Vec<DownloadUnit>>();
 
-        let _missing_units = self
+        let missing_units = self
             .verify_download_units(&download_units, &path_resolver, tx)
             .await;
+
+        let missing_units_count = missing_units.len();
+
+        if missing_units_count > 0 {
+            return Err(DownloadError::ChunkIntegrityCheckFailed(
+                missing_units_count,
+            ));
+        }
 
         Ok(())
     }
