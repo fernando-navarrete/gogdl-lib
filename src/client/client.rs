@@ -156,6 +156,9 @@ impl HttpClient {
     pub async fn set_token_observer(&self, observer: Arc<dyn TokenObserver>) {
         self.auth_manager.set_token_observer(observer).await;
     }
+    pub async fn remove_token_observer(&self) {
+        self.auth_manager.remove_token_observer().await;
+    }
     async fn inner_fetch<T: DeserializeOwned>(
         &self,
         url: &str,

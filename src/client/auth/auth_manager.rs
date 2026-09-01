@@ -37,6 +37,9 @@ impl AuthManager {
     pub async fn set_token_observer(&self, observer: Arc<dyn TokenObserver>) {
         self.inner.lock().await.token_observer = Some(observer);
     }
+    pub async fn remove_token_observer(&self) {
+        self.inner.lock().await.token_observer = None;
+    }
     pub async fn login_with_code(
         &self,
         code: &str,

@@ -126,4 +126,7 @@ impl GogDl {
     pub async fn set_token_observer(&self, observer: Arc<dyn TokenObserver>) {
         self.client.set_token_observer(observer).await;
     }
+    pub async fn remove_token_observer(&self) {
+        self.client.remove_token_observer().await;
+    }
 }
