@@ -120,11 +120,20 @@ impl HttpClient {
                         }
                         continue;
                     } else {
+                        if attempts < 3 {
+                            continue;
+                        }
                         return Err(ClientError::HttpError { status, body: body });
                     }
                 }
                 Err(ClientError::AuthError(AuthError::TokenExpired)) => {
                     self.auth_manager.refresh_auth(&self).await?;
+                }
+                Err(ClientError::NetworkError(err)) => {
+                    if attempts < 3 {
+                        continue;
+                    }
+                    return Err(ClientError::NetworkError(err));
                 }
                 Err(err) => {
                     return Err(err);

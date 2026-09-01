@@ -106,6 +106,24 @@ be awaited from inside the streaming loop; `46b6ce3` follows up by converting `O
 `tokio::fs::OpenOptions`, removing the crate's last two direct `std::fs`/blocking-syscall call sites
 on the download write path.
 
+An eighth pass, same day (2026-08-31), covers two more commits on top of `46b6ce3`: `71d49a8`
+("Fail On Incomplete Download Chunks") and `de52483` ("Handle secure link retries in HTTP client").
+`71d49a8` closes the "`Downloader::verify` discards its own result" item below in full: `Downloader::verify`
+(`src/downloader/downloader.rs:104-131`) now binds `verify_download_units`'s return value instead of
+throwing it away as `_missing_units`, and returns the new `DownloadError::ChunkIntegrityCheckFailed(usize)`
+when it's non-empty instead of unconditionally returning `Ok(())`. `de52483` gives `HttpClient::stream_chunk`
+its own retry loop, closing most of two open items below: it now takes a `&SecureLinksManager`/`game_id`/
+`FileType`/`chunk_hash` instead of a pre-built URL, resolves the URL itself from the highest-priority secure
+link inside the loop, and on a 401 calls the new `SecureLinksManager::invalidate_secure_links` before
+re-fetching and retrying (up to 3 attempts) — the same shape `fetch` already used for JSON requests, but a
+parallel, hand-rolled copy rather than a shared funnel. It also gained its own `AuthError::TokenExpired` arm
+that calls `refresh_auth`, mirroring `fetch`'s. This closes the "bypasses the `fetch`/`inner_fetch` funnel
+entirely" item below (via a parallel implementation, not by actually going through the funnel — see that
+item's update for the caveat) and the "no refresh path" half of the "secure links cached forever" item
+below — but note both fixes are scoped to 401/auth-shaped failures only; see the updated "no retry/backoff
+for transient network failures" item for what's still not covered, and the new concurrency item this pass
+added for a thundering-herd gap the fix introduces under concurrent chunk downloads.
+
 ---
 
 ## High — correctness bugs
@@ -263,21 +281,32 @@ on the download write path.
 
 ## High — downloader reliability
 
-- [ ] **No retry/backoff for transient network failures during download.**
-  `Downloader::download_files` (`src/downloader/downloader.rs:156-224`) downloads every chunk exactly
-  once; a single timeout, connection reset, or 5xx on any one chunk aborts the *entire* multi-gigabyte
-  download via `results.into_iter().collect::<Result<(), DownloadError>>()?`. There is no retry
-  anywhere in the crate (`grep -ri retry src/` is empty).
+- [ ] **No retry/backoff for transient network failures during download.** *Narrowed by `de52483`
+  ("Handle secure link retries in HTTP client"), not fixed.* `HttpClient::stream_chunk`
+  (`src/client/client.rs:71-135`) now loops up to 3 attempts, but the loop only re-enters on
+  `ClientError::HttpError` with status `401` (secure link invalidated and re-fetched) or
+  `ClientError::AuthError(AuthError::TokenExpired)` (token refreshed) — every other error
+  (`ClientError::NetworkError` from a dropped connection/timeout inside `stream_chunk_inner`'s
+  `bytes_stream()`, or any non-401 `HttpError` such as a `5xx` from the CDN) still falls straight to
+  `Err(err) => return Err(err)` at `:129-131` with no retry at all. A single timeout, connection reset,
+  or 5xx on any one chunk still aborts the *entire* multi-gigabyte download via
+  `results.into_iter().collect::<Result<(), DownloadError>>()?` in `download_files`
+  (`src/downloader/downloader.rs:164-217`) — this item is about that general case, which remains
+  completely unaddressed; `grep -ri retry src/` now matches `client.rs`, but only for the auth-shaped
+  paths described above.
 
 - [ ] **One failed file allocation aborts the whole download.**
   `Downloader::download` (`src/downloader/downloader.rs:82-85`) fails the entire job the moment
   `allocate_missing_files` reports *any* failure, instead of skipping/reporting just the offending
   file(s) and continuing with the rest.
 
-- [ ] **`Downloader::verify` discards its own result.**
-  `src/downloader/downloader.rs:118-122` computes `_missing_units` and then always returns `Ok(())`
-  regardless of what verification found. A caller that isn't listening on the `tx` event channel has
-  no way to learn verification failed.
+- [x] **`Downloader::verify` discards its own result.** *Fixed in `71d49a8` ("Fail On Incomplete
+  Download Chunks").* `Downloader::verify` (`src/downloader/downloader.rs:104-131`) now binds the
+  `verify_download_units` result as `missing_units` instead of `_missing_units`, and returns
+  `Err(DownloadError::ChunkIntegrityCheckFailed(missing_units_count))` (new variant,
+  `src/downloader/error.rs:48-49`) when `missing_units.len() > 0` instead of unconditionally returning
+  `Ok(())`. A caller that isn't listening on the `tx` event channel now learns verification failed via
+  the `Result` itself too.
 
 - [x] **Blocking syscalls run directly inside async tasks.** *Fixed across `31809e9` ("Use AsyncWrite
   for Streaming Downloads") and `46b6ce3` ("Use Async File Operations for Downloads").*
@@ -295,13 +324,19 @@ on the download write path.
   write_at' src/downloader/` is empty — no blocking filesystem call remains anywhere on the download
   write path.
 
-- [ ] **Secure links are cached forever with no expiry handling.**
-  `SecureLinksManager::links_cache` (`src/secure_links/links_manager.rs:21,44-56`) never evicts an
-  entry, even though the fetched `CdnUrlParams` carries `expires_at`/`ttl` fields
-  (`src/secure_links/secure_links.rs:11,13`) that are parsed but never consulted. A link that expires
-  mid-download (long transfer, or a second job that reuses a stale cache entry) will start failing CDN
-  requests with no refresh path — the crate only ever retries on 401 from the *GOG API*, never from the
-  CDN host itself.
+- [x] **Secure links are cached forever with no expiry handling.** *The "no refresh path" half fixed
+  in `de52483` ("Handle secure link retries in HTTP client"); the proactive half is still open, restated
+  below.* `SecureLinksManager::links_cache` (`src/secure_links/links_manager.rs:19,32-63`) still never
+  evicts an entry on its own, and the fetched `CdnUrlParams`'s `expires_at`/`ttl` fields
+  (`src/secure_links/secure_links.rs:11,13`) are still parsed but never consulted proactively — but a
+  link that expires mid-download is no longer a dead end. `HttpClient::stream_chunk`
+  (`src/client/client.rs:71-135`) now reacts to a 401 from the CDN itself by calling the new
+  `SecureLinksManager::invalidate_secure_links` (`:64-67`, removes the cache entry) and re-fetching
+  before retrying, so the crate finally retries on a CDN-side 401, not just a GOG-API one. What's still
+  missing is purely proactive: nothing checks `expires_at`/`ttl` ahead of a request the way a `is_valid()`
+  margin would for auth tokens (see that Medium item below) — every chunk request still has to hit a 401
+  once before the stale link gets replaced, and see the new concurrency item below for what happens when
+  several chunks hit that 401 at once.
 
 - [ ] **Only per-chunk MD5 is verified; SHA-256 support is unused dead code.**
   `DepotFile.sha256` (`src/depot/depot_info.rs:28`) is parsed from the API but never read anywhere.
@@ -406,14 +441,30 @@ on the download write path.
   with no explanation of why index 2 specifically, and silently drops the screenshot entirely
   (`continue`) if fewer than 3 formatters are present instead of falling back to whatever's available.
 
-- [ ] **`HttpClient::stream_chunk` bypasses the `fetch`/`inner_fetch` funnel entirely.** `fetch`
-  (`src/client/client.rs:36-66`) is the single entry point for every JSON-returning request, and now that
-  it correctly catches both local expiry and a real 401 (see the fixed High-severity items above), it's a
-  genuinely solid funnel — but the CDN chunk transfer, `stream_chunk` (`:120-151`), the method that moves
-  the actual multi-gigabyte payload and is where "No retry/backoff for transient network failures during
-  download" (above) lives, is still a separate method entirely: no `AuthManager`, no retry loop, called
-  directly by the downloader. None of this pass's fixes reach it — it needs its own, parallel
-  retry/refresh implementation, or to be rewritten to go through `inner_fetch`/`fetch`.
+- [x] **`HttpClient::stream_chunk` bypassed the `fetch`/`inner_fetch` funnel entirely.** *Given its own
+  parallel retry loop in `de52483` ("Handle secure link retries in HTTP client"), rather than being
+  rewritten to go through the funnel.* `stream_chunk` (`src/client/client.rs:71-135`) now retries up to 3
+  attempts and handles both a CDN-side 401 (invalidate + re-fetch secure links, see the fixed item above)
+  and `AuthError::TokenExpired` (calls `refresh_auth`, same as `fetch`'s arm at `:61-63`) — so the method
+  that moves the actual multi-gigabyte payload is no longer a dead end for auth/secure-link failures. It
+  still isn't unified with `fetch`/`inner_fetch`: the retry `match` is hand-copied rather than shared (both
+  now independently contain a `HttpError{status,body}` arm and a `TokenExpired` arm — a future change to
+  one's retry logic won't propagate to the other without someone remembering to update both), and it still
+  has no retry at all for the transient-network-failure case — see that item above, now updated to reflect
+  what this pass actually covers.
+
+- [ ] **Secure-link invalidation on a 401 isn't collapsed across concurrent chunk downloads — the same
+  thundering-herd shape already flagged for auth refresh, now reachable on the download path too.**
+  `SecureLinksManager::get_secure_links`/`invalidate_secure_links` (`src/secure_links/links_manager.rs:
+  32-67`) have no in-flight-request dedup, unlike the note this doc already has on `refresh_lock` not
+  collapsing concurrent auth refreshes below. `Downloader::download_files` runs up to `self.threads`
+  chunk downloads concurrently via `buffer_unordered` (`src/downloader/downloader.rs:164,212`), each
+  calling `HttpClient::stream_chunk` independently. If a game's secure link expires while several chunks
+  are in flight, every one of them can hit the CDN's 401 at roughly the same time; each independently
+  calls `invalidate_secure_links` (removing the same already-removed cache entry is harmless) and then
+  independently calls `SecureLinks::get_secure_links` — a real network round-trip to the GOG API — instead
+  of one task refreshing and the rest reusing its result. With `self.threads` chunks in flight, a single
+  expiry can trigger up to `self.threads` redundant secure-link fetches instead of one.
 
 - [ ] **Two types a consumer must be able to name are not exported — down from three.** The exported
   `ProductBundle` declares `pub product_files: Vec<DepotFile>` (`src/downloader/product_bundle.rs:8-10`);
@@ -547,12 +598,29 @@ now `src/client/auth/`:
   (`downloader/fs/error.rs:6-21`, `enum_variant_names`) — `ClientError` still isn't flagged for this
   despite still having a non-`Error`-suffixed variant among its six (`MaxRetriesReached`).
 - [ ] A handful of smaller one-offs, mostly untouched by this pass: an explicit-closure-for-cloning in
-  `depot/build_metadata.rs:38-46`, a `len_zero` at `downloader.rs:82`, two `redundant_closure`s
-  (`downloader.rs:115,200`), `io_other_error` at `util/hash.rs:66`, a redundant `&` in a `format!` call
+  `depot/build_metadata.rs:38-46`, a `len_zero` at `downloader.rs:82`, a `redundant_closure`
+  (`downloader.rs:115` — its former sibling at `:200` is gone, see the seventh-pass note below),
+  `io_other_error` at `util/hash.rs:66`, a redundant `&` in a `format!` call
   at `depot/depot_info.rs:44`, the pre-existing "redundant field names in struct initialization" at
   `downloader/download_unit.rs:33` (`offset: offset`, its new sibling at `client.rs:54` is called out
   above since it's part of this pass), and two `or_insert_with(Vec::new)` that should be `or_default()`
   (`downloader/downloadable_product.rs:50`, `downloader/product_bundle.rs:42`).
+
+A seventh-pass update (`31809e9`/`46b6ce3`, never logged in this section before now): the count dropped
+34→33. The only change was **−1** "redundant closure" at the old `downloader.rs:200` — `31809e9`'s
+switch to an `AsyncFnMut` callback replaced the sync closure clippy was flagging there with a body that
+directly awaits `decoder.write_all(&chunk)`, so the pattern clippy matched no longer exists. Nothing
+else moved by more than a line-number shift from the file growing.
+
+An eighth-pass update (`71d49a8`/`de52483`) brings the count 33→35, both new warnings inside the new
+`stream_chunk` retry loop (`src/client/client.rs:71-135`), mirroring warnings `fetch` already had:
+**+1** "redundant field names in struct initialization" at `client.rs:123` — `return
+Err(ClientError::HttpError { status, body: body })` in `stream_chunk`'s non-401 arm, the same pattern
+`fetch`'s arm at `:58` already has (now three total in the crate alongside `download_unit.rs:33`); **+1**
+"this expression creates a reference which is immediately dereferenced by the compiler" at `client.rs:127`
+— `stream_chunk`'s own `AuthError::TokenExpired` arm calls `self.auth_manager.refresh_auth(&self)`, the
+same needless-borrow `fetch` has at `:55`/`:62` (now three occurrences of that one, not two). `71d49a8`
+itself added no new warnings — `Downloader::verify`'s new early return is plain, unflagged code.
 
 Run `cargo clippy --fix --lib -p gogdl-lib -- -W clippy::all` for a current full list and to
 auto-apply most of these — but only against a clean tree; it will also try to "fix" whatever's
