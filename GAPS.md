@@ -141,6 +141,37 @@ from the eighth pass): the two pre-existing `client.rs` warnings inside `stream_
 lines to `:126`/`:130`, and the new code (`if attempts < 3 { continue; }` and the plain `NetworkError`
 arm) introduced none of its own.
 
+A tenth pass, same day (2026-08-31), covers `2100296` ("Check Disk Space Before Downloading"). This
+closes the "SHA-256 support is unused dead code" item below, but by deletion rather than by finally using
+the dead code: `DepotFile.sha256` (`src/depot/depot_info.rs`) and the whole `ChecksumAlgorithm` enum/
+`Sha256` variant (`src/downloader/util/hash.rs`) are gone outright, `compute_chunk_checksum` now always
+hashes MD5, and `sha2`/`cpufeatures` dropped out of `Cargo.lock`. The commit's main addition is a
+proactive free-space check: `Downloader::download` (`src/downloader/downloader.rs:66-78`) now sums
+`depot_file.size()` (a new method, `:35-41`, summing chunk sizes) over the files the size-verification
+step already found missing, calls the new `PathResolver::get_free_space` (`src/downloader/fs/
+path_resolver.rs:39-55`, finds the `sysinfo::Disks` entry whose mount point `canonical_base` starts with
+and reads `available_space()`), and fails the whole job up front with `DownloadError::NotEnoughFreeSpace`
+if the required total exceeds it, or `DownloadError::CouldNotResolveFreeSpace` if no matching disk is
+found at all. This also resolves the "one failed file allocation aborts the whole download" item below —
+not by changing that behavior, but because that behavior turns out to be correct on inspection: there is
+no point continuing a download that is already known to be short on disk space, whatever the specific
+cause of an allocation failure turns out to be, so failing the whole job fast is the right call, not a
+bug. See both items' entries below for the update. One new gap this pass introduces: `get_free_space`'s
+own error is discarded at its one call site (`Err(_) => return Err(DownloadError::CouldNotResolveFreeSpace)`,
+`:74`) — the new `FileSystemError::NoDiskMatchingPath(PathBuf)` variant it can return, which names exactly
+which `canonical_base` had no matching disk, never reaches the caller. This is the same "error detail
+discarded" shape this doc has flagged repeatedly elsewhere (see the "error detail invisible to consumers"
+and "dead refresh token vs. routine expiry" items), just on a path that has no other coverage yet — noted
+as its own new Low item below. `cargo clippy` moves 35→36: **+1** `manual_map` on the new
+`DepotFile::size` (`depot_info.rs:36-40`, the `if let Some(chunks) = &self.chunks { Some(...) } else {
+None }` shape should be `self.chunks.as_ref().map(...)`), **+1** `needless_return` on the new
+`get_free_space`'s `return Err(FileSystemError::NoDiskMatchingPath(...))` (`path_resolver.rs:49-51`,
+sitting inside a `match` arm where a bare expression would do), and **−1** `enum_variant_names` on
+`FileSystemError` — the Low-severity item below noting `FileSystemError` was flagged for "all variants
+have the same postfix: Error" no longer applies now that the new `NoDiskMatchingPath` variant breaks that
+uniformity, so the lint stopped firing on it (not a fix, just a side effect of adding a differently-named
+variant).
+
 ---
 
 ## High — correctness bugs
@@ -314,10 +345,19 @@ arm) introduced none of its own.
   (`src/client/client.rs:40-70`), the funnel for every JSON/API request, still has no arm for
   `ClientError::NetworkError` and falls straight to `Err(err) => return Err(err)` at `:64-66` on one.
 
-- [ ] **One failed file allocation aborts the whole download.**
-  `Downloader::download` (`src/downloader/downloader.rs:82-85`) fails the entire job the moment
-  `allocate_missing_files` reports *any* failure, instead of skipping/reporting just the offending
-  file(s) and continuing with the rest.
+- [x] **One failed file allocation aborts the whole download.** *Resolved as intended behavior, not a
+  bug — confirmed with the person driving this rebuild.* `Downloader::download`
+  (`src/downloader/downloader.rs:96-99`, shifted down by the new disk-space check below) still fails the
+  entire job the moment `allocate_missing_files` reports any failure, and that is the correct call: if
+  the disk cannot hold the files being allocated, there is no point continuing the download at all,
+  whatever the specific underlying cause of the allocation failure turns out to be. `2100296` ("Check
+  Disk Space Before Downloading") reinforces this rather than replacing it — a new proactive check right
+  before the allocation step (`:66-78`) sums the size of every file the size-verification step found
+  missing, compares it against `PathResolver::get_free_space()`'s reading of the target disk's
+  `available_space()`, and fails fast with `DownloadError::NotEnoughFreeSpace` (or
+  `DownloadError::CouldNotResolveFreeSpace` if no disk matches the target path) before allocation even
+  starts, so the common "not enough disk space" case now gets a specific, actionable error instead of the
+  generic `DownloadError::FileAllocationError` from the abort this item used to flag.
 
 - [x] **`Downloader::verify` discards its own result.** *Fixed in `71d49a8` ("Fail On Incomplete
   Download Chunks").* `Downloader::verify` (`src/downloader/downloader.rs:104-131`) now binds the
@@ -357,12 +397,13 @@ arm) introduced none of its own.
   once before the stale link gets replaced, and see the new concurrency item below for what happens when
   several chunks hit that 401 at once.
 
-- [ ] **Only per-chunk MD5 is verified; SHA-256 support is unused dead code.**
-  `DepotFile.sha256` (`src/depot/depot_info.rs:28`) is parsed from the API but never read anywhere.
-  `ChecksumAlgorithm::Sha256` (`src/downloader/util/hash.rs:15`) is fully implemented and marked
-  `#[allow(dead_code)]` at line 14 — i.e. the crate already contains working SHA-256 verification that
-  nothing calls. This looks like an unfinished feature (likely for GOG's whole-file-hash manifest
-  entries) rather than intentional dead code.
+- [x] **Only per-chunk MD5 is verified; SHA-256 support is unused dead code.** *Resolved by deletion in
+  `2100296` ("Check Disk Space Before Downloading"), not by finally using the dead code.* `DepotFile.sha256`
+  is gone from `src/depot/depot_info.rs`, and `ChecksumAlgorithm`/`ChecksumAlgorithm::Sha256` are gone
+  entirely from `src/downloader/util/hash.rs` — `compute_chunk_checksum` no longer takes an algorithm
+  parameter and always hashes MD5, and the `sha2`/`cpufeatures` dependencies dropped out of `Cargo.toml`/
+  `Cargo.lock` with it. Whether GOG's whole-file SHA-256 manifest entries turn out to matter later is now
+  a fresh feature decision rather than an unfinished one sitting half-wired in the tree.
 
 ## Medium — auth concurrency & lifetime
 
@@ -584,6 +625,15 @@ arm) introduced none of its own.
   by accident rather than intentional logging; remove it or route it through a real logging facade if
   the crate adopts one.
 
+- [ ] **The new free-space check discards its own error detail.** `Downloader::download`
+  (`src/downloader/downloader.rs:72-75`) matches `path_resolver.get_free_space()`'s `Err(_)` and always
+  returns the generic `DownloadError::CouldNotResolveFreeSpace`, throwing away the
+  `FileSystemError::NoDiskMatchingPath(PathBuf)` that names exactly which resolved base path had no
+  matching disk (`src/downloader/fs/path_resolver.rs:39-55`). Same "detail thrown away at the call site"
+  shape this doc has flagged elsewhere (see the error-detail items in the auth/client sections) — carry
+  the path (or the whole `FileSystemError`) into `DownloadError::CouldNotResolveFreeSpace` instead of a
+  unit variant.
+
 `cargo clippy --lib -- -W clippy::all` reports 34 warnings on the current (2026-08-31, sixth pass) staged
 tree (34 at the still-uncommitted `403` version reviewed in the previous pass, 33 at `3ed4dd0`, 32 at
 `43c1d85`, 31 at `c7d39b9`, 33 at `v0.0.4-restart`/`32e8786`, 30 at `a962ef7`, 34 at `377314c`, 37 at
@@ -615,9 +665,12 @@ now `src/client/auth/`:
   unchanged since at least `a962ef7`, both confined to the downloader (untouched by this pass).
 - [ ] Module inception, still 5: `mod auth` (now nested as `client::auth::auth`, same shape as before
   under a new parent), `mod client`, `mod downloader`, `mod gogdl`, `mod secure_links`.
-- [ ] 1 "all variants have the same postfix: `Error`" on `FileSystemError`
-  (`downloader/fs/error.rs:6-21`, `enum_variant_names`) — `ClientError` still isn't flagged for this
-  despite still having a non-`Error`-suffixed variant among its six (`MaxRetriesReached`).
+- [x] 1 "all variants have the same postfix: `Error`" on `FileSystemError`
+  (`downloader/fs/error.rs:6-21`, `enum_variant_names`) — *no longer fires, as of the tenth pass;* the new
+  `NoDiskMatchingPath` variant `2100296` added doesn't end in `Error`, so the enum's variants no longer
+  share a uniform postfix and the lint stopped matching. Not a fix, just a side effect — `ClientError`
+  still isn't flagged for the same reason despite also having a non-`Error`-suffixed variant among its
+  six (`MaxRetriesReached`), so this was never a real signal to begin with.
 - [ ] A handful of smaller one-offs, mostly untouched by this pass: an explicit-closure-for-cloning in
   `depot/build_metadata.rs:38-46`, a `len_zero` at `downloader.rs:82`, a `redundant_closure`
   (`downloader.rs:115` — its former sibling at `:200` is gone, see the seventh-pass note below),
@@ -648,6 +701,17 @@ A ninth-pass update (`e4a8560`) leaves the count at 35 — unchanged. `stream_ch
 new `ClientError::NetworkError` arm, which pushed the two warnings logged above down to `client.rs:126`
 and `:130` respectively; neither new branch introduced a warning of its own (`if attempts < 3 { continue;
 }` and `return Err(ClientError::NetworkError(err))` are both plain, unflagged code).
+
+A tenth-pass update (`2100296`) moves the count 35→36. **−1** `enum_variant_names` on `FileSystemError`
+— gone, per the updated bullet above, a side effect of the new `NoDiskMatchingPath` variant rather than a
+fix. **+1** `manual_map` on the new `DepotFile::size` (`depot/depot_info.rs:36-40`) — its `if let
+Some(chunks) = &self.chunks { Some(...) } else { None }` should be
+`self.chunks.as_ref().map(|chunks| ...)`. **+1** `needless_return` on the new
+`PathResolver::get_free_space`'s `return Err(FileSystemError::NoDiskMatchingPath(...))`
+(`downloader/fs/path_resolver.rs:49-51`) — sitting inside a `match` arm where a bare expression would do,
+same lint category as the three other `needless_return`s already in the crate (`client.rs:175,178`,
+`downloader.rs:451`, none of which this doc had previously called out by name — folded into "a handful of
+smaller one-offs" above until now). Deleting `ChecksumAlgorithm`/`sha2` introduced no warnings of its own.
 
 Run `cargo clippy --fix --lib -p gogdl-lib -- -W clippy::all` for a current full list and to
 auto-apply most of these — but only against a clean tree; it will also try to "fix" whatever's
