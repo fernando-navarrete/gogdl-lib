@@ -124,6 +124,23 @@ below — but note both fixes are scoped to 401/auth-shaped failures only; see t
 for transient network failures" item for what's still not covered, and the new concurrency item this pass
 added for a thundering-herd gap the fix introduces under concurrent chunk downloads.
 
+A ninth pass, same day (2026-08-31), covers `e4a8560` ("Retry transient network errors in chunk
+streaming"), the very item the eighth pass said was still open. `HttpClient::stream_chunk`
+(`src/client/client.rs:71-144`, grew from `71-135`) now retries its two remaining unhandled failure
+modes too: the non-401 branch of the `HttpError` arm (`:122-127`, a `5xx` or other CDN error) now
+`continue`s while `attempts < 3` instead of returning immediately, and a new
+`Err(ClientError::NetworkError(err))` arm (`:132-137`, a dropped connection or timeout inside
+`stream_chunk_inner`'s `bytes_stream()`) does the same. Both give up and propagate
+(`ClientError::HttpError`/`ClientError::NetworkError` respectively) only once `attempts` has reached 3,
+same as the pre-existing 401/`TokenExpired` arms. This closes the "no retry/backoff for transient
+network failures during download" item below for the chunk-transfer path specifically — see that item's
+update for what's still uncovered (no backoff/delay between attempts, and `fetch`'s separate retry loop
+for JSON/API calls still doesn't handle `NetworkError` either) — and removes the stale caveat from the
+"bypassed the funnel" item below. `cargo clippy` still reports 35 warnings after this change (unchanged
+from the eighth pass): the two pre-existing `client.rs` warnings inside `stream_chunk` shifted down by 9
+lines to `:126`/`:130`, and the new code (`if attempts < 3 { continue; }` and the plain `NetworkError`
+arm) introduced none of its own.
+
 ---
 
 ## High — correctness bugs
@@ -281,19 +298,21 @@ added for a thundering-herd gap the fix introduces under concurrent chunk downlo
 
 ## High — downloader reliability
 
-- [ ] **No retry/backoff for transient network failures during download.** *Narrowed by `de52483`
-  ("Handle secure link retries in HTTP client"), not fixed.* `HttpClient::stream_chunk`
-  (`src/client/client.rs:71-135`) now loops up to 3 attempts, but the loop only re-enters on
-  `ClientError::HttpError` with status `401` (secure link invalidated and re-fetched) or
-  `ClientError::AuthError(AuthError::TokenExpired)` (token refreshed) — every other error
-  (`ClientError::NetworkError` from a dropped connection/timeout inside `stream_chunk_inner`'s
-  `bytes_stream()`, or any non-401 `HttpError` such as a `5xx` from the CDN) still falls straight to
-  `Err(err) => return Err(err)` at `:129-131` with no retry at all. A single timeout, connection reset,
-  or 5xx on any one chunk still aborts the *entire* multi-gigabyte download via
-  `results.into_iter().collect::<Result<(), DownloadError>>()?` in `download_files`
-  (`src/downloader/downloader.rs:164-217`) — this item is about that general case, which remains
-  completely unaddressed; `grep -ri retry src/` now matches `client.rs`, but only for the auth-shaped
-  paths described above.
+- [x] **No retry/backoff for transient network failures during download.** *Fixed for the chunk-transfer
+  path in `e4a8560` ("Retry transient network errors in chunk streaming"), on top of `de52483`'s
+  auth-shaped retries.* `HttpClient::stream_chunk` (`src/client/client.rs:71-144`) now retries all four
+  failure shapes it can hit, not just the two auth-shaped ones: a CDN 401 (invalidate + re-fetch secure
+  links), `AuthError::TokenExpired` (refresh), a non-401 `HttpError` such as a CDN `5xx` (`:122-127`,
+  `if attempts < 3 { continue; }`), and `ClientError::NetworkError` from a dropped connection/timeout
+  inside `stream_chunk_inner`'s `bytes_stream()` (`:132-137`, same pattern). A single timeout, connection
+  reset, or 5xx on any one chunk no longer aborts the entire multi-gigabyte download outright — it
+  retries up to 3 attempts before `download_files`'s
+  `results.into_iter().collect::<Result<(), DownloadError>>()?` (`src/downloader/downloader.rs:164-217`)
+  ever sees the error. Two things are still not covered: there's no backoff/delay between attempts (each
+  retry is an immediate `continue`, so a sustained outage burns through all 3 attempts near-instantly
+  rather than spacing them out), and this fix is scoped to `stream_chunk` only — `fetch`
+  (`src/client/client.rs:40-70`), the funnel for every JSON/API request, still has no arm for
+  `ClientError::NetworkError` and falls straight to `Err(err) => return Err(err)` at `:64-66` on one.
 
 - [ ] **One failed file allocation aborts the whole download.**
   `Downloader::download` (`src/downloader/downloader.rs:82-85`) fails the entire job the moment
@@ -330,7 +349,7 @@ added for a thundering-herd gap the fix introduces under concurrent chunk downlo
   evicts an entry on its own, and the fetched `CdnUrlParams`'s `expires_at`/`ttl` fields
   (`src/secure_links/secure_links.rs:11,13`) are still parsed but never consulted proactively — but a
   link that expires mid-download is no longer a dead end. `HttpClient::stream_chunk`
-  (`src/client/client.rs:71-135`) now reacts to a 401 from the CDN itself by calling the new
+  (`src/client/client.rs:71-144`) now reacts to a 401 from the CDN itself by calling the new
   `SecureLinksManager::invalidate_secure_links` (`:64-67`, removes the cache entry) and re-fetching
   before retrying, so the crate finally retries on a CDN-side 401, not just a GOG-API one. What's still
   missing is purely proactive: nothing checks `expires_at`/`ttl` ahead of a request the way a `is_valid()`
@@ -442,16 +461,18 @@ added for a thundering-herd gap the fix introduces under concurrent chunk downlo
   (`continue`) if fewer than 3 formatters are present instead of falling back to whatever's available.
 
 - [x] **`HttpClient::stream_chunk` bypassed the `fetch`/`inner_fetch` funnel entirely.** *Given its own
-  parallel retry loop in `de52483` ("Handle secure link retries in HTTP client"), rather than being
-  rewritten to go through the funnel.* `stream_chunk` (`src/client/client.rs:71-135`) now retries up to 3
-  attempts and handles both a CDN-side 401 (invalidate + re-fetch secure links, see the fixed item above)
-  and `AuthError::TokenExpired` (calls `refresh_auth`, same as `fetch`'s arm at `:61-63`) — so the method
-  that moves the actual multi-gigabyte payload is no longer a dead end for auth/secure-link failures. It
-  still isn't unified with `fetch`/`inner_fetch`: the retry `match` is hand-copied rather than shared (both
-  now independently contain a `HttpError{status,body}` arm and a `TokenExpired` arm — a future change to
-  one's retry logic won't propagate to the other without someone remembering to update both), and it still
-  has no retry at all for the transient-network-failure case — see that item above, now updated to reflect
-  what this pass actually covers.
+  parallel retry loop across `de52483` ("Handle secure link retries in HTTP client") and `e4a8560`
+  ("Retry transient network errors in chunk streaming"), rather than being rewritten to go through the
+  funnel.* `stream_chunk` (`src/client/client.rs:71-144`) now retries up to 3 attempts and handles a
+  CDN-side 401 (invalidate + re-fetch secure links, see the fixed item above), `AuthError::TokenExpired`
+  (calls `refresh_auth`, same as `fetch`'s arm at `:61-63`), a non-401 `HttpError`, and
+  `ClientError::NetworkError` — so the method that moves the actual multi-gigabyte payload is no longer a
+  dead end for any of its failure modes (see the "no retry/backoff for transient network failures" item
+  above for the one remaining gap, a lack of backoff between attempts). It still isn't unified with
+  `fetch`/`inner_fetch`: the retry `match` is hand-copied rather than shared (both now independently
+  contain a `HttpError{status,body}` arm and a `TokenExpired` arm — a future change to one's retry logic
+  won't propagate to the other without someone remembering to update both), and `fetch` itself still has
+  no `NetworkError` arm, so the two loops have now drifted further apart in what they cover, not closer.
 
 - [ ] **Secure-link invalidation on a 401 isn't collapsed across concurrent chunk downloads — the same
   thundering-herd shape already flagged for auth refresh, now reachable on the download path too.**
@@ -621,6 +642,12 @@ Err(ClientError::HttpError { status, body: body })` in `stream_chunk`'s non-401 
 — `stream_chunk`'s own `AuthError::TokenExpired` arm calls `self.auth_manager.refresh_auth(&self)`, the
 same needless-borrow `fetch` has at `:55`/`:62` (now three occurrences of that one, not two). `71d49a8`
 itself added no new warnings — `Downloader::verify`'s new early return is plain, unflagged code.
+
+A ninth-pass update (`e4a8560`) leaves the count at 35 — unchanged. `stream_chunk` grew by 9 lines
+(`71-135`→`71-144`) adding the `attempts < 3` retry branch on the non-401 `HttpError` arm and the whole
+new `ClientError::NetworkError` arm, which pushed the two warnings logged above down to `client.rs:126`
+and `:130` respectively; neither new branch introduced a warning of its own (`if attempts < 3 { continue;
+}` and `return Err(ClientError::NetworkError(err))` are both plain, unflagged code).
 
 Run `cargo clippy --fix --lib -p gogdl-lib -- -W clippy::all` for a current full list and to
 auto-apply most of these — but only against a clean tree; it will also try to "fix" whatever's
