@@ -68,6 +68,16 @@ impl AuthManager {
         Ok(())
     }
     pub async fn refresh_auth(&self, client: &HttpClient) -> Result<(), AuthError> {
+        // Snapshot before queueing on refresh_lock, so we can tell whether another
+        // waiter refreshed while we waited.
+        let stale_token = {
+            let inner = self.inner.lock().await;
+            match inner.tokens.as_ref() {
+                Some(tokens) => tokens.access_token.clone(),
+                None => return Err(AuthError::NotAuthenticated),
+            }
+        };
+
         // Lock to prevent concurrent refresh attempts
         let _lock = self.refresh_lock.lock().await;
         let tokens = {
@@ -77,6 +87,12 @@ impl AuthManager {
             }
             tokens.unwrap()
         };
+
+        // Another waiter already refreshed while we were queued — reuse its result.
+        if tokens.access_token != stale_token {
+            return Ok(());
+        }
+
         let refresh_token = tokens.refresh_token;
         let url = format!("{REFRESH_URL}&refresh_token={refresh_token}");
 

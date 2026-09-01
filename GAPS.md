@@ -412,30 +412,30 @@ variant).
   50-64`) and `refresh_auth` (`:73-96`) each take their tokens/refresh-token out of the guard, drop the
   lock, and only then await the request via `client.fetch_no_retry(...)`.
 
-- [ ] **`refresh_lock` serializes refreshes but doesn't collapse them — and this is now the common-case
-  path, not a corner case.** `refresh_auth` (`src/client/auth/auth_manager.rs:73-96`) still takes
-  `refresh_lock` (`:75`) and then unconditionally performs a refresh with no early-return if another
-  waiter already refreshed — unchanged. Reachability changed significantly this pass: now that local
-  expiry itself drives a refresh-and-retry (see the fixed High-severity item above), *every* concurrent
-  in-flight request issued right as the access token crosses its expiry boundary — the realistic,
-  frequent scenario, not just a simultaneous-401 corner case — will race into `refresh_auth` at once. If
-  N requests are in flight when the token expires, N of them take `refresh_lock` in turn and each
-  performs its own full network round-trip refresh, rotating the refresh token N times in a row (the
-  GOG API may itself only tolerate one live refresh token at a time, in which case requests 2..N could
-  each invalidate the token the previous one just obtained). This is no longer a theoretical
-  concurrency nit — it's the first thing worth testing under load now that the rest of the retry path
-  works.
+- [x] **`refresh_lock` serializes refreshes but doesn't collapse them — and this is now the common-case
+  path, not a corner case.** *Fixed:* `refresh_auth` (`src/client/auth/auth_manager.rs:70-108`) now
+  snapshots the current `access_token` *before* queueing on `refresh_lock`. Once the lock is acquired it
+  re-reads the stored token and compares it against the pre-lock snapshot; if they differ, another
+  waiter already completed a refresh while this call was queued, so it returns `Ok(())` immediately
+  instead of performing a second network round-trip. Under a burst of N concurrent requests hitting
+  expiry at once, only the first waiter actually calls `REFRESH_URL` and fires
+  `on_token_refreshed`; the rest short-circuit and let the caller retry with the token the first waiter
+  installed. Token-identity comparison was chosen over re-checking `is_valid()` after the lock because
+  the latter would also swallow a genuine 401-driven refresh request for a token that is still locally
+  valid but was rejected/revoked server-side — that case still needs to reach the network. The one
+  remaining non-collapsed case (a 401 arriving after an unrelated refresh already landed) still performs
+  exactly one redundant refresh, which is rare and bounded.
 
-- [ ] **The observer callback runs while the `inner` mutex is held.**
-  `observer.on_token_refreshed(...)` is invoked inside the `let mut inner = self.inner.lock().await`
-  block (`src/client/auth/auth_manager.rs:88-93`), unchanged since `b87d8dd` beyond the file move. Same
-  reachability upgrade as `refresh_lock` above — a slow or re-entrant `TokenObserver` (now genuinely
-  implementable externally, per the fixed export item above) stalling every in-flight authed request at
-  once is a real, common-case risk now, not a narrow theoretical one.
+- [x] **The observer callback runs while the `inner` mutex is held.** *Fixed in `51b7a53` ("Avoid
+  Holding Lock During Token Refresh Callback").* `refresh_auth` (`src/client/auth/auth_manager.rs:
+  110-121`) now clones the observer out of the guard, `drop(inner)`s it, and only then calls
+  `observer.on_token_refreshed(...)` outside the lock. A slow or re-entrant `TokenObserver` can no
+  longer stall other in-flight authed requests waiting on `inner`.
 
-- [ ] **`is_valid()` has no clock-skew / in-flight margin.**
-  `src/client/auth/auth.rs:32-35` accepts a token that expires one second from now, which will then 401
-  mid-request. Subtract a margin (30–60s) so a token about to expire is refreshed up front.
+- [x] **`is_valid()` has no clock-skew / in-flight margin.** *Fixed in `d679048` ("Add token observer
+  removal and expiry buffer").* `src/client/auth/auth.rs:32-35` now subtracts a 60s buffer
+  (`t > chrono::Utc::now().timestamp() - 60`), so a token within 60s of expiry is treated as already
+  invalid and refreshed up front instead of being handed out and 401ing mid-request.
 
 - [x] **`AuthManager::set_auth` is still unreachable, but for a narrower reason now.** *Resolved by
   removal.* The method no longer exists — `grep -n 'fn set_auth' src/` is empty, and the current
@@ -444,11 +444,12 @@ variant).
   cleanup or a side effect of the rewrite, the dead/unreachable method this item flagged is gone either
   way.
 
-- [ ] **A registered `TokenObserver` can never be replaced with "none".**
-  `set_token_observer` (`src/client/auth/auth_manager.rs:29-31`) only ever sets `Some`, so a consumer
-  cannot detach on logout/teardown; the `Arc<dyn TokenObserver>` lives as long as the `AuthManager`. Now
-  practically reachable again — `TokenObserver`/`Auth` are both exported (see above), so this is a real,
-  live gap for a consumer to hit, not a moot one.
+- [x] **A registered `TokenObserver` can never be replaced with "none".** *Fixed in `d679048` ("Add
+  token observer removal and expiry buffer").* `AuthManager::remove_token_observer`
+  (`src/client/auth/auth_manager.rs:40-42`) sets `token_observer` back to `None`, and the method is
+  wired all the way out through `HttpClient::remove_token_observer` (`src/client/client.rs:159-161`) and
+  `GogDl::remove_token_observer` (`src/gogdl/gogdl.rs:129-131`), so a consumer can now detach on
+  logout/teardown.
 
 ## Medium — duplication & consistency
 
