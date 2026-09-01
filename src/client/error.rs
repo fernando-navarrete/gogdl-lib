@@ -30,4 +30,7 @@ pub enum ClientError {
 
     #[error("Auth error: {0}")]
     AuthError(#[from] AuthError),
+
+    #[error("Secure links error: {inner}")]
+    SecureLinksError { inner: String },
 }

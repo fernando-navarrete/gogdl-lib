@@ -6,10 +6,14 @@ use futures_util::StreamExt;
 use reqwest::Client;
 use serde::de::DeserializeOwned;
 
-use crate::client::{
-    TokenObserver,
-    auth::{AuthError, AuthManager},
-    error::ClientError,
+use crate::{
+    client::{
+        TokenObserver,
+        auth::{AuthError, AuthManager},
+        error::ClientError,
+    },
+    downloader::FileType,
+    secure_links::SecureLinksManager,
 };
 
 #[derive(Clone)]
@@ -50,6 +54,71 @@ impl HttpClient {
                         if require_auth {
                             self.auth_manager.refresh_auth(&self).await?;
                         }
+                    } else {
+                        return Err(ClientError::HttpError { status, body: body });
+                    }
+                }
+                Err(ClientError::AuthError(AuthError::TokenExpired)) => {
+                    self.auth_manager.refresh_auth(&self).await?;
+                }
+                Err(err) => {
+                    return Err(err);
+                }
+            }
+        }
+        Err(ClientError::MaxRetriesReached)
+    }
+    pub async fn stream_chunk(
+        &self,
+        secure_links_manager: &SecureLinksManager,
+        game_id: &str,
+        file_type: FileType,
+        chunk_hash: &str,
+        mut f: impl AsyncFnMut(Bytes) -> std::io::Result<()>,
+    ) -> Result<(), ClientError> {
+        let mut attempts = 0;
+
+        while attempts < 3 {
+            attempts += 1;
+
+            let links = match secure_links_manager.get_secure_links(game_id).await {
+                Ok(links) => links,
+                Err(err) => {
+                    return Err(ClientError::SecureLinksError {
+                        inner: err.to_string(),
+                    });
+                }
+            };
+
+            let url_format = match links.get_highest_priority_url() {
+                Ok(url_format) => url_format,
+                Err(err) => {
+                    return Err(ClientError::SecureLinksError {
+                        inner: err.to_string(),
+                    });
+                }
+            };
+
+            let url = match file_type {
+                FileType::DepotFile => url_format.parse_url(chunk_hash),
+                FileType::Other => url_format.parse_url_redist(chunk_hash),
+            };
+
+            match self.stream_chunk_inner(&url, &mut f).await {
+                Ok(result) => return Ok(result),
+                Err(ClientError::HttpError { status, body }) => {
+                    let _ = body;
+                    if status == reqwest::StatusCode::UNAUTHORIZED {
+                        secure_links_manager.invalidate_secure_links(game_id).await;
+                        match secure_links_manager.get_secure_links(game_id).await {
+                            Ok(_) => {}
+                            Err(err) => {
+                                return Err(ClientError::SecureLinksError {
+                                    inner: err.to_string(),
+                                });
+                            }
+                        }
+                        continue;
                     } else {
                         return Err(ClientError::HttpError { status, body: body });
                     }
@@ -117,10 +186,10 @@ impl HttpClient {
         let result: T = serde_json::from_str(&response_text)?;
         Ok(result)
     }
-    pub async fn stream_chunk(
+    pub async fn stream_chunk_inner(
         &self,
         url: &str,
-        mut f: impl AsyncFnMut(Bytes) -> std::io::Result<()>,
+        f: &mut impl AsyncFnMut(Bytes) -> std::io::Result<()>,
     ) -> Result<(), ClientError> {
         let url = reqwest::Url::parse(url)?;
         let request = self.client.get(url);

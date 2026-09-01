@@ -10,6 +10,7 @@ mod util;
 
 pub use download_manager::DownloadManager;
 pub use download_unit::DownloadUnit;
+pub use download_unit::FileType;
 pub use downloadable_product::DownloadableProduct;
 pub use error::DownloadError;
 pub use fs::PathResolver;

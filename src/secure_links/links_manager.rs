@@ -61,4 +61,8 @@ impl SecureLinksManager {
 
         Ok(secure_links)
     }
+    pub async fn invalidate_secure_links(&self, game_id: &str) {
+        let mut lock = self.inner.lock().await;
+        lock.links_cache.remove(game_id);
+    }
 }

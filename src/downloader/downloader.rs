@@ -10,7 +10,6 @@ use crate::{
     depot::DepotFile,
     downloader::{
         DownloadError, DownloadEvent, DownloadUnit, PathResolver, ProductBundle,
-        download_unit::FileType,
         progress_reporting::{
             DownloadStageEvent, FileAllocationEvent, FileSizeVerificationEvent, VerificationEvent,
         },
@@ -168,27 +167,7 @@ impl Downloader {
                 tx.send(DownloadEvent::Downloading).ok();
                 let tx = tx.clone();
                 async move {
-                    let secure_link = match self.secure_links.get_secure_links(&product_id).await
-                    {
-                        Ok(link) => link,
-                        Err(e) => {
-                            return Err(DownloadError::SecureLinksError(e));
-                        }
-                    };
-                    let highest_priority_link = match secure_link.get_highest_priority_url() {
-                        Ok(link) => link,
-                        Err(e) => {
-                            return Err(DownloadError::SecureLinksError(e));
-                        }
-                    };
-                    let url = match download_unit.file_type {
-                        FileType::DepotFile => {
-                            highest_priority_link.parse_url(&download_unit.compressed_md5)
-                        }
-                        FileType::Other => {
-                            highest_priority_link.parse_url_redist(&download_unit.compressed_md5)
-                        }
-                    };
+                    let secure_links_manager = &self.secure_links.clone();
 
                     let file = path_resolver.open_file(&download_unit.path, true).await?;
 
@@ -201,7 +180,7 @@ impl Downloader {
                     let mut decoder = ZlibDecoder::new(sink);
 
                     self.client
-                        .stream_chunk(&url, async |chunk| {
+                        .stream_chunk(secure_links_manager, &product_id, download_unit.file_type, &download_unit.compressed_md5, async |chunk| {
                             tx.send(DownloadEvent::Progress(chunk.len())).ok();
                             decoder.write_all(&chunk).await
                         })
