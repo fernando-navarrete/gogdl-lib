@@ -95,6 +95,17 @@ line) — written up as its own new Low item below.
 No automated tests exist yet (`grep -r '#\[test\]' src/` is empty), so treat every fix here as
 untested until you add coverage for it.
 
+A seventh pass, same day (2026-08-31), covers two more commits on top of `5b7ca2f`: `31809e9`
+("Use AsyncWrite for Streaming Downloads") and `46b6ce3` ("Use Async File Operations for
+Downloads"). Together they close the "Blocking syscalls run directly inside async tasks" High-severity
+item below in full — see that item for detail. `31809e9` switches the whole chunk-decompress-and-write
+path from sync `flate2`/`std::io::Write` to `async-compression`'s `tokio::write::ZlibDecoder` plus a
+`tokio::io::BufWriter`, and makes `HttpClient::stream_chunk`'s callback `AsyncFnMut` so the decoder can
+be awaited from inside the streaming loop; `46b6ce3` follows up by converting `OffsetWriter` to hold a
+`tokio::fs::File` (driven via `AsyncWrite`, not `FileExt::write_at`) and `PathResolver::open_file` to
+`tokio::fs::OpenOptions`, removing the crate's last two direct `std::fs`/blocking-syscall call sites
+on the download write path.
+
 ---
 
 ## High — correctness bugs
@@ -268,14 +279,21 @@ untested until you add coverage for it.
   regardless of what verification found. A caller that isn't listening on the `tx` event channel has
   no way to learn verification failed.
 
-- [ ] **Blocking syscalls run directly inside async tasks.**
-  `PathResolver::open_file` (`src/downloader/fs/path_resolver.rs:113-123`) uses `std::fs::OpenOptions`
-  synchronously instead of `tokio::fs`, unlike `allocate_file` right above it which correctly uses the
-  async version. Worse, every downloaded chunk is written via `OffsetWriter::write` →
-  `File::write_at` (`src/downloader/util/offset_writer.rs:41`), a blocking positioned write called
-  straight from the `stream_chunk` async loop (`src/downloader/downloader.rs:193-198`) — never wrapped
-  in `spawn_blocking`. With up to 12 concurrent downloads (`Downloader::new`'s thread clamp) this can
-  stall tokio's worker threads under load.
+- [x] **Blocking syscalls run directly inside async tasks.** *Fixed across `31809e9` ("Use AsyncWrite
+  for Streaming Downloads") and `46b6ce3` ("Use Async File Operations for Downloads").*
+  `PathResolver::open_file` (`src/downloader/fs/path_resolver.rs:112-123`) now opens via
+  `tokio::fs::OpenOptions::new().write(write).open(&path).await` instead of the synchronous
+  `std::fs::OpenOptions`, matching `allocate_file` right above it. The chunk write path no longer calls
+  a blocking positioned write at all: `OffsetWriter` (`src/downloader/util/offset_writer.rs`) now holds
+  a `tokio::fs::File` and implements `AsyncWrite` by polling that file directly (`poll_write` at
+  `:29-58`), replacing the old `FileExt::write_at` call; it's wrapped in a `tokio::io::BufWriter` and
+  driven from `stream_chunk`'s callback, which `31809e9` changed from `FnMut` to `AsyncFnMut` so
+  `decoder.write_all(&chunk).await` (`src/downloader/downloader.rs:196-198`) can actually yield instead
+  of blocking the worker thread. Neither fix uses `spawn_blocking` — they replace the blocking calls
+  with real async I/O instead, which is a cleaner fix than wrapping them. `OffsetWriter::new` itself now
+  takes a `tokio::fs::File` directly rather than converting one via `from_std`. `grep -rn 'std::fs::\|
+  write_at' src/downloader/` is empty — no blocking filesystem call remains anywhere on the download
+  write path.
 
 - [ ] **Secure links are cached forever with no expiry handling.**
   `SecureLinksManager::links_cache` (`src/secure_links/links_manager.rs:21,44-56`) never evicts an
