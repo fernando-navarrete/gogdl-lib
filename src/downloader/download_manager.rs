@@ -88,4 +88,19 @@ impl DownloadManager {
         downloader.download(bundles, path, tx).await?;
         Ok(())
     }
+    pub async fn repair_game(
+        &self,
+        bundles: Vec<ProductBundle>,
+        path: &str,
+        tx: mpsc::UnboundedSender<DownloadStageEvent>,
+    ) -> Result<(), DownloadError> {
+        let links = {
+            let inner = self.inner.lock().await;
+            let links = inner.secure_links.clone();
+            links
+        };
+        let downloader = Downloader::new(self.client.clone(), links);
+        downloader.repair(bundles, path, tx).await?;
+        Ok(())
+    }
 }

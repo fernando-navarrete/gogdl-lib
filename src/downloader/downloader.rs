@@ -36,6 +36,106 @@ impl Downloader {
             threads,
         }
     }
+    pub async fn repair(
+        &self,
+        bundles: Vec<ProductBundle>,
+        path: &str,
+        tx: mpsc::UnboundedSender<DownloadStageEvent>,
+    ) -> Result<(), DownloadError> {
+        let path_resolver = Arc::new(PathResolver::new(PathBuf::from(path)).await?);
+
+        let depot_files = bundles
+            .iter()
+            .flat_map(|bundle| bundle.product_files.clone())
+            .collect::<Vec<DepotFile>>();
+
+        // File size verification step
+        let (missing_files_tx, mut missing_files_rx) = mpsc::unbounded_channel();
+        let missing_files_fut =
+            self.verify_files_size(&depot_files, &path_resolver, missing_files_tx);
+        let tx_stage1 = tx.clone();
+        let progress_future = async move {
+            while let Some(event) = missing_files_rx.recv().await {
+                tx_stage1
+                    .send(DownloadStageEvent::FileSizeVerificationStage(event))
+                    .ok();
+            }
+        };
+        let (missing_files, _) = tokio::join!(missing_files_fut, progress_future);
+        drop(depot_files);
+
+        // Check if there is space available on disk
+        let required_space = missing_files
+            .iter()
+            .map(|depot_file| depot_file.size().unwrap_or(0))
+            .sum::<u64>();
+
+        let available_space = match path_resolver.get_free_space() {
+            Ok(space) => space,
+            Err(_) => return Err(DownloadError::CouldNotResolveFreeSpace),
+        };
+        if required_space > available_space {
+            return Err(DownloadError::NotEnoughFreeSpace);
+        }
+
+        // File allocation step
+        let (files_allocation_tx, mut files_allocation_rx) = mpsc::unbounded_channel();
+        let files_allocation_fut =
+            self.allocate_missing_files(&missing_files, &path_resolver, files_allocation_tx);
+        let tx_stage2 = tx.clone();
+        let progress_future = async move {
+            while let Some(event) = files_allocation_rx.recv().await {
+                tx_stage2
+                    .send(DownloadStageEvent::FileAllocationStage(event))
+                    .ok();
+            }
+        };
+        let (files_allocation_error, _) = tokio::join!(files_allocation_fut, progress_future);
+        drop(missing_files);
+
+        // Check if all files were allocated successfully, if not, we may have run out of disk space
+        if files_allocation_error.len() != 0 {
+            tx.send(DownloadStageEvent::FileAllocationError()).ok();
+            return Err(DownloadError::FileAllocationError);
+        }
+        drop(files_allocation_error);
+
+        let download_units = DownloadUnit::from_product_bundles(&bundles);
+        let (verification_tx, mut verification_rx) = mpsc::unbounded_channel();
+        let missing_units_fut =
+            self.verify_download_units(&download_units, &path_resolver, verification_tx);
+        let tx_stage3 = tx.clone();
+        let progress_future = async move {
+            while let Some(event) = verification_rx.recv().await {
+                tx_stage3
+                    .send(DownloadStageEvent::VerificationStage(event))
+                    .ok();
+            }
+        };
+        let (missing_units, _) = tokio::join!(missing_units_fut, progress_future);
+        drop(download_units);
+
+        if missing_units.len() == 0 {
+            // All units verified, no missing chunks
+            return Ok(());
+        }
+
+        // Download step
+        let (files_download_tx, mut files_download_rx) = mpsc::unbounded_channel();
+        let downloader_future =
+            self.download_files(missing_units, &path_resolver, files_download_tx);
+        let tx_stage4 = tx.clone();
+        let progress_future = async move {
+            while let Some(event) = files_download_rx.recv().await {
+                tx_stage4
+                    .send(DownloadStageEvent::DownloadStage(event))
+                    .ok();
+            }
+        };
+        let (res, _) = tokio::join!(downloader_future, progress_future);
+        res?;
+        Ok(())
+    }
     pub async fn download(
         &self,
         bundles: Vec<ProductBundle>,
@@ -102,7 +202,9 @@ impl Downloader {
         // Download step
 
         let (files_download_tx, mut files_download_rx) = mpsc::unbounded_channel();
-        let downloader_future = self.download_files(&bundles, &path_resolver, files_download_tx);
+        let download_units = DownloadUnit::from_product_bundles(&bundles);
+        let downloader_future =
+            self.download_files(download_units, &path_resolver, files_download_tx);
         let tx_stage3 = tx.clone();
         let progress_future = async move {
             while let Some(event) = files_download_rx.recv().await {
@@ -123,11 +225,7 @@ impl Downloader {
     ) -> Result<(), DownloadError> {
         let path_resolver = Arc::new(PathResolver::new(PathBuf::from(path)).await?);
 
-        let download_units = bundles
-            .iter()
-            .flat_map(|bundle| bundle.product_files.clone())
-            .flat_map(|depot_file| DownloadUnit::from_depot_file(depot_file))
-            .collect::<Vec<DownloadUnit>>();
+        let download_units = DownloadUnit::from_product_bundles(&bundles);
 
         let missing_units = self
             .verify_download_units(&download_units, &path_resolver, tx)
@@ -146,37 +244,15 @@ impl Downloader {
 
     async fn download_files(
         &self,
-        bundles: &[ProductBundle],
+        download_units: Vec<DownloadUnit>,
         path_resolver: &PathResolver,
         tx: mpsc::UnboundedSender<DownloadEvent>,
     ) -> Result<(), DownloadError> {
         tx.send(DownloadEvent::Preparing).ok();
-        let download_units: Vec<(String, DownloadUnit)> = bundles
-            .iter()
-            .flat_map(|bundle| {
-                bundle.product_files.iter().flat_map(move |depot_file| {
-                    DownloadUnit::from_depot_file(depot_file.clone())
-                        .into_iter()
-                        .map(|download_unit| (bundle.product_id.clone(), download_unit))
-                })
-            })
-            .collect::<Vec<(String, DownloadUnit)>>();
-
-        // Pre-fetch secure links for all bundles so they get stored in cache
-        stream::iter(bundles)
-            .map(|bundle| {
-                let product_id = bundle.product_id.clone();
-                async move {
-                    let _ = self.secure_links.get_secure_links(&product_id).await;
-                }
-            })
-            .buffer_unordered(self.threads)
-            .collect::<Vec<()>>()
-            .await;
 
         tx.send(DownloadEvent::Prepared).ok();
         let results: Vec<Result<(), DownloadError>> = stream::iter(download_units)
-            .map(|(product_id, download_unit)| {
+            .map(|download_unit| {
                 let path_resolver = path_resolver;
                 tx.send(DownloadEvent::Downloading).ok();
                 let tx = tx.clone();
@@ -194,7 +270,7 @@ impl Downloader {
                     let mut decoder = ZlibDecoder::new(sink);
 
                     self.client
-                        .stream_chunk(secure_links_manager, &product_id, download_unit.file_type, &download_unit.compressed_md5, async |chunk| {
+                        .stream_chunk(secure_links_manager, &download_unit.product_id, download_unit.file_type, &download_unit.compressed_md5, async |chunk| {
                             tx.send(DownloadEvent::Progress(chunk.len())).ok();
                             decoder.write_all(&chunk).await
                         })

@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use crate::depot::{depot_manager::DepotManager, error::DepotError};
+use crate::{
+    depot::{depot_manager::DepotManager, error::DepotError},
+    downloader::{DownloadUnit, FileType},
+};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct DepotInfo {
@@ -38,6 +41,30 @@ impl DepotFile {
         } else {
             None
         }
+    }
+    pub fn to_download_units(&self, product_id: String) -> Vec<DownloadUnit> {
+        let mut offset = 0;
+        let mut units: Vec<DownloadUnit> = Vec::new();
+
+        if let Some(chunks) = &self.chunks {
+            for chunk in chunks.iter() {
+                units.push(DownloadUnit {
+                    product_id: product_id.clone(),
+                    md5: chunk.md5.clone(),
+                    size: chunk.size,
+                    compressed_md5: chunk.compressed_md5.clone(),
+                    _compressed_size: chunk.compressed_size,
+                    path: self.path.clone(),
+                    offset: offset,
+                    file_type: match self.file_type.as_ref() {
+                        "DepotFile" => FileType::DepotFile,
+                        _ => FileType::Other,
+                    },
+                });
+                offset += chunk.size
+            }
+        }
+        units
     }
 }
 

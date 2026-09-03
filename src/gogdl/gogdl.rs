@@ -123,6 +123,15 @@ impl GogDl {
         self.downloader.download_game(bundles, path, tx).await?;
         Ok(())
     }
+    pub async fn repair_game(
+        &self,
+        bundles: Vec<ProductBundle>,
+        path: &str,
+        tx: mpsc::UnboundedSender<DownloadStageEvent>,
+    ) -> Result<(), GogDlError> {
+        self.downloader.repair_game(bundles, path, tx).await?;
+        Ok(())
+    }
     pub async fn set_token_observer(&self, observer: Arc<dyn TokenObserver>) {
         self.client.set_token_observer(observer).await;
     }
