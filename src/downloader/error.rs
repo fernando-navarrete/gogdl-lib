@@ -100,8 +100,18 @@ pub enum DownloadError {
     NotEnoughFreeSpace,
 
     /// A chunk's decompressed MD5 didn't match the manifest after every
-    /// retry was exhausted. Carries no detail — not which file, offset, or
-    /// digests were involved.
-    #[error("Chunk hash mismatch during download")]
-    ChunkHashMismatch(),
+    /// retry was exhausted.
+    #[error(
+        "Chunk hash mismatch during download: file={path} offset={offset} expected={expected} actual={actual}"
+    )]
+    ChunkHashMismatch {
+        /// The path of the file being downloaded.
+        path: String,
+        /// The offset of the chunk within the file.
+        offset: u64,
+        /// The expected MD5 hash of the chunk.
+        expected: String,
+        /// The actual MD5 hash of the chunk.
+        actual: String,
+    },
 }

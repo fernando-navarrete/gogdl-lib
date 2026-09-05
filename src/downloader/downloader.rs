@@ -350,7 +350,12 @@ impl Downloader {
                                 backoff(attempt).await;
                                 continue;
                             }
-                            return Err(DownloadError::ChunkHashMismatch())
+                            return Err(DownloadError::ChunkHashMismatch {
+                                path: download_unit.path,
+                                offset: download_unit.offset,
+                                expected: download_unit.md5,
+                                actual: actual_md5,
+                            })
                         }
 
                         if writer.remaining() != 0 {
@@ -367,7 +372,7 @@ impl Downloader {
                                     download_unit.path,
                                     download_unit.offset,
                                     writer.remaining(),
-                                    if actual_md5 == download_unit.md5 { "ok" } else { "mismatch" },
+                                    actual_md5
                                 ),
                             )));
                         }
