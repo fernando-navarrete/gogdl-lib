@@ -5,13 +5,25 @@ use crate::{
     downloader::{DownloadError, DownloadManager},
 };
 
+/// One owned, downloadable sub-product (base game, a DLC, ...) of a build,
+/// as returned by
+/// [`GogDl::get_downloadable_products`](crate::GogDl::get_downloadable_products).
 #[derive(Clone)]
 pub struct DownloadableProduct {
+    /// The product's ID, as a string — pass it in `selected_products` to
+    /// [`GogDl::get_product_bundles`](crate::GogDl::get_product_bundles).
     pub product_id: String,
+    /// The product's raw depots. `Depot` is not exported from this crate, so
+    /// it can only be held opaquely (e.g. `.len()`, passing the `Vec` back
+    /// through), not named in a signature or `let` binding.
     pub depots: Vec<Depot>,
 }
 
 impl DownloadableProduct {
+    /// Not reachable from outside the crate — `DownloadManager` is not
+    /// exported. Call
+    /// [`GogDl::get_downloadable_products`](crate::GogDl::get_downloadable_products)
+    /// instead, which delegates here internally.
     pub async fn get_downloadable_products(
         download_manager: &DownloadManager,
         game_id: i32,

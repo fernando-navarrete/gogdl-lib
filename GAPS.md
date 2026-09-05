@@ -1,101 +1,69 @@
 # GAPS.md
 
-Open findings for `gogdl-lib` on the `restart` branch. Current tree: HEAD **`04ff377`** ("Report
-progress regression on download retries", pushed — `origin/restart` is at the same commit) **plus an
-uncommitted working tree** — modified `src/downloader/downloader.rs` only. Five commits past the tip
-tag `v0.0.12-restart`.
+Open findings for `gogdl-lib` on the `restart` branch. Current tree: HEAD **`a0ebf13`** ("Fix retry
+bounds and report decoder regressions"), **clean, pushed** (`origin/restart` matches), and **tagged
+`v0.0.13-restart`**. `lumen-cli` (sibling repo) is pinned to that tag (`Cargo.toml:12`) and builds
+clean against it (verified via a temporary path override to this checkout — no source change needed
+on `lumen-cli`'s side).
 
-The pass before last's uncommitted diff is now `770537c`; its items are re-labelled to that commit in
-[Closed](#closed).
+`a0ebf13` is what the previous pass of this document described as "the uncommitted working tree" —
+it is now committed and tagged, so every reference below to "the working tree" in older entries
+should be read as that commit. It did two things, on top of `04ff377`'s regression (an equality test
+`attempt != MAX_ATTEMPTS - 3` against a fixed interior index, which let an MD5 mismatch first seen on
+attempt 4 or 5 fall through the `for` loop into `Ok(())` — the fourth appearance of "a failed chunk is
+reported as success" on this branch):
 
-`04ff377` did three things: it sent `ProgressRegression(reported_bytes)` from the two
-verification-failure retries and the two non-retryable client-error arms (emit sites four → eight),
-gave `Progress`/`ProgressRegression` one-line doc comments, and cut the MD5 arm's attempt budget by
-changing its sentinel from `attempt != MAX_ATTEMPTS - 1` to `attempt != MAX_ATTEMPTS - 3`. The first
-two landed. The third was a regression — an equality test against a fixed *interior* index, so an
-MD5 mismatch first seen on attempt 4 or 5 took the `continue` branch, fell out of the `for` loop, and
-the chunk was reported as a **successful download**: the fourth appearance of "a failed chunk is
-reported as success" on this branch.
-
-**The working tree fixes it**, in two small changes:
-
-1. The MD5 sentinel becomes `attempt < MAX_ATTEMPTS - 4` (`downloader.rs:348`). Because it is a
+1. The MD5 sentinel became `attempt < MAX_ATTEMPTS - 4` (`downloader.rs:348`). Because it is a
    comparison rather than an equality, every attempt at or past the bound returns
    `Err(ChunkHashMismatch())` — attempts 2, 3, 4 and 5 all take the `return`, so the loop cannot run
-   off its end into `Ok(())` no matter which attempt the mismatch first appears on. The
-   silent-success path is closed. Budget is now 3 attempts for a hash mismatch, 6 for everything
-   else.
-2. `decoder.shutdown()` stops being a bare `?` and becomes an
-   `if let Err(err) = ..` that emits `ProgressRegression(reported_bytes)` before returning
-   (`:338-341`) — the one remaining exit that could leak a full chunk's worth of reported bytes.
-   Emit sites are now nine.
+   off its end into `Ok(())` no matter which attempt the mismatch first appears on. Budget is 3
+   attempts for a hash mismatch, 6 for everything else.
+2. `decoder.shutdown()` stopped being a bare `?` and became an `if let Err(err) = ..` that emits
+   `ProgressRegression(reported_bytes)` before returning (`:338-341`) — the one remaining exit that
+   could leak a full chunk's worth of reported bytes. Emit sites are now nine.
 
 That leaves `open_file`'s `?` (`:268`) as the only exit from the attempt body that doesn't cancel its
-reported bytes, and it runs before a single byte is reported, so its total is always 0 — demoted to
-[Low](#low--style--clippy). What survives from the previous pass's reading is the *style* point, not
-a correctness one: the MD5 bound is still derived from `MAX_ATTEMPTS` by subtracting a literal, now
-`- 4` instead of `- 3` (see the [`MAX_ATTEMPTS` item](#medium--duplication--consistency)). The
-failure mode if that constant ever moves is now "fewer retries", never "silent success", which is the
-part that mattered.
+reported bytes, and it runs before a single byte is reported, so its total is always 0 — tracked under
+[Low](#low--style--clippy). The MD5 bound is still derived from `MAX_ATTEMPTS` by subtracting a
+literal (`- 4`) rather than being its own named constant (see the
+[`MAX_ATTEMPTS` item](#medium--duplication--consistency)); the failure mode if that constant ever
+moves is "fewer retries", never "silent success".
 
-Line references were re-derived against this working tree; `downloader.rs` shifted +1 below `:338`
-from the previous pass's numbers. Refs here supersede any earlier wording. Fixed items are collapsed
-to one line each in [Closed](#closed) at the bottom — the detail lives in the referenced commits, or
-in the uncommitted diff for the two newest.
+**This pass added rustdoc to the entire public surface** (everything re-exported from `src/lib.rs`)
+and enforces it going forward with `#![warn(missing_docs)]` in `lib.rs` — any new `pub` item reachable
+from the crate root that ships without a doc comment is now a compiler warning, not a review miss.
+`cargo doc --no-deps --lib` is free of broken intra-doc-link warnings. This is a documentation-only
+change: no retry logic, event semantics, or caching behavior moved, and `cargo clippy --lib -- -W
+clippy::all`'s count and composition are unchanged (see below). Several of the entries in this
+document — the `ProgressRegression` contract, the download-vs-repair resume semantics, the
+compressed/uncompressed byte-unit mismatch — are now stated on the relevant type or method itself;
+each such item below is marked closed or narrowed accordingly, with a pointer to where it now lives.
 
-**Three standing facts that apply to almost every item here:**
+Line references were re-derived against `a0ebf13`. Fixed items are collapsed to one line each in
+[Closed](#closed) at the bottom — the detail lives in the referenced commits.
+
+**Two standing facts that apply to almost every item here:**
 
 - **No automated tests exist anywhere** (`grep -rn '#\[test\]\|#\[tokio::test\]' src/` is empty).
   Treat every fix in this doc as unverified. This is the direct reason the "a failed chunk is
   reported as success" bug was introduced twice (`f3a944a`, `ac061e0`) and fixed twice with nothing
-  but a re-read catching it either time. It is why the fourth recurrence shipped in `04ff377` too —
-  a test that fails a chunk's transport a few times and *then* serves wrong-MD5 bytes would have
-  gone red the moment that commit was written — and it is why the working tree's fix is *also*
-  unverified: nothing pins the new sentinel, so the fifth recurrence has the same clear run at it.
-- **`v0.0.12-restart` as pushed still carries the retry off-by-one** fixed in `2469b13`. Anything
-  resolving that tag gets a downloader that reports failed chunks as successful, and `lumen-cli`
-  is pinned three tags below it (`tag = "v0.0.9-restart"`, its `Cargo.toml:12`).
-- **Nothing since `2b1cd7f` is tagged, and `HEAD` is still not the commit to tag.** `2469b13`,
-  `527a9c1`, `770537c` and `04ff377` are all committed and pushed but reachable only by branch, and
-  the two newest fixes are uncommitted. **`770537c` is the newest *commit* that is safe to tag**;
-  `04ff377` as committed carries the silent-success regression, so tagging it would ship a
-  downloader that writes corrupt chunks and reports success. The working tree is safe — commit it
-  first, then tag that.
+  but a re-read catching it either time, and why it shipped a fourth time in `04ff377` — a test that
+  fails a chunk's transport a few times and *then* serves wrong-MD5 bytes would have gone red the
+  moment that commit was written. `a0ebf13`'s fix is likewise unverified: nothing pins the new
+  sentinel, so a fifth recurrence has the same clear run at it.
+- **`v0.0.12-restart` still carries the retry off-by-one** fixed in `2469b13`; anything resolving that
+  tag gets a downloader that reports failed chunks as successful. It is superseded by
+  `v0.0.13-restart`, which `lumen-cli` is now pinned to.
 
-`cargo build --lib` is free of rustc warnings. `cargo clippy --lib -- -W clippy::all` reports
-**43 warnings**, unchanged in count and composition from the previous pass — neither `04ff377` nor
-the working tree added or removed one, and the five same-type `backoff(attempt as u32)` casts are all
-still present. See the [clippy](#low--style--clippy) section.
+`cargo build --lib` is free of rustc warnings (including `missing_docs`, now that the whole public
+surface is documented). `cargo clippy --lib -- -W clippy::all` reports **43 warnings**, unchanged in
+count and composition from the previous pass — the doc-comment pass added or removed none, and the
+five same-type `backoff(attempt as u32)` casts are all still present. See the
+[clippy](#low--style--clippy) section.
 
 ---
 
 ## High — downloader reliability
-
-- [ ] **`ProgressRegression` has a doc comment, but not a contract — and the comment is wrong at
-  most of its emit sites.** `04ff377` annotated both payload-carrying variants
-  (`src/downloader/progress_reporting/download_event.rs:5,7`): "Used to indicate progress (bytes
-  downloaded)" and "Used to indicate progress regression (a chunk has failed and has to be
-  retried)". That is a real improvement over an undocumented variant, and it settles the units
-  question — the payload is bytes, not a percentage or an absolute total. Two things it doesn't
-  settle, both of which a consumer has to get right on the first try:
-  - *"has to be retried" is false at three of the nine sites unconditionally, and at the other six
-    whenever they fire on a terminal attempt.* `ChunkStreamCallbackError` (`:321`), `UrlParseError`
-    (`:325`) and the `decoder.shutdown()` failure the working tree added (`:339`) never retry at
-    all; the four transport arms and the two verification checks emit it immediately before
-    `return Err` on their last attempt as well as before each `continue`. A consumer reading the
-    comment will assume more `Progress` for that unit follows; often the unit is simply over.
-  - *The arithmetic contract is still unwritten.* Nothing says the payload is a delta to
-    **subtract** rather than a replacement total, and nothing warns that it can exceed what the
-    consumer has accumulated for that unit. `lumen-cli` accumulates into a `u64`
-    `state.downloaded_bytes` (`src/middleware/downloads.rs:618-620`), so a naive `-=` is a panic in
-    debug and a wrap in release; the correct handling is `saturating_sub`. Say so on the variant —
-    with `restart` carrying no `api.md` (see the coverage section), the doc comment is the only
-    place this can live.
-
-  `download`/`repair` still forward every `DownloadEvent` verbatim into
-  `DownloadStageEvent::DownloadStage` (`downloader.rs:213-219` and `:132-138`) without interpreting
-  any of them, and nothing in the crate ever matches the variant, so the consumer is the only place
-  these semantics are exercised.
 
 - [ ] **The per-failure-class budget is right now; the batch still can't short-circuit.** With
   `attempt < MAX_ATTEMPTS - 4` (`:348`) a size-correct digest mismatch against a bad manifest entry
@@ -139,21 +107,6 @@ still present. See the [clippy](#low--style--clippy) section.
   60s margin already has for tokens.
 
 ## Medium — duplication & consistency
-
-- [ ] **`ProgressRegression` is a second source-breaking addition for existing consumers, on the
-  same pin bump as `VerificationStage`.** `lumen-cli` (sibling repo, pinned at
-  `tag = "v0.0.9-restart"`, its `Cargo.toml:12`) matches `DownloadEvent` exhaustively with four arms
-  and no `_` inside `apply_download_stage_event` (`src/middleware/downloads.rs:607-621`), so the new
-  variant is a hard `E0004` there — as is `DownloadStageEvent::VerificationStage`
-  (`src/downloader/progress_reporting/download_stage_event.rs:9`) in the outer match at `:555-607`.
-  `DownloadError::ChunkHashMismatch()` (`src/downloader/error.rs:58-59`) widens a third `pub` enum,
-  though error enums are less often matched exhaustively.
-
-  Neither break is just a new arm: `lumen-cli`'s `DownloadStage` enum has no verification state to
-  map `VerificationStage` onto, and its `downloaded_bytes` accumulator needs a `saturating_sub` to
-  absorb `ProgressRegression`. Combined with the `E0599: no method named 'get_secure_links'` break
-  the export item below flags, that pin bump needs a real code change on the consumer side. Same
-  applies to `gogdl_flutter`'s `restart` branch whenever `repair_game` gets bridged.
 
 - [ ] **`ChunkHashMismatch()` names the failure but carries none of it — and its sibling arm's
   message now has a dead branch.** `DownloadError::ChunkHashMismatch()`
@@ -255,18 +208,19 @@ still present. See the [clippy](#low--style--clippy) section.
   "which units to download" closure.
 
 - [ ] **`download` re-downloads every chunk regardless of what's already correct on disk, so `repair`
-  is the crate's only resume path — and nothing says so.** `download` runs a file-size verification
-  stage and computes `missing_files`, then ignores that result when building the transfer list:
+  is the crate's only resume path.** `download` runs a file-size verification stage and computes
+  `missing_files`, then ignores that result when building the transfer list:
   `DownloadUnit::from_product_bundles(&bundles)` (`src/downloader/downloader.rs:208`) enumerates
   every chunk of every file in every bundle, including files that just verified as complete. An
   interrupted download restarted through `download_game` re-transfers the whole game from byte 0,
-  while `repair_game` transfers only what fails MD5.
+  while `repair_game` transfers only what fails MD5. Behavior unchanged; still worth fixing so
+  `download_game` skips already-verified units instead of relying on the caller to know to call
+  `repair_game` instead.
 
-  Given pause/resume was deliberately removed chain-wide (see the workspace `CLAUDE.md`),
-  `repair_game` is the de-facto resume entry point — and a consumer has no way to know that from the
-  API surface: the two methods have identical signatures (`download_manager.rs:73-101`) and neither
-  has a doc comment. Either make `download` skip already-verified units, or document that resuming
-  means calling `repair_game`.
+  *Narrowed by this pass's doc-comment work:* the "and a consumer has no way to know that from the
+  API surface" half is resolved — `GogDl::download_game`/`GogDl::repair_game`
+  (`src/gogdl/gogdl.rs`) now each carry a doc comment stating which one resumes, cross-linked to the
+  other.
 
 - [ ] **`repair` checksums the chunks of files it has just allocated.** Stage 2 allocates every file
   that failed size verification (`set_len` on a fresh or truncated file,
@@ -310,11 +264,14 @@ still present. See the [clippy](#low--style--clippy) section.
 
   `lumen-cli` previously failed with `E0432: unresolved imports gogdl_lib::DepotFile,
   gogdl_lib::SecureLinks` and has doc comments noting the workaround
-  (`src/middleware/downloads.rs:176-182`). It also calls `gog.get_secure_links(product_id)` at two
-  sites (`:131,200`) — a method `2ae200d` deleted outright — so once it bumps its pin those become a
-  hard `E0599`, not a workaroundable type-naming problem. **This consumer needs either the method
-  restored or a replacement API before that pin bump.** Either re-export `DepotFile`/`Chunk`/
-  `DownloadUnit`, or narrow the public field that leaks them.
+  (`src/middleware/downloads.rs:176-182`). *Resolved as of `v0.0.13-restart`, which `lumen-cli` is
+  now pinned to:* it no longer calls the deleted `get_secure_links`, recording it instead as a
+  `Status::Removed` in `features.rs`, so the `E0599` half this item used to flag no longer applies.
+  The type-naming problem itself is unchanged — re-export `DepotFile`/`Chunk`/`DownloadUnit`, or
+  narrow the public field that leaks them. This pass's doc comments on `ProductBundle.product_files`
+  and `DownloadableProduct.depots` (`downloader/product_bundle.rs`,
+  `downloader/downloadable_product.rs`) at least say so explicitly now, rather than leaving it to be
+  discovered as a compile error.
 
 - [ ] **A dead refresh token and a routine expiry both surface as the same opaque, unstructured
   error** — effectively a recurrence of the `982dc82` collapsing regression (see `lumen-cli/CLAUDE.md`,
@@ -374,6 +331,26 @@ still present. See the [clippy](#low--style--clippy) section.
   with no explanation of why index 2, and silently drops the screenshot (`continue`) if fewer than 3
   formatters are present instead of falling back to whatever is available.
 
+- [ ] **`DownloadEvent::Progress` reports compressed wire bytes while every sizing event reports
+  uncompressed bytes.** `download_files`'s callback sums the length of each `Bytes` frame yielded by
+  `bytes_stream()` — the raw, still-zlib-compressed response — straight into
+  `DownloadEvent::Progress(chunk_lenght)` (`src/downloader/downloader.rs:280-283`), while
+  `DownloadUnit.size`, and every `(String, u64)` payload on
+  `FileSizeVerificationEvent`/`FileAllocationEvent`/`VerificationEvent`, are the chunk's declared
+  *uncompressed* size. A consumer summing `Progress` payloads to build a percentage has a numerator
+  in compressed bytes and a denominator (from `DownloadUnit`/depot manifest sizes) in uncompressed
+  bytes — the sum never reaches the total, and there's no exposed compressed total to divide by
+  instead (`Depot.compressed_size` exists but isn't reachable from `ProductBundle`). Found while
+  writing this pass's doc comment for `Progress`, which now states the unit explicitly
+  (`src/downloader/progress_reporting/download_event.rs`) — the behavior itself is unchanged.
+
+- [ ] **`GameDetails.id` and `GameBuilds.game_title` are `#[serde(skip)]` and never assigned** —
+  permanently `0` (`src/games/game_details.rs:8-9`) and `""` (`src/games/game_build.rs:16-17`)
+  respectively. Both fields are `pub`, so a consumer has no reason to suspect they're unpopulated
+  short of reading the source; this pass's doc comments say so explicitly, but the underlying
+  behavior is unchanged. Either populate them at the point the caller's `game_id`/build lookup
+  already knows the value, or drop the fields.
+
 ## Medium — missing coverage
 
 - [ ] **No automated tests anywhere in the crate.** Given the `restart` branch's explicit goal of a
@@ -407,12 +384,17 @@ still present. See the [clippy](#low--style--clippy) section.
 
 - [ ] **No `CLAUDE.md`/`api.md` on the `restart` branch.** Both exist on `master` and are treated as
   canonical specs for consumers (`gogdl_flutter`); `restart` has neither, so there's no single
-  reference tracking what public surface has been rebuilt vs. still stubbed. Each pass sharpens
-  this: `a11273a` added a public `GogDl::repair_game` and a `DownloadStageEvent` variant with no doc
-  comment, and `770537c`/`04ff377` added a `DownloadEvent` variant whose one-line doc comment states
-  neither its arithmetic nor when it can arrive, and describes a retry that three of its nine emit
-  sites never perform (see the semantics item above). The download-vs-repair semantics (which resumes,
-  which re-transfers, which stages each emits) are discoverable only by reading `downloader.rs`.
+  reference tracking what public surface has been rebuilt vs. still stubbed.
+
+  *Narrowed by this pass:* the specific undiscoverable semantics this item used to list — the
+  download-vs-repair resume distinction, each method's stage ordering, and
+  `ProgressRegression`/`Progress`'s arithmetic and units — are now on the relevant items themselves
+  (`GogDl::download_game`/`repair_game` in `src/gogdl/gogdl.rs`, and the `DownloadEvent` variants in
+  `src/downloader/progress_reporting/download_event.rs`), enforced by `#![warn(missing_docs)]` in
+  `lib.rs` so they can't silently go stale on a new `pub` item. `cargo doc --no-deps --lib` now
+  renders a real reference, just not a hand-written one. What's still missing: no single tracker of
+  which capabilities are rebuilt vs. still stubbed on this branch, and no `api.md` — a decision
+  deferred, not attempted, this pass.
 
 ## Low — style / clippy
 
@@ -447,8 +429,23 @@ still present. See the [clippy](#low--style--clippy) section.
   jitter derived from the chunk hash the task already holds, keeps the dependency graph where
   `2100296` left it.
 
+- [ ] **`DownloadEvent::Preparing`/`Prepared` are emitted back-to-back with no work between them.**
+  `download_files` sends both immediately, one line apart, before the download stream even starts
+  (`src/downloader/downloader.rs:254-256`). Neither currently gates on anything happening in between
+  (no allocation, no network call), so despite reading as two phases of a "preparing" step, they are
+  a single instant a consumer could easily over-interpret as bracketing real work — e.g. timing
+  "preparation" as the gap between them. Either do real work between them, or collapse to one event.
+
+- [ ] **`Cargo.toml`'s `version = "0.1.1"` disagrees with every `restart`-branch tag** (currently
+  `v0.0.13-restart`) and collides with `master`'s actually-released `v0.1.1`. A `Cargo.lock` entry
+  resolved from a `restart` tag records `version = "0.1.1"` regardless of which tag it came from —
+  confirmed against `lumen-cli`'s own `Cargo.lock`, which lists `gogdl-lib` `version = "0.1.1"` while
+  `source` correctly names `tag=v0.0.13-restart`. Harmless today since resolution goes by git tag/rev
+  rather than semver, but a trap for anyone who greps `Cargo.lock` for the version instead of the
+  `source` line, and for `cargo`/tooling output that only prints the version.
+
 **Clippy: 43 warnings** against this tree — same count and same composition as the previous pass;
-neither `04ff377` nor the working tree added or removed one. Locations re-derived:
+neither `a0ebf13` nor this pass's doc-comment work added or removed one. Locations re-derived:
 
 - [ ] **5 `unnecessary_cast`.** `attempt` is `u32` (it comes from `0..MAX_ATTEMPTS`), so
   `backoff(attempt as u32)` casts `u32` to `u32` at `client.rs:65` and
@@ -502,10 +499,20 @@ One line per fixed item, newest first within each group. Detail is in the refere
 
 ### Downloader reliability
 
-*The first two are in the **uncommitted working tree**, not in any commit or tag. The three after
-them are in `04ff377` and `770537c`, then `527a9c1` and the five after it — all committed and pushed,
-all above `v0.0.12-restart`, none tagged.*
+*The first entry is this pass's doc-comment work. The next two are in `a0ebf13` (referred to as "the
+working tree" in entries written before that commit landed — see the preamble). The three after them
+are in `04ff377` and `770537c`, then `527a9c1` and the five after it. All of the above are reachable
+from `v0.0.13-restart`, the current tag.*
 
+- [x] **`ProgressRegression`'s doc comment settled the units question but not the retry/arithmetic
+  contract, and was wrong at most of its emit sites** — this pass. `DownloadEvent::Progress` and
+  `ProgressRegression` (`src/downloader/progress_reporting/download_event.rs`) now state: `Progress`
+  carries compressed wire bytes (a separate new finding above, since that unit disagrees with every
+  sizing event); `ProgressRegression` is a delta to subtract, may exceed the running total (fold with
+  `saturating_sub`), and does **not** imply a retry follows — it fires before both `continue` and a
+  terminal `return Err`. `GogDl::download_game`/`repair_game` (`src/gogdl/gogdl.rs`) also gained doc
+  comments stating the retry budget (6 transport attempts, 3 for an MD5 mismatch) and each method's
+  stage ordering.
 - [x] **A chunk whose MD5 mismatch first appeared on a late attempt was reported as a successful
   download** — working tree. `04ff377` had changed the MD5 sentinel to `attempt != MAX_ATTEMPTS - 3`,
   an equality against a fixed interior index (3), so a mismatch first seen on attempt 4 or 5 — after
@@ -600,6 +607,14 @@ all above `v0.0.12-restart`, none tagged.*
   check and a specific `NotEnoughFreeSpace` error.
 - [x] **Only per-chunk MD5 verified; SHA-256 support was unused dead code** — resolved by deletion in
   `2100296`. `DepotFile.sha256`, `ChecksumAlgorithm` and the `sha2`/`cpufeatures` deps are gone.
+- [x] **`ProgressRegression` and `VerificationStage` were source-breaking additions `lumen-cli`
+  hadn't absorbed, on top of an unrelated hard `E0599` from a deleted `get_secure_links`** — resolved
+  by `lumen-cli` bumping its pin to `v0.0.13-restart` (`Cargo.toml:12`, was `v0.0.9-restart`):
+  `downloaded_bytes` now folds `ProgressRegression` with `saturating_sub`
+  (`src/middleware/downloads.rs:812-813`), `VerificationStage` is handled
+  (`:771`), and the removed `get_secure_links` is recorded as a `Status::Removed` in `features.rs`
+  rather than called. Verified by building `lumen-cli` against this checkout via a temporary path
+  override — clean, no errors.
 
 ### Auth & client
 

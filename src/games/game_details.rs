@@ -2,14 +2,24 @@ use serde::{Deserialize, Serialize};
 
 use crate::games::{GamesError, GamesManager, owned_games::GameId};
 
+/// Details for a single game, as returned by
+/// [`GogDl::get_game_details`](crate::GogDl::get_game_details).
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct GameDetails {
+    /// The game's display title.
     pub title: String,
+    /// Not populated. `#[serde(skip)]` and never assigned after
+    /// deserialization — always `0`. Use the `game_id` you already passed to
+    /// `get_game_details` instead of reading this back.
     #[serde(skip)]
     pub id: GameId,
 }
 
 impl GameDetails {
+    /// Not reachable from outside the crate — `GamesManager` is not
+    /// exported. Call
+    /// [`GogDl::get_game_details`](crate::GogDl::get_game_details) instead,
+    /// which delegates here internally.
     pub async fn get_game_details(
         games_manager: &GamesManager,
         game_id: GameId,

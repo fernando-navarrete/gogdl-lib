@@ -2,8 +2,11 @@ use serde::Deserialize;
 
 use crate::games::{GamesError, GamesManager, owned_games::GameId};
 
+/// The store summary/description text for a game, as returned by
+/// [`GogDl::get_game_summary`](crate::GogDl::get_game_summary).
 #[derive(Deserialize, Clone)]
 pub struct GameSummary {
+    /// The summary text, in the default and English locales.
     pub summary: Summary,
 }
 
@@ -16,6 +19,10 @@ pub struct Summary {
 }
 
 impl GameSummary {
+    /// Not reachable from outside the crate — `GamesManager` is not
+    /// exported. Call
+    /// [`GogDl::get_game_summary`](crate::GogDl::get_game_summary) instead,
+    /// which delegates here internally.
     pub async fn get_game_summary(
         games_manager: &GamesManager,
         game_id: GameId,

@@ -2,8 +2,11 @@ use serde::Deserialize;
 
 use crate::games::{GamesError, GamesManager, owned_games::GameId};
 
+/// Image links for a game, as returned by
+/// [`GogDl::get_game_links`](crate::GogDl::get_game_links).
 #[derive(Deserialize, Clone)]
 pub struct GameLinks {
+    /// The box art, background and Galaxy background image links.
     #[serde(alias = "_links")]
     pub links: Links,
 }
@@ -24,6 +27,10 @@ pub struct GogImage {
 }
 
 impl GameLinks {
+    /// Not reachable from outside the crate — `GamesManager` is not
+    /// exported. Call
+    /// [`GogDl::get_game_links`](crate::GogDl::get_game_links) instead,
+    /// which delegates here internally.
     pub async fn get_game_links(
         games_manager: &GamesManager,
         game_id: GameId,
