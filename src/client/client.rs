@@ -43,7 +43,7 @@ impl HttpClient {
         decode: bool,
         require_auth: bool,
     ) -> Result<T, ClientError> {
-        for attempts in 0..2 {
+        for attempt in 0..3 {
             match self.inner_fetch(url, decode, require_auth).await {
                 Ok(result) => return Ok(result),
                 Err(ClientError::HttpError { status, body }) => {
@@ -60,8 +60,8 @@ impl HttpClient {
                     self.auth_manager.refresh_auth(&self).await?;
                 }
                 Err(ClientError::NetworkError(err)) => {
-                    if attempts != 2 {
-                        tokio::time::sleep(Duration::from_secs(5)).await;
+                    if attempt != 2 {
+                        tokio::time::sleep(Duration::from_secs((attempt + 1) * 2)).await;
                         continue;
                     }
                     return Err(ClientError::NetworkError(err));

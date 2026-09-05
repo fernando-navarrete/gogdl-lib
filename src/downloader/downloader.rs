@@ -260,7 +260,7 @@ impl Downloader {
                 let tx = tx.clone();
                 async move {
 
-                    for attempt in 0..2 {
+                    for attempt in 0..3 {
 
                         let secure_links_manager = &self.secure_links.clone();
 
@@ -284,6 +284,7 @@ impl Downloader {
                                 Err(ClientError::AuthError(err)) => {
                                     secure_links_manager.invalidate_secure_links(&download_unit.product_id).await;
                                     if attempt != 2 {
+                                        tokio::time::sleep(Duration::from_secs((attempt + 1) * 2)).await;
                                         continue;
                                     }
                                     return Err(DownloadError::ClientError(ClientError::AuthError(err)));
@@ -291,6 +292,7 @@ impl Downloader {
                                 Err(ClientError::SecureLinksError { inner }) => {
                                     secure_links_manager.invalidate_secure_links(&download_unit.product_id).await;
                                     if attempt != 2 {
+                                        tokio::time::sleep(Duration::from_secs((attempt + 1) * 2)).await;
                                         continue;
                                     }
                                     return Err(DownloadError::ClientError(ClientError::SecureLinksError { inner: inner }));
@@ -301,6 +303,7 @@ impl Downloader {
                                         secure_links_manager.invalidate_secure_links(&download_unit.product_id).await;
                                     }
                                     if attempt != 2 {
+                                        tokio::time::sleep(Duration::from_secs((attempt + 1) * 2)).await;
                                         continue;
                                     }
                                     return Err(DownloadError::ClientError(ClientError::HttpError { status, body }));
@@ -313,7 +316,7 @@ impl Downloader {
                                 }
                                 Err(err) => {
                                     if attempt != 2 {
-                                        tokio::time::sleep(Duration::from_secs(5)).await;
+                                        tokio::time::sleep(Duration::from_secs((attempt + 1) * 2)).await;
                                         continue;
                                     }
                                     return Err(DownloadError::ClientError(err))
