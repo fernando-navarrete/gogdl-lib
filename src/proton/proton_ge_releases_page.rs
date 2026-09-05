@@ -6,10 +6,6 @@ use crate::proton::{ProtonGeRelease, ProtonManager, error::ProtonError};
 /// [`GogDl::get_proton_releases`](crate::GogDl::get_proton_releases).
 /// Deserializes GitHub's response directly (`#[serde(transparent)]`), which
 /// is a bare JSON array rather than an object.
-///
-/// `releases` is currently private with no accessor, so a consumer cannot
-/// yet read anything out of a page they receive — the type exists to be
-/// returned, not inspected.
 #[derive(Deserialize)]
 #[serde(transparent)]
 pub struct ProtonGeReleasesPage {
@@ -17,6 +13,11 @@ pub struct ProtonGeReleasesPage {
 }
 
 impl ProtonGeReleasesPage {
+    /// The releases on this page, in the order GitHub returned them (newest
+    /// first).
+    pub fn releases(&self) -> &[ProtonGeRelease] {
+        &self.releases
+    }
     /// Not reachable from outside the crate — `ProtonManager` is not
     /// exported. Call
     /// [`GogDl::get_proton_releases`](crate::GogDl::get_proton_releases)

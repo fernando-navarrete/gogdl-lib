@@ -1,11 +1,14 @@
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
 
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, mpsc};
 
 use crate::{
     ProtonGeRelease,
     client::HttpClient,
-    proton::{error::ProtonError, proton_ge_releases_page::ProtonGeReleasesPage},
+    proton::{
+        ProtonDownloadEvent, ProtonDownloader, error::ProtonError,
+        proton_ge_releases_page::ProtonGeReleasesPage,
+    },
 };
 
 /// Crate-internal manager backing
@@ -41,10 +44,16 @@ impl ProtonManager {
     ) -> Result<ProtonGeReleasesPage, ProtonError> {
         ProtonGeReleasesPage::get_releases_page(page, per_page, self).await
     }
+    /// Downloads and extracts one Proton-GE release. See
+    /// [`GogDl::download_proton_release`](crate::GogDl::download_proton_release)
+    /// for the public-facing contract.
     pub async fn download_proton_release(
         &self,
         release: &ProtonGeRelease,
-    ) -> Result<(), ProtonError> {
-        todo!()
+        path: &Path,
+        tx: mpsc::UnboundedSender<ProtonDownloadEvent>,
+    ) -> Result<std::path::PathBuf, ProtonError> {
+        let downloader = ProtonDownloader::new(self.client.clone());
+        downloader.download_proton_release(release, path, tx).await
     }
 }

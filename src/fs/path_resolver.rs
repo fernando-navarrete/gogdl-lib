@@ -6,7 +6,7 @@ use sysinfo::Disks;
 use tokio::fs::{self, File};
 use tokio::sync::OnceCell;
 
-use crate::downloader::fs::error::FileSystemError;
+use crate::fs::error::FileSystemError;
 
 pub struct PathResolver {
     canonical_base: PathBuf,
@@ -26,6 +26,11 @@ impl PathResolver {
             canonical_base,
             dir_cache: DashMap::new(),
         })
+    }
+
+    /// The canonicalized base directory this resolver was constructed with.
+    pub fn base(&self) -> &Path {
+        &self.canonical_base
     }
 
     pub async fn get_file_size(&self, path: &Path) -> Result<u64, FileSystemError> {

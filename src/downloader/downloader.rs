@@ -13,12 +13,13 @@ use crate::{
     client::HttpClient,
     depot::DepotFile,
     downloader::{
-        DownloadError, DownloadEvent, DownloadUnit, PathResolver, ProductBundle,
+        DownloadError, DownloadEvent, DownloadUnit, ProductBundle,
         progress_reporting::{
             DownloadStageEvent, FileAllocationEvent, FileSizeVerificationEvent, VerificationEvent,
         },
         util::{HashingWriter, OffsetWriter, compute_chunk_checksum},
     },
+    fs::PathResolver,
     secure_links::SecureLinksManager,
 };
 

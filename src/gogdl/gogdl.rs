@@ -1,3 +1,4 @@
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use tokio::sync::mpsc;
@@ -10,7 +11,7 @@ use crate::games::{
     GameBuilds, GameDetails, GameLinks, GameScreenshots, GameSummary, GamesManager, OwnedGames,
 };
 use crate::gogdl::error::GogDlError;
-use crate::proton::{ProtonGeReleasesPage, ProtonManager};
+use crate::proton::{ProtonDownloadEvent, ProtonGeRelease, ProtonGeReleasesPage, ProtonManager};
 use crate::secure_links::SecureLinksManager;
 
 /// The single entry point to this crate. Every operation — auth, catalog
@@ -84,6 +85,50 @@ impl GogDl {
     ) -> Result<ProtonGeReleasesPage, GogDlError> {
         let proton_releases = self.proton.get_releases_page(page, per_page).await?;
         Ok(proton_releases)
+    }
+
+    /// Downloads and extracts one [Proton-GE](https://github.com/GloriousEggroll/proton-ge-custom)
+    /// release, as returned by [`get_proton_releases`](Self::get_proton_releases).
+    ///
+    /// The release's tarball is never written to disk as a `.tar.gz` — the
+    /// network response is decompressed and extracted directly as it
+    /// arrives, bounded by a fixed-size in-memory buffer regardless of the
+    /// tarball's size. `path` is the *parent* directory the release's own
+    /// top-level directory is extracted into (e.g. `GE-Proton11-6/`) and is
+    /// created (and canonicalized) if missing; the returned [`PathBuf`] is
+    /// that extracted directory.
+    ///
+    /// The transfer is gated on the destination disk having at least the
+    /// tarball's compressed size free before a single byte is read — a
+    /// lower bound only, since the extracted tree is considerably larger
+    /// than the tarball.
+    ///
+    /// Reports progress on `tx` as [`ProtonDownloadEvent`]: one `Downloading`
+    /// with the compressed total size, then a `Progress` delta per network
+    /// read, interleaved with an `Extracted` event per file/directory/symlink
+    /// written to disk. Resolves only once the whole operation finishes or
+    /// fails — drain `tx`'s paired receiver concurrently on another task.
+    ///
+    /// **Not resumable** — there is no retry loop here, unlike
+    /// [`download_game`](Self::download_game). A failure partway through
+    /// leaves a partial tree under `path` that you're responsible for
+    /// removing before trying again.
+    ///
+    /// # Errors
+    /// [`GogDlError::ProtonError`], notably
+    /// [`crate::ProtonError::NoSuitableAsset`] if `release` has no Linux
+    /// x86_64 tarball, [`crate::ProtonError::NotEnoughFreeSpace`] or
+    /// [`crate::ProtonError::CouldNotResolveFreeSpace`] if the pre-flight
+    /// space check fails, or [`crate::ProtonError::Io`] for a network, disk,
+    /// or extraction failure.
+    pub async fn download_proton_release(
+        &self,
+        release: &ProtonGeRelease,
+        path: &Path,
+        tx: mpsc::UnboundedSender<ProtonDownloadEvent>,
+    ) -> Result<PathBuf, GogDlError> {
+        let extracted_path = self.proton.download_proton_release(release, path, tx).await?;
+        Ok(extracted_path)
     }
 
     /// Restores a previously-persisted auth state, as returned by

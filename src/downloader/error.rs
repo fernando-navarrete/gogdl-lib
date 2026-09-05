@@ -4,7 +4,7 @@ use reqwest::StatusCode;
 use thiserror::Error;
 
 use crate::{
-    client::ClientError, depot::DepotError, downloader::fs::FileSystemError, games::GamesError,
+    client::ClientError, depot::DepotError, fs::FileSystemError, games::GamesError,
     secure_links::SecureLinksError,
 };
 

@@ -10,13 +10,13 @@
 //!
 //! # Long-running operations
 //!
-//! [`GogDl::download_game`], [`GogDl::repair_game`] and [`GogDl::verify_files`]
-//! report progress by sending events into an
-//! [`mpsc::UnboundedSender`](tokio::sync::mpsc::UnboundedSender) you provide,
-//! rather than by returning progress from the `async fn` itself. The future
-//! only resolves once the whole job is done (or has failed); drain the paired
-//! receiver concurrently on another task, or events will pile up unbounded in
-//! the channel for the lifetime of the call.
+//! [`GogDl::download_game`], [`GogDl::repair_game`], [`GogDl::verify_files`]
+//! and [`GogDl::download_proton_release`] report progress by sending events
+//! into an [`mpsc::UnboundedSender`](tokio::sync::mpsc::UnboundedSender) you
+//! provide, rather than by returning progress from the `async fn` itself. The
+//! future only resolves once the whole job is done (or has failed); drain the
+//! paired receiver concurrently on another task, or events will pile up
+//! unbounded in the channel for the lifetime of the call.
 //!
 //! `download_game` and [`GogDl::repair_game`] have identical signatures but
 //! are not interchangeable — see their doc comments for which one resumes an
@@ -47,6 +47,7 @@ mod client;
 mod constants;
 mod depot;
 mod downloader;
+mod fs;
 mod games;
 mod gogdl;
 mod proton;
@@ -71,6 +72,8 @@ pub use games::GameSummary;
 pub use games::OwnedGames;
 pub use gogdl::GogDl;
 pub use gogdl::GogDlError;
+pub use proton::GithubAsset;
+pub use proton::ProtonDownloadEvent;
 pub use proton::ProtonGeRelease;
 pub use proton::ProtonGeReleasesPage;
 /// The HTTP client type [`GogDl::new_from_client`] expects. Re-exported so
