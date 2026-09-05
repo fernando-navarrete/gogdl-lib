@@ -33,6 +33,7 @@ pub enum GogDlError {
     #[error("Client error: {0}")]
     ClientError(#[from] ClientError),
 
+    /// A Proton-GE release lookup failed — see [`ProtonError`].
     #[error("Proton error: {0}")]
     ProtonError(#[from] ProtonError),
 }

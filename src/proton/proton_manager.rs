@@ -7,21 +7,32 @@ use crate::{
     proton::{error::ProtonError, proton_ge_releases_page::ProtonGeReleasesPage},
 };
 
+/// Crate-internal manager backing
+/// [`GogDl::get_proton_releases`](crate::GogDl::get_proton_releases). Not
+/// exported — `GogDl` is the only entry point, mirroring `GamesManager` and
+/// `DepotManager`.
 #[derive(Clone)]
 pub struct ProtonManager {
     inner: Arc<Mutex<ProtonManagerInner>>,
     pub client: HttpClient,
 }
 
+/// Placeholder for future in-process caching of release pages, mirroring
+/// the other managers' `inner` state. Currently empty and unused — every
+/// call to [`ProtonManager::get_releases_page`] re-fetches from GitHub.
 pub struct ProtonManagerInner {}
 
 impl ProtonManager {
+    /// Builds a `ProtonManager` around an already-constructed [`HttpClient`].
     pub fn new(client: HttpClient) -> Self {
         Self {
             inner: Arc::new(Mutex::new(ProtonManagerInner {})),
             client,
         }
     }
+    /// Fetches one page of Proton-GE releases from GitHub. See
+    /// [`GogDl::get_proton_releases`](crate::GogDl::get_proton_releases) for
+    /// the public-facing contract (pagination, auth requirements, caching).
     pub async fn get_releases_page(
         &self,
         page: u32,

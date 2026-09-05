@@ -1,5 +1,6 @@
 //! Rust client for GOG's Galaxy backend: authentication, catalog browsing,
-//! and downloading/repairing/verifying game installs.
+//! downloading/repairing/verifying game installs, and listing Proton-GE
+//! releases.
 //!
 //! [`GogDl`] is the only entry point — construct one with
 //! [`GogDl::new_from_client`] and call its methods; every other type in this
@@ -25,10 +26,20 @@
 //!
 //! Every fallible [`GogDl`] method returns [`GogDlError`], which wraps the
 //! per-layer error enum it failed in ([`AuthError`], [`ClientError`],
-//! [`DepotError`], [`DownloadError`], [`GamesError`], [`SecureLinksError`] —
-//! all re-exported here so you can match on them). Auth failures usually
-//! arrive nested, e.g. `GogDlError::ClientError(ClientError::AuthError(_))`,
-//! since there is no flattened top-level auth variant.
+//! [`DepotError`], [`DownloadError`], [`GamesError`], [`SecureLinksError`],
+//! [`ProtonError`] — all re-exported here so you can match on them). Auth
+//! failures usually arrive nested, e.g.
+//! `GogDlError::ClientError(ClientError::AuthError(_))`, since there is no
+//! flattened top-level auth variant.
+//!
+//! # Proton-GE releases
+//!
+//! [`GogDl::get_proton_releases`] is the one method that doesn't talk to GOG
+//! at all — it lists releases from the `proton-ge-custom` GitHub repo, with
+//! no GOG auth and no caching. GitHub rejects unauthenticated requests that
+//! carry no `User-Agent` header with a 403, so the `reqwest::Client` passed
+//! to [`GogDl::new_from_client`] must set one for this call to succeed. See
+//! [`GogDl::get_proton_releases`] for details.
 
 #![warn(missing_docs)]
 
@@ -60,6 +71,9 @@ pub use games::GameSummary;
 pub use games::OwnedGames;
 pub use gogdl::GogDl;
 pub use gogdl::GogDlError;
+pub use proton::GithubAsset;
+pub use proton::ProtonGeRelease;
+pub use proton::ProtonGeReleasesPage;
 /// The HTTP client type [`GogDl::new_from_client`] expects. Re-exported so
 /// callers don't need a direct `reqwest` dependency just to construct one.
 pub use reqwest::Client;
@@ -69,4 +83,5 @@ pub use client::ClientError;
 pub use depot::DepotError;
 pub use downloader::DownloadError;
 pub use games::GamesError;
+pub use proton::ProtonError;
 pub use secure_links::SecureLinksError;

@@ -55,6 +55,28 @@ impl GogDl {
         }
     }
 
+    /// Lists releases of [Proton-GE](https://github.com/GloriousEggroll/proton-ge-custom),
+    /// `page` pages of `per_page` releases at a time (`page` is 1-indexed;
+    /// GitHub caps `per_page` at 100). Unlike every other method on `GogDl`,
+    /// this talks to `api.github.com`, not GOG — no GOG auth is used or
+    /// required.
+    ///
+    /// **Not cached** — every call is a fresh round-trip.
+    ///
+    /// **Requires a `User-Agent` on the underlying client.** GitHub answers
+    /// 403 to any request with no `User-Agent` header; the `reqwest::Client`
+    /// passed to [`new_from_client`](Self::new_from_client) must set one
+    /// (e.g. via [`reqwest::ClientBuilder::user_agent`]) for this call to
+    /// succeed. The unauthenticated rate limit is also 60 requests/hour per
+    /// IP, shared with everything else on that address.
+    ///
+    /// # Errors
+    /// [`GogDlError::ProtonError`] wrapping
+    /// [`crate::ProtonError::ClientError`], notably a
+    /// [`crate::ClientError::HttpError`] with `status: 403` for a missing
+    /// `User-Agent` or an exhausted rate limit — returned immediately, since
+    /// the underlying fetch only retries a 401 or a transport error, and a
+    /// 403 is neither.
     pub async fn get_proton_releases(
         &self,
         page: u32,
