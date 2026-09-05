@@ -1,10 +1,11 @@
 # GAPS.md
 
-Open findings for `gogdl-lib` on the `restart` branch. Current tree: HEAD **`a0ebf13`** ("Fix retry
-bounds and report decoder regressions"), **clean, pushed** (`origin/restart` matches), and **tagged
-`v0.0.13-restart`**. `lumen-cli` (sibling repo) is pinned to that tag (`Cargo.toml:12`) and builds
-clean against it (verified via a temporary path override to this checkout — no source change needed
-on `lumen-cli`'s side).
+Open findings for `gogdl-lib` on the `restart` branch. Current tree: HEAD **`8580dc4`** ("Document
+Public API Surface with Rustdoc"), on top of proactive secure-link expiry (this pass — see
+[Closed](#closed)). **`v0.0.13-restart` still points at `a0ebf13`**, one commit before the rustdoc
+pass landed — `lumen-cli` (sibling repo), pinned to that tag (`Cargo.toml:12`), therefore resolves the
+pre-rustdoc tree; it still builds clean against it (verified via a temporary path override to this
+checkout — no source change needed on `lumen-cli`'s side).
 
 `a0ebf13` is what the previous pass of this document described as "the uncommitted working tree" —
 it is now committed and tagged, so every reference below to "the working tree" in older entries
@@ -95,16 +96,6 @@ five same-type `backoff(attempt as u32)` casts are all still present. See the
   *and* cutting the rate at the source by moving `Progress` to the write-buffer flush boundary
   (`master:src/downloader/stream.rs:45-70` spells out the reasoning). The `restart` branch has
   neither half. Fix before any Flutter consumer is wired up to `repair_game`.
-
-- [ ] **Secure links are never proactively expired.** `SecureLinksManager::links_cache`
-  (`src/secure_links/links_manager.rs:19,32-63`) never evicts an entry on its own, and the fetched
-  `CdnUrlParams`'s `expires_at`/`ttl` fields (`src/secure_links/secure_links.rs:11,13`) are parsed
-  but never consulted. The reactive half works, and is cheap — a CDN 401 triggers
-  `invalidate_secure_links` and an immediate retry with no backoff
-  (`src/downloader/downloader.rs:306-318`) — but every chunk request still has to *fail* once before
-  a stale link gets replaced, and when several chunks hit that 401 together the misses aren't
-  collapsed (see the thundering-herd item below). Wants the same shape `Auth::is_valid()`'s
-  60s margin already has for tokens.
 
 ## Medium — duplication & consistency
 
@@ -232,7 +223,7 @@ five same-type `backoff(attempt as u32)` casts are all still present. See the
 
 - [ ] **Secure-link fetches aren't collapsed across concurrent chunk downloads, and `a11273a`
   deleted the pre-fetch that used to hide it.** `SecureLinksManager::get_secure_links`/
-  `invalidate_secure_links` (`src/secure_links/links_manager.rs:32-67`; cache at `:19`) have no
+  `invalidate_secure_links` (`src/secure_links/links_manager.rs`; cache at `:22`) have no
   in-flight-request dedup. `download_files` runs up to `self.threads` chunk downloads concurrently via
   `buffer_unordered` (`src/downloader/downloader.rs:379`), each calling `stream_chunk`
   independently, and `stream_chunk` calls `get_secure_links` per chunk (`src/client/client.rs:87`).
@@ -241,11 +232,14 @@ five same-type `backoff(attempt as u32)` casts are all still present. See the
     `a11273a` removed along with the `(String, DownloadUnit)` tupling it sat beside. Nothing replaced
     it, so the first `self.threads` chunk tasks all miss the empty `links_cache` at once and each
     issues its own round-trip. The cache-check and the fetch are not under one lock
-    (`links_manager.rs:39-62`), so the mutex doesn't collapse them either. **Per product bundle, on
-    every download and every repair.**
-  - *Expiry:* if a link expires with several chunks in flight, each hits the CDN 401 at roughly the
-    same time, each calls `invalidate_secure_links`, and each re-fetches independently. The two
-    verification retries (`:349`, `:359`) invalidate too, so a batch of chunks failing MD5 together
+    (`links_manager.rs`'s `get_secure_links`), so the mutex doesn't collapse them either. **Per
+    product bundle, on every download and every repair.**
+  - *Expiry:* **narrowed by this pass.** A cache hit now checks `SecureLinks::is_valid` first
+    (`secure_links.rs`), so an expired entry no longer needs a CDN 401 to be noticed — but N chunks
+    racing past the same deadline still each see the miss independently and each issue their own
+    fetch; the check-then-fetch sequence in `get_secure_links` still isn't one critical section. The
+    two verification retries (`downloader.rs:349,359`) still invalidate reactively on a 401 too, so a
+    batch of chunks failing MD5 together (or a link with no `expires_at` to check proactively)
     produces the same storm.
 
   Restoring the pre-fetch would paper over the cold-start half only; an in-flight dedup (a
@@ -398,6 +392,17 @@ five same-type `backoff(attempt as u32)` casts are all still present. See the
 
 ## Low — style / clippy
 
+- [ ] **`Auth::is_valid`'s 60s margin has the wrong sign.** `valid_until.map_or(false, |t| t >
+  chrono::Utc::now().timestamp() - 60)` (`src/client/auth/auth.rs:68-71`) treats a token as usable
+  for 60 seconds *past* `valid_until`, the opposite of what its own doc comment claims ("a 60-second
+  margin ... to absorb clock skew") and of what `d679048` intended — a margin meant to protect
+  against skew and in-flight requests should make the token look expired *early*, i.e. `valid_until -
+  60 > now`, not stretch it *late*. This pass's `CdnUrlParams::is_valid`
+  (`src/secure_links/secure_links.rs`) implements the intended direction, so the two now visibly
+  disagree despite one's doc comment citing the other's shape. Not fixed here — a one-character
+  change (`t - 60 > now` → `t > now + 60`, or state on `expires_at` as `t - 60 > now`), but it
+  belongs with the auth work, not a secure-links pass.
+
 - [ ] **`open_file`'s `?` is the last exit from the attempt body that doesn't cancel its reported
   bytes.** Eight of the nine exits now emit `ProgressRegression(reported_bytes)`
   (`downloader.rs:289,298,307,321,325,329,339,347,357`); `path_resolver.open_file` (`:268`)
@@ -499,7 +504,24 @@ One line per fixed item, newest first within each group. Detail is in the refere
 
 ### Downloader reliability
 
-*The first entry is this pass's doc-comment work. The next two are in `a0ebf13` (referred to as "the
+- [x] **Secure links were never proactively expired** — this pass. `SecureLinks::is_valid`/
+  `CdnUrlParams::is_valid` (`src/secure_links/secure_links.rs`) check the cached link's `expires_at`
+  against the clock with a 60s margin, mirroring `Auth::is_valid`'s shape (though not, it turns out,
+  its actual sign — see the new Low item above); `SecureLinksManager::get_secure_links`
+  (`links_manager.rs`) checks this on every cache hit and falls through to a fresh fetch on a miss,
+  which overwrites the stale entry. A chunk request past an expired link's deadline no longer has to
+  fail a CDN 401 first. Narrowed, not closed: `ttl`-only links (no `expires_at`) still rely on the
+  reactive 401 path — `ttl` is a duration with no recorded issue time to add it to — and concurrent
+  fetches past the same deadline still aren't collapsed (thundering-herd item above, narrowed
+  accordingly). Unverified: no test pins the boundary.
+- [x] Doc comments (this pass, ahead of the entry above): `SecureLinksManager` and its three methods,
+  `SecureLinks`/`UrlFormat`/`CdnUrlParams` and their public fields, `get_highest_priority_url`, and
+  `parse_url`/`parse_url_redist` (`src/secure_links/`). `mod secure_links` is private (only
+  `SecureLinksError` is re-exported from `lib.rs`), so `#![warn(missing_docs)]` doesn't reach it —
+  these are for the next reader, not lint-enforced.
+
+*The next entry is this pass's doc-comment work on the downloader/gogdl layers. The next two are in
+`a0ebf13` (referred to as "the
 working tree" in entries written before that commit landed — see the preamble). The three after them
 are in `04ff377` and `770537c`, then `527a9c1` and the five after it. All of the above are reachable
 from `v0.0.13-restart`, the current tag.*
