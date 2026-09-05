@@ -1,1432 +1,435 @@
 # GAPS.md
 
-Findings from a full read-through of `gogdl-lib` on the `restart` branch (all `src/*.rs`, `Cargo.toml`,
-`cargo build`, `cargo clippy --all -- -W clippy::all`) on 2026-08-30. Grouped by severity, each item has
-a checkbox so they can be worked one at a time. File:line references were originally accurate as of
-commit `377314c`, then re-checked against `a962ef7`, then against `v0.0.4-restart` (`32e8786`), then
-against the uncommitted changes staged on top of `32e8786` (`9a1f780` "Centralize HTTP requests through
-typed request variants" rewrote all six fetchers and `auth_manager.rs`; that pass then deleted the
-`Request` enum in favor of `HttpClient::fetch(url, auth_manager, decode)`, added the retry-with-refresh
-loop inside `fetch`, and added a `ClientError::Unknown` variant mirrored onto all five other error
-enums) — that whole sequence landed as commit `c7d39b9` ("Centralize HTTP Fetching With Retry Logic").
+Open findings for `gogdl-lib` on the `restart` branch. Current tree: **`2469b13`** ("Restore Retry
+Bounds and Add Backoff Delays"), clean, one commit past the tip tag `v0.0.12-restart`.
 
-Re-checked again on 2026-08-31 against a further uncommitted rewrite staged on top of `c7d39b9`. This
-pass renames things again (`ClientError::Http`→`HttpError`, `ClientError::Unknown`→`MaxRetriesReached`),
-rewrites `AuthError` from scratch (`Unauthorized`→`NotAuthenticated`, `AuthExpired`→`TokenExpired`, the
-old `UrlParseError`/`NetworkError`/`Http`/`DecodeError`/`DeflateError`/`Unknown` variants and the manual
-`impl From<ClientError> for AuthError` are all gone, replaced by `AuthDecodeError`/`AuthEncodeError`/
-`ClientError { inner: String }` and per-call-site `match`es in `auth_manager.rs`), and — the largest
-change — deletes the four remaining hand-written `impl From<ClientError> for XError` blocks
-(`Depot`/`Games`/`SecureLinks`/`DownloadError`) in favor of a single `ClientError(#[from] ClientError)`
-variant on each. That whole sequence landed as commit `43c1d85` ("Refactor Client Errors And Retry
-Handling").
+Line references were re-derived against `2469b13`. Fixed items are collapsed to one line each in
+[Closed](#closed) at the bottom — the detail lives in the referenced commits.
 
-Re-checked a third time, same day (2026-08-31), against a further uncommitted rewrite staged on top of
-`43c1d85` (`git diff --cached`, nothing committed yet). This is a bigger structural move: `src/auth/*`
-was relocated to `src/client/auth/*` (`git status` shows it as five renames), `AuthManager` moved from a
-field each manager (`DepotManager`/`GamesManager`/`SecureLinksManager`/`DownloadManager`) carried
-alongside its `HttpClient` to a field `HttpClient` owns internally — so `HttpClient::fetch`/
-`fetch_no_retry` no longer take `Option<AuthManager>` at all, replaced by two `bool`s
-(`decode`, `require_auth`), and every one of the six fetchers' duplicated "lock the manager, pre-flight
-`get_auth()`, bail on `Err`, clone the manager, drop the lock" blocks is deleted outright rather than
-just mechanically updated. That fixes the long-standing duplication item below — but the signature change
-that made it possible introduced a severe new bug (four call sites pass the two new bools in the wrong
-order) and the module move silently dropped two public re-exports that a downstream consumer
-(`gogdl_flutter`) depends on. Both are written up as new top-of-list items below. Every reference in this
-pass was re-derived with `grep -n`/`Read`/`cargo build`/`cargo clippy` against the current staged tree,
-not carried forward from the `43c1d85` pass.
+**Two standing facts that apply to almost every item here:**
 
-The third pass above landed as commit `9cd8d0a` ("Move authentication into HttpClient"), regressions and
-all. Two follow-up commits the same day fix one regression outright and half-fix the other:
-- `22bf182` ("Correct Fetch Authentication Parameters") swaps the two bool arguments back at exactly the
-  four call sites this doc flagged (`game_build.rs`, `game_details.rs`, `owned_games.rs`,
-  `secure_links.rs`), each now `.fetch(&url, false, true)` — the "four authenticated endpoints fetch with
-  no auth token" item below is fixed, confirmed by re-reading all four call sites directly.
-- `2ae200d` ("Remove secure links API and expose TokenObserver") does two unrelated things in one commit:
-  it deletes `GogDl::get_secure_links` and `secure_links/mod.rs`'s `pub use secure_links::SecureLinks;`
-  entirely (so `SecureLinks` is no longer emitted by any public method — a design choice, not a bug fix,
-  but it does close the `SecureLinks` half of the "three types not exported" item below), and it adds
-  `pub use client::TokenObserver;` to `src/lib.rs`. That second change was only a *half* fix for the
-  export-regression item below — `Auth` itself wasn't re-exported yet, so `TokenObserver`'s
-  `on_token_refreshed(&self, auth: Auth)` still couldn't be spelled out in an external `impl`.
+- **No automated tests exist anywhere** (`grep -rn '#\[test\]\|#\[tokio::test\]' src/` is empty).
+  Treat every fix in this doc as unverified. This is the direct reason the "a failed chunk is
+  reported as success" bug was introduced twice (`f3a944a`, `ac061e0`) and fixed twice with nothing
+  but a re-read catching it either time.
+- **`v0.0.12-restart` as pushed still carries the retry off-by-one** fixed in `2469b13`. Anything
+  resolving that tag gets a downloader that reports failed chunks as successful. Tag `2469b13`
+  before any consumer bumps its pin.
 
-A fourth commit, `3ed4dd0` ("Export Auth from the crate root"), closes that other half: `src/client/mod.rs`
-now also has `pub use auth::Auth;`, and `src/lib.rs` has `pub use client::Auth;` alongside the existing
-`TokenObserver` re-export. Confirmed fixed — a throwaway external test (`impl TokenObserver for Dummy {
-fn on_token_refreshed(&self, _auth: gogdl_lib::Auth) {} }`) compiled cleanly against `3ed4dd0`, where the
-same test previously failed with `E0425: cannot find type 'Auth'`. This closed the export-regression item
-below in full: both halves (`Auth` and `TokenObserver`) are reachable from the crate root again, matching
-the state `32e8786` originally established before `9cd8d0a` regressed it.
-
-A fifth change, staged on top of `3ed4dd0`, is the biggest fix of the whole `9cd8d0a` lineage:
-it rewrites `fetch`'s retry `match` (`src/client/client.rs:45-63`) to add a dedicated arm for
-`Err(ClientError::AuthError(AuthError::TokenExpired))` that calls `refresh_auth` and loops again, and
-splits the `HttpError{status,..}` arm so a non-401 status returns immediately with its original
-`status`/`body` intact instead of being silently retried and discarded. Together these close two items
-this doc has tracked since the very first `c7d39b9` pass: "local expiry is still a hard failure" (the
-common "just launched after an hour" case now actually triggers a refresh, not just a real server 401)
-and "any non-401 HTTP error gets silently retried and its detail discarded". That same change briefly
-also added `FORBIDDEN` (403) alongside `UNAUTHORIZED` (401) as a refresh-triggering status; a further
-uncommitted edit removed it again before this pass, so `fetch` now keys the refresh-and-retry path on
-401 alone. That's the right call — refreshing on a permission-style 403 wouldn't help and would have
-reintroduced the "detail discarded after pointless retries" shape this same change fixed for every
-other non-401 status. Separately, `src/lib.rs` now re-exports every per-layer error enum (`AuthError`,
-`ClientError`, `DepotError`, `DownloadError`, `GamesError`, `SecureLinksError`), closing the long-open
-"error detail
-invisible to consumers" item — confirmed with an external test matching all the way down to
-`GogDlError::ClientError(ClientError::AuthError(AuthError::TokenExpired))`. That whole sequence landed
-as commit `5b7ca2f` ("Handle Auth Failures And Re-Export Errors").
-
-A sixth, uncommitted change staged on top of `5b7ca2f` closes the "two `.parse().unwrap()` calls can
-crash" item below: `SecureLinksManager::get_secure_links` (`src/secure_links/links_manager.rs:46-49`)
-now matches on `game_id.parse::<i32>()` and returns a new `SecureLinksError::IncorrectGameId(String,
-ParseIntError)` variant (`src/secure_links/error.rs:37-38`) instead of unwrapping; and
-`DownloadableProduct::get_downloadable_products`'s filter closure
-(`src/downloader/downloadable_product.rs:61-70`) does the same, returning `false` (i.e. dropping the
-entry) on a parse failure instead of panicking. In the same edit, `ProductBundle::get_download_files`'s
-sibling filter (`src/downloader/product_bundle.rs:52-58`) was changed from `.parse().unwrap_or(0)` to
-the identical match-and-return-`false` shape — so the "one panics, one silently substitutes 0"
-inconsistency this item used to call out is also gone; both now filter the entry out the same way. This
-also introduced a leftover debug `println!(product_id)` in the `downloadable_product.rs` filter closure
-that doesn't match the fix's own error-handling intent (it's not gated behind any logging facade — none
-exists anywhere else in the crate, `grep -rn 'println!\|log::\|tracing::' src/` matches only this one
-line) — written up as its own new Low item below.
-
-No automated tests exist yet (`grep -r '#\[test\]' src/` is empty), so treat every fix here as
-untested until you add coverage for it.
-
-A seventh pass, same day (2026-08-31), covers two more commits on top of `5b7ca2f`: `31809e9`
-("Use AsyncWrite for Streaming Downloads") and `46b6ce3` ("Use Async File Operations for
-Downloads"). Together they close the "Blocking syscalls run directly inside async tasks" High-severity
-item below in full — see that item for detail. `31809e9` switches the whole chunk-decompress-and-write
-path from sync `flate2`/`std::io::Write` to `async-compression`'s `tokio::write::ZlibDecoder` plus a
-`tokio::io::BufWriter`, and makes `HttpClient::stream_chunk`'s callback `AsyncFnMut` so the decoder can
-be awaited from inside the streaming loop; `46b6ce3` follows up by converting `OffsetWriter` to hold a
-`tokio::fs::File` (driven via `AsyncWrite`, not `FileExt::write_at`) and `PathResolver::open_file` to
-`tokio::fs::OpenOptions`, removing the crate's last two direct `std::fs`/blocking-syscall call sites
-on the download write path.
-
-An eighth pass, same day (2026-08-31), covers two more commits on top of `46b6ce3`: `71d49a8`
-("Fail On Incomplete Download Chunks") and `de52483` ("Handle secure link retries in HTTP client").
-`71d49a8` closes the "`Downloader::verify` discards its own result" item below in full: `Downloader::verify`
-(`src/downloader/downloader.rs:104-131`) now binds `verify_download_units`'s return value instead of
-throwing it away as `_missing_units`, and returns the new `DownloadError::ChunkIntegrityCheckFailed(usize)`
-when it's non-empty instead of unconditionally returning `Ok(())`. `de52483` gives `HttpClient::stream_chunk`
-its own retry loop, closing most of two open items below: it now takes a `&SecureLinksManager`/`game_id`/
-`FileType`/`chunk_hash` instead of a pre-built URL, resolves the URL itself from the highest-priority secure
-link inside the loop, and on a 401 calls the new `SecureLinksManager::invalidate_secure_links` before
-re-fetching and retrying (up to 3 attempts) — the same shape `fetch` already used for JSON requests, but a
-parallel, hand-rolled copy rather than a shared funnel. It also gained its own `AuthError::TokenExpired` arm
-that calls `refresh_auth`, mirroring `fetch`'s. This closes the "bypasses the `fetch`/`inner_fetch` funnel
-entirely" item below (via a parallel implementation, not by actually going through the funnel — see that
-item's update for the caveat) and the "no refresh path" half of the "secure links cached forever" item
-below — but note both fixes are scoped to 401/auth-shaped failures only; see the updated "no retry/backoff
-for transient network failures" item for what's still not covered, and the new concurrency item this pass
-added for a thundering-herd gap the fix introduces under concurrent chunk downloads.
-
-A ninth pass, same day (2026-08-31), covers `e4a8560` ("Retry transient network errors in chunk
-streaming"), the very item the eighth pass said was still open. `HttpClient::stream_chunk`
-(`src/client/client.rs:71-144`, grew from `71-135`) now retries its two remaining unhandled failure
-modes too: the non-401 branch of the `HttpError` arm (`:122-127`, a `5xx` or other CDN error) now
-`continue`s while `attempts < 3` instead of returning immediately, and a new
-`Err(ClientError::NetworkError(err))` arm (`:132-137`, a dropped connection or timeout inside
-`stream_chunk_inner`'s `bytes_stream()`) does the same. Both give up and propagate
-(`ClientError::HttpError`/`ClientError::NetworkError` respectively) only once `attempts` has reached 3,
-same as the pre-existing 401/`TokenExpired` arms. This closes the "no retry/backoff for transient
-network failures during download" item below for the chunk-transfer path specifically — see that item's
-update for what's still uncovered (no backoff/delay between attempts, and `fetch`'s separate retry loop
-for JSON/API calls still doesn't handle `NetworkError` either) — and removes the stale caveat from the
-"bypassed the funnel" item below. `cargo clippy` still reports 35 warnings after this change (unchanged
-from the eighth pass): the two pre-existing `client.rs` warnings inside `stream_chunk` shifted down by 9
-lines to `:126`/`:130`, and the new code (`if attempts < 3 { continue; }` and the plain `NetworkError`
-arm) introduced none of its own.
-
-A tenth pass, same day (2026-08-31), covers `2100296` ("Check Disk Space Before Downloading"). This
-closes the "SHA-256 support is unused dead code" item below, but by deletion rather than by finally using
-the dead code: `DepotFile.sha256` (`src/depot/depot_info.rs`) and the whole `ChecksumAlgorithm` enum/
-`Sha256` variant (`src/downloader/util/hash.rs`) are gone outright, `compute_chunk_checksum` now always
-hashes MD5, and `sha2`/`cpufeatures` dropped out of `Cargo.lock`. The commit's main addition is a
-proactive free-space check: `Downloader::download` (`src/downloader/downloader.rs:66-78`) now sums
-`depot_file.size()` (a new method, `:35-41`, summing chunk sizes) over the files the size-verification
-step already found missing, calls the new `PathResolver::get_free_space` (`src/downloader/fs/
-path_resolver.rs:39-55`, finds the `sysinfo::Disks` entry whose mount point `canonical_base` starts with
-and reads `available_space()`), and fails the whole job up front with `DownloadError::NotEnoughFreeSpace`
-if the required total exceeds it, or `DownloadError::CouldNotResolveFreeSpace` if no matching disk is
-found at all. This also resolves the "one failed file allocation aborts the whole download" item below —
-not by changing that behavior, but because that behavior turns out to be correct on inspection: there is
-no point continuing a download that is already known to be short on disk space, whatever the specific
-cause of an allocation failure turns out to be, so failing the whole job fast is the right call, not a
-bug. See both items' entries below for the update. One new gap this pass introduces: `get_free_space`'s
-own error is discarded at its one call site (`Err(_) => return Err(DownloadError::CouldNotResolveFreeSpace)`,
-`:74`) — the new `FileSystemError::NoDiskMatchingPath(PathBuf)` variant it can return, which names exactly
-which `canonical_base` had no matching disk, never reaches the caller. This is the same "error detail
-discarded" shape this doc has flagged repeatedly elsewhere (see the "error detail invisible to consumers"
-and "dead refresh token vs. routine expiry" items), just on a path that has no other coverage yet — noted
-as its own new Low item below. `cargo clippy` moves 35→36: **+1** `manual_map` on the new
-`DepotFile::size` (`depot_info.rs:36-40`, the `if let Some(chunks) = &self.chunks { Some(...) } else {
-None }` shape should be `self.chunks.as_ref().map(...)`), **+1** `needless_return` on the new
-`get_free_space`'s `return Err(FileSystemError::NoDiskMatchingPath(...))` (`path_resolver.rs:49-51`,
-sitting inside a `match` arm where a bare expression would do), and **−1** `enum_variant_names` on
-`FileSystemError` — the Low-severity item below noting `FileSystemError` was flagged for "all variants
-have the same postfix: Error" no longer applies now that the new `NoDiskMatchingPath` variant breaks that
-uniformity, so the lint stopped firing on it (not a fix, just a side effect of adding a differently-named
-variant).
-
-An eleventh pass, 2026-09-03, covers `a11273a` ("Add game repair workflow and chunk metadata mapping"),
-the sole commit between `v0.0.9-restart` (`8e8a392`) and the newly-pushed `v0.0.10-restart`. It also
-belatedly covers the three commits between the tenth pass's `2100296` and `v0.0.9-restart` that were
-marked fixed inline but never got a narrative entry (`d679048`, `51b7a53`, `8e8a392` — all three items
-are ticked in the auth section below and were re-verified against the current tree this pass).
-
-`a11273a` adds a repair workflow and re-shapes how download units are built:
-- **New public API:** `GogDl::repair_game` → `DownloadManager::repair_game` → `Downloader::repair`
-  (`src/downloader/downloader.rs:39-138`). `repair` runs four stages — file-size verification, disk-space
-  check + allocation, **per-chunk MD5 verification**, then download of only the units that failed
-  verification — where `download` runs three and downloads every unit unconditionally. Repair is
-  therefore the crate's only incremental/resume-shaped path (see the new consistency item below).
-- **New progress variant:** `DownloadStageEvent::VerificationStage(VerificationEvent)`, emitted only by
-  `repair`'s stage 3. This is a breaking change for consumers that match the enum exhaustively — see the
-  new `lumen-cli` item below.
-- **Chunk-metadata mapping moved:** `DownloadUnit::from_depot_file(DepotFile)` is replaced by
-  `DepotFile::to_download_units(&self, product_id: String)` (`src/depot/depot_info.rs:45-68`) plus
-  `DownloadUnit::from_product_bundles(&[ProductBundle])` (`src/downloader/download_unit.rs:22-32`), and
-  `DownloadUnit` gained a `product_id: String` field, so the `(String, DownloadUnit)` tuple
-  `download_files` used to carry is gone. `download_files` now takes an already-built
-  `Vec<DownloadUnit>` instead of `&[ProductBundle]`, which is what lets `repair` hand it a filtered
-  subset. Clean refactor; no behavior change on its own.
-- **Silently removed:** `download_files`'s secure-links pre-fetch loop (the `stream::iter(bundles)
-  .map(..).buffer_unordered(self.threads)` block that warmed `SecureLinksManager`'s cache before any
-  chunk started). Nothing replaced it — see the updated thundering-herd item below, which this turns
-  from an expiry-only corner case into something that fires at the start of every download and repair.
-
-Two findings this pass are not about `a11273a` at all — they are pre-existing on `restart` and simply
-went unnoticed until the repair path made `download_files` load-bearing for a second workflow. Both are
-regressions *relative to mainline `master`*, where the same problems were found and fixed for `v0.1.1`:
-the retry-into-a-dirty-writer bug (High, below) and `DownloadEvent::Progress` being emitted per network
-read rather than per buffer flush (High, below — the latter is the memory leak the workspace
-`CLAUDE.md` documents as the reason `v0.1.1` exists). The first of these also partly invalidates a
-checkbox the ninth pass ticked, which is re-opened below. `cargo build --lib` is clean (no rustc
-warnings); `cargo clippy --lib -- -W clippy::all` moves 37→39 (see the clippy section for the
-breakdown, including the 36→37 step the unlogged `51b7a53` introduced).
-
-**`a11273a` closes no previously-open item in this doc.** One older item did get ticked this pass, but
-for a fix that landed back on 2026-08-31: the leftover debug `println!` was removed in `1d98eb7`
-("Remove Debug Print From Product Filtering", first tagged in `v0.0.7-restart`) and the checkbox was
-simply never updated — `grep -rn 'println!\|eprintln!\|log::\|tracing::' src/` is empty crate-wide now.
-Still true and re-verified this pass: no automated tests exist anywhere
-(`grep -rn '#\[test\]\|#\[tokio::test\]' src/` returns nothing), so every fix in this doc — including
-the four the repair work now depends on — remains untested.
-
-A twelfth pass, 2026-09-04, covers the two code commits between `v0.0.10-restart` (`a11273a`) and the
-newly-pushed `v0.0.11-restart` (`f3a944a`): `82c7980` ("Remove chunk download retry logic") and
-`f3a944a` ("Retry downloads after authentication failures"). The third commit in the range, `1917464`,
-is the eleventh pass's own write-up of this file and contains no code.
-
-The two commits are one change split in half: **the chunk retry loop moves up one level**, out of
-`HttpClient::stream_chunk` and into `Downloader::download_files`. `82c7980` deletes `stream_chunk`'s
-entire `while attempts < 3` body (`src/client/client.rs:71-103`, down from `71-144`), leaving a
-straight-line method that resolves the secure link, builds the URL and calls `stream_chunk_inner`
-exactly once; its `file_type` parameter also becomes `&FileType` so the caller can keep ownership
-across attempts. `f3a944a` then wraps `download_files`'s per-unit task body in `for _attempt in 0..3`
-(`src/downloader/downloader.rs:262-323`), with a four-arm `match` on the `stream_chunk` result that
-invalidates the cached secure links on an auth-shaped failure and `continue`s on everything else.
-
-**The move itself is the right call, and it closes the eleventh pass's worst finding.** The whole
-decoder/writer stack — `open_file` → `OffsetWriter::new` (which `seek`s to `download_unit.offset`) →
-`HashingWriter` → `ZlibDecoder` — is now rebuilt *inside* the loop (`:264-274`), so every attempt
-starts from a fresh file handle positioned at the right offset, with a zeroed MD5 and a clean zlib
-stream. That is exactly what the "retry resumes into a dirty writer" item asked for; it is ticked
-below, and the `NetworkError` mid-transfer case it said could never recover now genuinely can.
-
-**But the loop as written has two severe defects, and nothing in the toolchain catches either.**
-`cargo build --lib` is free of rustc warnings and `cargo clippy --lib -- -W clippy::all` actually drops
-39→37 (both removals are warnings that lived inside the deleted `stream_chunk` loop; the new code adds
-none — no lint fires on a `for` loop that is missing its `break`):
-- There is no `break` after a successful transfer, so the loop always runs all three iterations and
-  **every chunk of every download and every repair is transferred three times.**
-- When all three attempts fail, the loop condition simply runs out and the task returns `Ok(())`
-  (`:324`), so **a chunk that never downloaded is reported as a success.**
-
-Both are written up as new High items at the top of the downloader-reliability section below. They also
-make two items this doc already tracks worse rather than better: `DownloadEvent::Progress` is now
-emitted three times per byte transferred, and the dead `AuthError` arm the eleventh pass found in
-`stream_chunk` was carried across into the new `match` rather than dropped with the rest of the loop.
-No other item changes state this pass. Still no tests anywhere
-(`grep -rn '#\[test\]\|#\[tokio::test\]' src/` returns nothing), which is the direct reason a
-regression this size — a 3× bandwidth multiplier and a silently-swallowed failure on the crate's
-primary workflow — can land without anything going red.
-
-A thirteenth pass, same day (2026-09-04), covers an **uncommitted** change staged on top of `f3a944a`
-(`git diff`; nothing committed, and `v0.0.11-restart` is still the tip tag), touching
-`src/downloader/downloader.rs` and nothing else. It fixes both High items the twelfth pass opened, and
-fixes the second more thoroughly than that item asked for:
-
-- `for _attempt in 0..3` becomes `for attempt in 0..3`, and the loop body now ends in `break` (`:334`),
-  placed after the `decoder.shutdown()` and MD5 verification block — exactly where the twelfth pass
-  said it had to go, so verification still runs on the attempt that succeeded. A chunk that transfers
-  correctly is requested once again instead of three times; the 3× bandwidth, wall-time and CPU
-  multiplier on every download and repair is gone.
-- Each of the four match arms grows an `if attempt != 2 { continue; }` guard and, on the third attempt,
-  returns the real error instead of letting the loop run out (`:283-312`), so a chunk that fails every
-  attempt now propagates a `DownloadError` rather than being collected as `Ok(())`. The error detail
-  survives too: the `HttpError` arm returns its original `status`/`body`, `SecureLinksError` its
-  `inner`, and the catch-all binds `err` instead of discarding it. That is better than the
-  pre-`82c7980` behavior this doc used as the baseline, which returned a detail-free
-  `ClientError::MaxRetriesReached` — and it is the same "stop throwing away the error" shape several
-  other items here have asked for.
-
-`cargo build --lib` is clean; `cargo clippy --lib -- -W clippy::all` moves 37→38 on a single
-`redundant_field_names` (`inner: inner` at `:295`).
-
-Three things the change leaves behind, all written up below: the retry count is now two literals that
-have to agree (`0..3` and four copies of `!= 2`), so shortening the loop silently reinstates the bug
-just fixed; `let _ = body;` at `:298` is now vestigial, since `body` is genuinely returned at `:305`;
-and the local, non-retryable failures (`ChunkStreamCallbackError` from a full disk or a zlib error,
-`UrlParseError` from a bad link template) still burn all three attempts before reporting — far less
-serious now that they report at all, but still the wrong shape. One further gap the change makes newly
-*visible* rather than newly broken: an MD5 mismatch still fails on the first try without retrying,
-which is the one failure a working retry loop is best placed to fix.
-
-A fourteenth pass, 2026-09-04, covers the three commits between `v0.0.11-restart` (`f3a944a`) and the
-newly-pushed `v0.0.12-restart` (`2b1cd7f`): `ac061e0` ("Retry Download Attempts Correctly"), `7eb5d5e`
-("Propagate Non-Retryable Client Errors") and `2b1cd7f` ("Retry network errors with a delay"). The
-first of these is the change the thirteenth pass reviewed uncommitted — **but not the version it
-reviewed.**
-
-**Between that review and the commit, the loop bound was lowered from `0..3` to `0..2` while all four
-`if attempt != 2` guards were left exactly as written.** `for attempt in 0..2` yields
-`attempt ∈ {0, 1}`, so `attempt != 2` is true on *every* iteration, every arm `continue`s, and not one
-of the four `return Err(..)` statements `ac061e0` adds is reachable. The loop runs out and the
-`Ok(())` at `src/downloader/downloader.rs:344` is what `buffer_unordered` collects — so **a chunk that
-fails every attempt is still reported as a successful download**, which is the exact High item the
-thirteenth pass ticked. It is re-opened below.
-
-This is, word for word, the failure the thirteenth pass's own "the retry count is now two facts that
-have to agree" item wrote up as a hypothetical: *"Lowering the bound to `0..2` — an entirely plausible
-'two attempts is enough' tweak — makes `attempt != 2` true on every iteration, so every arm
-`continue`s, the loop runs out, and the swallowed-error bug the thirteenth pass just fixed returns in
-full, silently, with no compiler or clippy signal."* It landed in the same commit as the prediction.
-Nothing in the toolchain caught it: `cargo build --lib` has no rustc warnings, and `cargo clippy --lib
--- -W clippy::all` does not flag an always-true comparison between a loop variable and a literal
-outside its range, nor the unreachable `return`s behind it. The root cause — a retry bound and its
-last-attempt sentinel kept as independent literals — now has a High item of its own at the top of the
-downloader-reliability section; the original entry stays under "Medium — duplication & consistency"
-with the structural argument, updated to record that its prediction came true.
-
-What *did* land correctly:
-- **The `break` is real.** `ac061e0` puts `break` at `:342`, after the `decoder.shutdown()`/MD5
-  verification block — the exact placement the twelfth pass asked for. A chunk that transfers
-  correctly is now requested once, not three times; the 3× bandwidth/wall-time/CPU multiplier on every
-  download and repair is genuinely gone, and that item stays closed.
-- **`7eb5d5e` closes the "local, non-retryable failures burn all three attempts" item in full.** It
-  adds two arms *above* the catch-all — `ClientError::ChunkStreamCallbackError` (`:308-310`) and
-  `ClientError::UrlParseError` (`:311-313`) — each an unconditional `return Err(..)` with no `attempt`
-  guard at all. A full disk, an `OffsetWriter` over-length guard, a zlib error or a malformed
-  secure-link template now fails on first occurrence instead of re-downloading the chunk. These two are
-  also, by accident, the *only* error arms in the loop that can actually report anything, since the
-  other four are behind the always-true guard.
-- **`2b1cd7f` gives transient network failures a delay and gives `fetch` a `NetworkError` arm at all.**
-  `download_files`'s catch-all (`:314-320`, where `ClientError::NetworkError` lands) now sleeps 5s
-  before retrying, and `HttpClient::fetch` (`src/client/client.rs:62-68`) gains
-  `Err(ClientError::NetworkError(err))` with the same 5s sleep — closing the "no retry/backoff for
-  transient network failures" item below, whose two remaining halves were exactly those.
-
-But `2b1cd7f` also **copies the off-by-one into `fetch`**, which the duplication item had been holding
-up as the loop with the better shape: `while attempts < 3` became `for attempts in 0..2`
-(`src/client/client.rs:46`) with `if attempts != 2` (`:63`), so `fetch`'s
-`return Err(ClientError::NetworkError(err))` at `:67` is unreachable too. A dropped connection is
-retried twice, sleeps a pointless 5s after the *final* attempt, and then reports the detail-free
-`ClientError::MaxRetriesReached` at `:74` — the same "error detail discarded" shape this doc has now
-flagged in five places. Less severe than the downloader half (`fetch` at least fails rather than
-claiming success), but written up as its own High item below. Both loops also quietly dropped from 3
-attempts to 2, which is a defensible choice on its own and is only worth noting because it was not the
-stated purpose of either commit.
-
-`cargo build --lib` is clean; `cargo clippy --lib -- -W clippy::all` moves 37→38 across the three
-commits — the single `redundant_field_names` (`inner: inner`, `src/downloader/downloader.rs:296`) that
-`ac061e0` introduced and the thirteenth pass already predicted; `7eb5d5e` and `2b1cd7f` add none. Still
-no tests anywhere (`grep -rn '#\[test\]\|#\[tokio::test\]' src/` returns nothing) — a single unit
-test that drives `download_files` against a chunk source failing every attempt would have caught this
-regression the day it was written, and would have caught the twelfth pass's identical one too.
-
-A fifteenth pass, same day (2026-09-04), covers an **uncommitted** change staged on top of `2b1cd7f`
-(`git diff`; nothing committed, `v0.0.12-restart` is still the tip tag) touching
-`src/client/client.rs` and `src/downloader/downloader.rs` and nothing else. It closes both High items
-the fourteenth pass opened and re-opened, and reworks the delay `2b1cd7f` had just added:
-
-- **The off-by-one is fixed in both loops.** `for attempt in 0..2` becomes `for attempt in 0..3` in
-  `download_files` (`src/downloader/downloader.rs:263`) and in `HttpClient::fetch`
-  (`src/client/client.rs:46`, which also renames its `attempts` binding to `attempt` to match). With
-  the bound back at 3 the `attempt != 2` sentinel is false on the third and final iteration, so all
-  five `return Err(..)` statements behind it become reachable. `download_files` propagates a real
-  `DownloadError` for a chunk that fails every attempt instead of collecting `Ok(())`, and `fetch`
-  returns the original `ClientError::NetworkError(err)` instead of falling out to the detail-free
-  `ClientError::MaxRetriesReached`. Both items are ticked below.
-- **The delay now reaches every retrying arm, and is linear rather than flat.**
-  `Duration::from_secs(5)` becomes `Duration::from_secs((attempt + 1) * 2)` — 2s before the second
-  attempt, 4s before the third — and the same `sleep` is added to the three `download_files` arms that
-  previously retried with no wait at all: `AuthError` (`:287`), `SecureLinksError` (`:295`) and
-  `HttpError` (`:306`), alongside the catch-all it already had (`:319`). `fetch` keeps its single
-  `NetworkError` sleep (`client.rs:64`).
-- **Nothing sleeps on the way out any more.** This falls out of the off-by-one fix rather than being
-  addressed directly: the `sleep` sits inside `if attempt != 2 { .. }`, which is now genuinely false on
-  the last attempt, so a job that exhausts its retries reports immediately instead of pausing 5s first.
-  Total added latency for a chunk that fails all three attempts is 6s, spent entirely between attempts.
-
-Two of the three sub-points on the fourteenth pass's backoff item are therefore closed and the item is
-re-scoped below to what's left: the delay is linear and **unjittered**, so `self.threads` chunk tasks
-failing together against one downed CDN still wake and retry in lockstep. One new wrinkle the change
-introduces: the auth-shaped arms now wait too, and a 401 on an expired secure link is a routine,
-entirely local, entirely predictable event that `invalidate_secure_links` + a re-fetch fixes
-immediately — making it wait 2s is latency spent on something that was never a congestion signal. See
-the re-scoped item for both.
-
-`cargo build --lib` is clean and `cargo clippy --lib -- -W clippy::all` stays at **38** — the change
-introduces no warnings and removes none. Still no tests
-(`grep -rn '#\[test\]\|#\[tokio::test\]' src/` returns nothing), which remains the reason the same
-swallowed-error bug has now been introduced twice (`f3a944a`, `ac061e0`) and fixed twice with nothing
-but a re-read of the loop catching it either time. One `#[tokio::test]` driving `download_files`
-against a chunk source that fails every attempt would pin it permanently, and would fail today against
-`v0.0.12-restart`.
+`cargo build --lib` is free of rustc warnings. `cargo clippy --lib -- -W clippy::all` reports
+**38 warnings** — see the [clippy](#low--style--clippy) section.
 
 ---
 
-## High — correctness bugs
-
-- [x] **Four authenticated endpoints were fetching with no auth token at all.** *Fixed in `22bf182`
-  ("Correct Fetch Authentication Parameters").* The two new `bool` parameters on `HttpClient::fetch`
-  (`decode`, `require_auth`) had been swapped at four call sites when `9cd8d0a` changed the signature
-  from `fetch(url, auth_manager: Option<AuthManager>, decode: bool)` to `fetch(url, decode: bool,
-  require_auth: bool)`. `22bf182` corrects exactly the four flagged call sites, each now
-  `.fetch(&url, false, true)` — confirmed by re-reading the current files:
-  - `src/games/game_build.rs:38` (`GameBuilds::get_game_builds`)
-  - `src/games/game_details.rs:29` (`GameDetails::get_game_details`)
-  - `src/games/owned_games.rs:27` (`OwnedGames::get_owned_games`)
-  - `src/secure_links/secure_links.rs:43` (`SecureLinks::get_secure_links`)
-
-  All six authed fetchers (these four plus `build_metadata`/`depot_info`, which were already correct)
-  now send the bearer token and route real 401s into `fetch`'s refresh-and-retry loop correctly. No test
-  exists to pin this down, though — see the missing-coverage item below.
-
-- [x] **`Auth` and `TokenObserver` were dropped from the crate root by `9cd8d0a`'s `src/auth/*` →
-  `src/client/auth/*` move.** *Fixed in two steps: `TokenObserver` in `2ae200d`, `Auth` in an uncommitted
-  follow-up.* The old `src/auth/mod.rs` (which had `pub use auth::Auth; pub use auth::TokenObserver;`,
-  re-exported from `src/lib.rs`) no longer exists after the move, and nothing replaced the crate-root
-  re-export for either type. `2ae200d` added `pub use client::TokenObserver;` back; a further uncommitted
-  change adds `pub use auth::Auth;` to `src/client/mod.rs` and `pub use client::Auth;` to `src/lib.rs`.
-  Confirmed fixed end-to-end with an external test: `impl TokenObserver for Dummy { fn
-  on_token_refreshed(&self, _auth: gogdl_lib::Auth) {} }` now compiles against this tree (it previously
-  failed on `Auth` with `E0425`, and before that on `TokenObserver` with `E0432`). This restores what
-  `32e8786` originally established and `9cd8d0a` regressed — `gogdl_flutter`'s `TokenObserver` bridge
-  wrapper should compile against this tree again.
-
-- [x] **`refresh_auth` persists tokens without `valid_until`.** *Fixed in `998829d`, silently regressed
-  by `9a1f780`, fixed again in the current uncommitted change.* `9a1f780`'s rewrite of `refresh_auth`
-  to go through `client.fetch(Request::Get { url })` dropped the `auth.valid_until = Some(...)` line
-  from the `Ok` branch it replaced — `git show 9a1f780 -- src/auth/auth_manager.rs` shows the
-  assignment simply isn't carried into the new code, even though this very checkbox stayed marked
-  fixed (nothing in the `32e8786` re-check caught it; the committed tree at `32e8786` genuinely
-  refreshes tokens with `valid_until: None`, which `is_valid()` then reads as immediately expired).
-  The current uncommitted change re-adds it: `refresh_auth` now calls `client.fetch_no_retry(&url,
-  None, false)` and then sets `auth.valid_until = Some(auth.expires_in as i64 +
-  chrono::Utc::now().timestamp())` (`src/auth/auth_manager.rs:78-79`) before storing, matching
-  `login_with_code`'s existing `:48-50`. Worth a regression test given it has now broken twice across
-  refactors with no automated coverage to catch it — see the missing-coverage item below.
-
-- [x] **Silent, internal token refreshes are invisible to callers.** *Addressed in `998829d` +
-  `b87d8dd`; re-broken by `9cd8d0a`, fixed again by the `Auth`/`TokenObserver` export item above.* `AuthManager` holds an optional `TokenObserver`
-  (`src/client/auth/token_observer.rs`) that `refresh_auth` notifies
-  (`src/client/auth/auth_manager.rs:86-93`), so the internal 401-retry path no longer refreshes
-  invisibly, and the callback hands over the whole `Auth`, so the rotated refresh token reaches the app.
-  `GogDl::refresh_auth()` doesn't exist, so the observer is the only channel by which an app can learn
-  about a refresh — which is now usable again now that both types it needs are nameable outside the
-  crate.
-
-- [x] **`valid_until` is dead.** *Addressed in `998829d`* — `Auth::is_valid()`
-  (`src/client/auth/auth.rs:32-35`) compares it against `chrono::Utc::now()`, and `AuthManager::get_auth`
-  now gates on it. It is wired as a hard gate rather than a pre-flight refresh, which introduces two
-  problems still open below (no proactive refresh, reachable `unwrap()` panics).
-
-- [x] **Restoring persisted tokens locks the app out entirely.** *Fixed in `6c76f03`*, which dropped
-  `#[serde(skip_deserializing)]` from `Auth::valid_until` (`src/client/auth/auth.rs:14`), so
-  `restore_from_string` now recovers the stored expiry instead of always producing `None`. (`Option`
-  fields default to `None` when absent, so the GOG API responses — which never carry `valid_until` —
-  still deserialize, and both login and refresh overwrite it with a computed value.) A session
-  restored *before* its access token expires now works. A session restored *after* expiry still fails
-  — that case belongs to the next item.
-
-- [x] **Local expiry is finally a refresh-and-retry case, not a hard failure — the item this doc has
-  tracked through every pass since `c7d39b9`.** *Fixed in the uncommitted change on top of `3ed4dd0`.*
-  `fetch`'s retry `match` (`src/client/client.rs:45-63`) now has a dedicated arm,
-  `Err(ClientError::AuthError(AuthError::TokenExpired)) => { self.auth_manager.refresh_auth(&self)
-  .await?; }` (`:57-59`), that sits alongside the `HttpError{..}` arm rather than falling into the
-  catch-all. Traced end to end: `inner_fetch`, when `require_auth` is true, calls
-  `auth_manager.get_auth()`; on local expiry that returns `Err(AuthError::TokenExpired)`, wrapped as
-  `ClientError::AuthError(AuthError::TokenExpired)`; `fetch`'s loop now matches that exact shape,
-  refreshes, and loops back to retry `inner_fetch` — which re-checks `get_auth()`, now valid, and
-  proceeds with the real request. The common "just launched after an hour" case is genuinely covered
-  now, not just a real server 401. `AuthError::NotAuthenticated` (never logged in at all) correctly
-  still falls to the catch-all instead of attempting a pointless refresh. `GogDl` still has no public
-  `refresh_auth()`/pre-flight-refresh entry point, but that's no longer load-bearing now that `fetch`
-  handles it internally on every call.
-
-- [x] **The retry-with-refresh loop in `HttpClient::fetch` now catches both a real server 401 and local
-  expiry, on every authed fetcher.** `fetch` (`src/client/client.rs:36-66`) matches
-  `Err(ClientError::HttpError { status, body })` and, when `status == UNAUTHORIZED` and `require_auth` is
-  true, calls `refresh_auth` before looping (`:47-56`); it also matches
-  `Err(ClientError::AuthError(AuthError::TokenExpired))` directly (`:57-59`, see the item above). Since
-  `22bf182` fixed the swapped `require_auth` arguments, all six authed fetchers reach both paths
-  correctly. A brief detour through also matching `FORBIDDEN` (403) here was reverted before this pass
-  landed — see the caveat on the item below for why that would have been the wrong call.
-
-- [x] **New regression: any non-401 HTTP error was silently retried up to 3 times with its detail
-  discarded.** *Fixed in the same uncommitted change as the item above.* The `HttpError{..}` arm
-  (`src/client/client.rs:47-56`) now has an explicit `else { return Err(ClientError::HttpError { status,
-  body: body }) }` for any status other than `UNAUTHORIZED` — a 404/403/500/etc. now fails fast with its
-  original status and body preserved, exactly like before `c7d39b9` regressed this. Fully closed, no
-  caveat: a brief version of this change also matched `FORBIDDEN` (403) into the refresh-and-retry path,
-  which would have reintroduced this exact "detail discarded after pointless retries" shape for a
-  genuine permission-denied 403 — that was reverted before landing, so a 403 now falls straight into
-  this `else` and returns immediately, same as any other non-401 status.
-
-- [x] **Token observer only emits the access token.** *Fixed in `b87d8dd`, unaffected by this pass* —
-  `TokenObserver::on_token_refreshed(&self, auth: Auth)` (`src/client/auth/token_observer.rs:4`) still
-  hands over the full `Auth`, so the rotated refresh token and the computed `valid_until` are both
-  available to persist, and both are now actually usable outside the crate per the export item above.
-
-- [x] **`TokenObserver` cannot be implemented outside the crate.** *Fixed in `32e8786`, re-broken by
-  `9cd8d0a`, re-fixed in full by `2ae200d` + `3ed4dd0`.* Both `TokenObserver` and `Auth` are exported
-  from `src/lib.rs` (see the item at the top of this section), so an external `impl TokenObserver for Foo
-  { fn on_token_refreshed(&self, auth: Auth) { .. } }` compiles again — confirmed directly. `AuthError`
-  is now exported too (see the error-detail item below), so a consumer's `TokenObserver` impl can also
-  match on why a refresh happened, if it wants to. `AuthManager` alone remains crate-private — a narrow
-  residual gap (a consumer can register an observer, receive `Auth`, and match `AuthError`, but still
-  can't hold an `AuthManager` handle directly), which matters only if something wants manual control over
-  auth state outside what `GogDl`'s own methods already expose.
-
-- [x] **The error detail added in `a962ef7` was invisible to consumers.** *Fixed in the uncommitted
-  change on top of `3ed4dd0`.* `src/lib.rs` now re-exports every per-layer error enum — `AuthError`,
-  `ClientError`, `DepotError`, `DownloadError`, `GamesError`, `SecureLinksError` (`:30-35`) — alongside
-  the `GogDlError` it already exported. Confirmed with an external test that matches all the way down
-  through the full nesting: `GogDlError::ClientError(ClientError::AuthError(AuthError::TokenExpired))`,
-  and each of `GogDlError::{GameError,DepotError,DownloadError,SecureLinksError}(XError::ClientError(_))`,
-  all compile against this tree. `GogDlError::AuthError(_)` as a single top-level variant still doesn't
-  exist (auth failures still arrive nested inside whichever layer produced them, as
-  `XError::ClientError(ClientError::AuthError(..))`), so a consumer wanting "was this an auth problem"
-  across every call still needs to match down through two enums rather than one flat variant — a real but
-  much smaller ergonomics gap than "cannot name the type at all", which is what this item used to
-  describe. `AuthManager` remains crate-private (unaffected by this pass) — see the `TokenObserver` item
-  above for what that still blocks.
-
-## High — panics on untrusted data
-
-- [x] **Two `.parse().unwrap()` calls could crash the process on bad input, and a sibling file handled
-  the identical failure differently.** *Fixed in the uncommitted change on top of `5b7ca2f`.*
-  - `src/secure_links/links_manager.rs:46-49` — `game_id.parse::<i32>()` (where `game_id: &str` is a
-    public API parameter that ultimately comes from the Flutter/Dart side across FFI) is now matched,
-    returning the new `SecureLinksError::IncorrectGameId(String, ParseIntError)` variant
-    (`src/secure_links/error.rs:37-38`) instead of unwrapping. A malformed caller-supplied id now
-    returns an error instead of panicking the whole process.
-  - `src/downloader/downloadable_product.rs:61-70` — the filter closure now matches
-    `product_id.parse::<i32>()` and returns `false` (dropping the entry) on `Err` instead of unwrapping.
-  - `src/downloader/product_bundle.rs:52-58` — changed from `.parse().unwrap_or(0)` to the same
-    match-and-`false` shape as the item above, so the previous inconsistency (one path panicking, the
-    other silently substituting `0`) is gone too — both now filter the unparseable entry out the same
-    way.
-  - Caveat: the `downloadable_product.rs` filter closure also picked up a leftover debug
-    `println!("{}", product_id)` in this same edit — see the new Low item below.
-
-- [x] **Twelve `get_auth().await.unwrap()` calls became reachable panics in `998829d`.** *Fixed in
-  `9a1f780`, and the residual double-`get_auth()` cost noted in the previous pass is now also gone.* —
-  `grep -rn 'get_auth().await.unwrap()' src/` is still empty, and this pass deleted the six fetchers'
-  pre-flight `get_auth()` blocks entirely (see the duplication item below) rather than just binding their
-  `Ok` — so there's no longer a redundant pre-flight call being paid for on top of the one
-  `inner_fetch` makes internally (`src/client/client.rs:87-90`). Every authed request now does exactly
-  one `get_auth()` await over the mutex, down from two.
-
 ## High — downloader reliability
 
-- [x] **Both retry loops are off by one: a `0..2` bound tested against `!= 2`, so every last-attempt
-  branch is dead code.** *Opened at the fourteenth pass against `v0.0.12-restart`; **fixed in the
-  uncommitted change on top of `2b1cd7f`** reviewed at the fifteenth. Both bounds go back to `0..3`
-  (`src/downloader/downloader.rs:263`, `src/client/client.rs:46`, the latter also renaming `attempts`
-  to `attempt`), so `attempt != 2` is false on the third and last iteration and all five
-  `return Err(..)` statements behind it are reachable. Verified by re-reading both loops: the
-  downloader's four arms (`:284-322`) now propagate a real `DownloadError` on the third failure rather
-  than falling through to `Ok(())`, and `fetch`'s `NetworkError` arm (`client.rs:62-68`) returns the
-  original error rather than the loop running out into `ClientError::MaxRetriesReached` at `:74`. The
-  fix is still two literals that have to agree — see the duplication item, which stays open for
-  exactly that reason and is now the only thing keeping this from being structurally safe. **Not
-  tagged:** `v0.0.12-restart` as pushed still carries the `0..2` bound, so anything resolving that tag
-  gets the bug.*
-
-  Original finding: `download_files` is `for attempt in 0..2`
-  (`src/downloader/downloader.rs:263`) and `HttpClient::fetch` is `for attempts in 0..2`
-  (`src/client/client.rs:46`); both bind values `{0, 1}` and both then gate their final-attempt
-  behavior on `!= 2` (`downloader.rs:286,293,303,315`; `client.rs:63`). The guard can never be false,
-  so all five `return Err(..)` statements behind it are unreachable and every failure path
-  `continue`s until the loop bound runs out. Consequences differ by loop:
-  - **`download_files`: a chunk that fails every attempt is collected as `Ok(())`** — see the
-    re-opened item directly below, which is the same bug the twelfth pass opened and the thirteenth
-    ticked.
-  - **`fetch`: the error detail is thrown away.** A dropped connection retries twice, sleeps 5s after
-    the *last* attempt for nothing, falls out of the loop and returns
-    `ClientError::MaxRetriesReached` (`client.rs:74`) instead of the `ClientError::NetworkError(err)`
-    at `:67` that `2b1cd7f` wrote specifically to preserve it. Same for a 401 whose refresh doesn't
-    take. Not a correctness failure the way the downloader half is — the call does fail — but it
-    silently undoes the "stop discarding error detail" work of `5b7ca2f` for exactly the failure
-    `2b1cd7f` set out to handle.
-
-  Neither rustc nor `cargo clippy --lib -- -W clippy::all` says anything: comparing a loop variable
-  against a literal outside its range is not a lint, and the `return`s are unreachable only
-  dynamically. The fix is the same in both places and is the fix the duplication item below has been
-  asking for since the thirteenth pass: derive the sentinel from the bound
-  (`const RETRIES: usize = 3;` … `if attempt + 1 == RETRIES`), or drop the per-arm guards entirely,
-  keep the last error in a local, and return it once after the loop — one exit instead of five.
-
-- [x] **The new retry loop never breaks, so every chunk is downloaded three times.** *Opened by the
-  twelfth pass; fixed for real in `ac061e0` ("Retry Download Attempts Correctly", `v0.0.12-restart`).
-  The loop body now ends in `break` (`src/downloader/downloader.rs:342`), placed after the
-  `decoder.shutdown()`/MD5 verification block rather than inside the `Ok(_)` match arm — the exact
-  placement this item's closing sentence called for, so the successful attempt is still verified before
-  the loop exits. A chunk that transfers correctly is requested exactly once. This half of `ac061e0`
-  survived the commit intact — unlike the error-propagation half, which did not; see the off-by-one
-  item above. Note the loop bound also went `0..3` → `0..2` in the same commit, so the retry budget is
-  now 2 attempts rather than 3.*
-
-  Original finding: `download_files`'s per-unit task is now `for _attempt in 0..3 { ... }`
-  (`src/downloader/downloader.rs:262-323`), and the success arm of the `stream_chunk` match is
-  `Ok(_) => {}` (`:282`) — it falls through to the verification block and then straight back to the top
-  of the loop. Nothing in the body `break`s, returns `Ok`, or records that the transfer already
-  succeeded; the only early exit is the `return Err(..)` on a short-write/MD5 mismatch (`:311-322`).
-  So a chunk that downloads correctly on the first attempt is re-requested from the CDN, re-decompressed
-  and re-written to the same file offset twice more. This is not a corner case: it is every chunk of
-  every `download_game` and every `repair_game` — **3× the bytes off the network, 3× the wall-clock
-  time, 3× the zlib and MD5 CPU**, plus three `get_secure_links` cache lookups per chunk instead of one.
-  The bytes on disk still end up correct (each attempt seeks back to `download_unit.offset` and writes
-  the same decompressed data), which is exactly why this will never surface as a failure — only as a
-  download that is inexplicably three times slower than the same game on mainline `master`. The fix is
-  one line: `break` after the verification block at `:322` (not in the `Ok(_)` arm at `:282`, which
-  would skip `decoder.shutdown()` and the MD5 check along with it).
-
-- [x] **A chunk that fails every attempt is reported as a successful download.** *Opened by the
-  twelfth pass; ticked by the thirteenth against an uncommitted working tree; re-opened at the
-  fourteenth, because what landed as `ac061e0` was not what that pass reviewed; **closed at the
-  fifteenth** by the uncommitted `0..2` → `0..3` fix on top of `2b1cd7f`. The four
-  `return Err(DownloadError::ClientError(..))` statements (`src/downloader/downloader.rs:284-322`)
-  were always written correctly — the `HttpError` arm returns its original `status`/`body`,
-  `SecureLinksError` its `inner`, the catch-all binds `err` — and are now reachable, because
-  `attempt != 2` is false on the final iteration of a `0..3` loop. A chunk that fails all three
-  attempts propagates out through `buffer_unordered` to
-  `results.into_iter().collect::<Result<(), DownloadError>>()?` (`:354`) instead of contributing an
-  `Ok(())` (`:347`), so `download`/`repair` no longer return success for an install with a hole in it.
-  The `Ok(())` is reachable only through the `break` at `:345`. Two sub-points moved independently:
-  the local, non-retryable failures fail fast as of `7eb5d5e` (closed below), while `download` still
-  has no verification stage of its own. **Untagged:** `v0.0.12-restart` still has the bug; this is
-  closed against the working tree only.*
-
-  Original finding: every non-`Ok` arm of the match ends in `continue` (`:283-301`), including the
-  catch-all
-  `Err(_) => { continue; }` (`:299-301`), and there is nothing after the `for` loop but `Ok(())`
-  (`:324`). When the third attempt fails, the loop just ends and that `Ok(())` is what
-  `buffer_unordered` collects, so `results.into_iter().collect::<Result<(), DownloadError>>()`
-  (`:331`) sees no error and `download`/`repair` return success to the caller. The failed unit's slot in
-  the file keeps whatever was there — all-zero bytes, if the file was freshly allocated in the
-  allocation stage — and the user gets "download complete" for a broken install. This is strictly worse
-  than the pre-`82c7980` behavior, where `stream_chunk` returned `ClientError::MaxRetriesReached` after
-  its third attempt and the caller's `?` propagated it out as
-  `DownloadError::ClientError(ClientError::MaxRetriesReached)`. Two aggravating details:
-  - The catch-all also swallows the shapes that should never be retried at all.
-    `ClientError::ChunkStreamCallbackError` (`src/client/error.rs:26`) is the *local* write path
-    failing — a full disk, `OffsetWriter`'s "chunk decompressed past its declared size" guard
-    (`src/downloader/util/offset_writer.rs:38-46`), or a zlib decode error. Retrying a full disk twice
-    more and then declaring victory is the worst of both options.
-    `ClientError::UrlParseError` (a malformed secure-link template) is retried and swallowed the same
-    way.
-  - `download`'s pipeline has no verification stage, so nothing downstream catches it either. `repair`
-    would only catch it on a *subsequent* run, via its own stage-3 MD5 pass.
-
-  Fix: keep the last error and return it (or a `DownloadError` max-retries variant) after the loop
-  instead of `Ok(())`, and reserve `continue` for the genuinely transient shapes rather than using a
-  catch-all.
-
-- [x] **Local, non-retryable failures still burn all three attempts.** *Fixed in `7eb5d5e`
-  ("Propagate Non-Retryable Client Errors", `v0.0.12-restart`) — exactly as this item asked: the two
-  variants are matched explicitly, above the catch-all, and return on first occurrence with no
-  `attempt` guard.* `ClientError::ChunkStreamCallbackError`
-  (`src/downloader/downloader.rs:308-310`) — the *local* write path failing: a full disk,
-  `OffsetWriter`'s "chunk decompressed past its declared size" guard
-  (`src/downloader/util/offset_writer.rs:38-46`), or a zlib decode error — and
-  `ClientError::UrlParseError` (`:311-313`) from a malformed secure-link template each now abort the
-  job immediately, instead of costing extra full chunk transfers per unit before giving up. A disk
-  that fills mid-download no longer re-downloads and re-fails up to `2 × threads` chunks on its way
-  out. Side effect worth knowing: because these two arms carry no `attempt` guard, they are currently
-  the *only* error arms in the loop that can report anything at all — see the off-by-one item at the
-  top of this section.
-
 - [ ] **A chunk that fails its MD5 check is never retried, though a corrupted transfer is the one
-  failure a retry is best placed to fix.** *New in the thirteenth pass; the behavior itself predates it,
-  but a retry loop that finally works end-to-end is what makes the asymmetry actionable.*
-  `download_files` returns `DownloadError::DeflateError` the moment
-  `writer.remaining() != 0 || actual_md5 != download_unit.md5` (`src/downloader/downloader.rs:333-344`,
-  re-derived against the fifteenth pass's working tree) — inside the loop, but bypassing it. So a
-  dropped connection gets three attempts while a chunk that arrived looking clean and decompressed to the wrong bytes (a truncated CDN response that still ended
-  gracefully, a corrupt edge-cache entry, a flipped bit) fails the entire multi-gigabyte download on the
-  first try, when re-requesting that one chunk is exactly what would fix it. Since `82c7980`/`f3a944a`
-  rebuild the writer stack per attempt, `continue`ing here is now safe in a way it was not before. The
-  two conditions are worth separating: `remaining() != 0` means the server sent less than the declared
-  size, which is unambiguously worth retrying; a size-correct MD5 mismatch could also be a stale
-  manifest, where retrying won't help — but a couple of cheap attempts before failing the job is still
-  the better default. Fourteenth-pass note: while the off-by-one above stands, this block and the two
-  `7eb5d5e` arms are the *only* ways `download_files` can report a failure at all, which makes the
-  asymmetry starker rather than smaller — a corrupt chunk hard-fails the whole job on attempt one,
-  while a chunk that never arrives is reported as success. Fifteenth-pass update: the off-by-one is
-  fixed, so the "reported as success" half is gone and the asymmetry is back to its plain form — a
-  transport failure gets three attempts with backoff, a chunk that arrives corrupt gets one. Retrying
-  here is safe (the writer stack is rebuilt per attempt) and is the cheapest fix left in this
-  section.
+  failure a retry is best placed to fix.** `download_files` returns `DownloadError::DeflateError` the
+  moment `writer.remaining() != 0 || actual_md5 != download_unit.md5`
+  (`src/downloader/downloader.rs:333-344`) — the check sits *inside* the retry loop but bypasses it.
+  So a dropped connection gets three attempts with backoff, while a chunk that arrived looking clean
+  and decompressed to the wrong bytes (a truncated-but-graceful CDN response, a corrupt edge-cache
+  entry, a flipped bit) fails the entire multi-gigabyte download on the first try.
 
-- [x] **No retry/backoff for transient network failures during download.** *Closed at
-  `v0.0.12-restart` by `2b1cd7f` ("Retry network errors with a delay"), which supplies both halves this
-  item was still tracking. `download_files`'s catch-all arm — where `ClientError::NetworkError` from a
-  dropped connection or timeout lands — now `tokio::time::sleep(..)`s before its
-  `continue` (a flat 5s as tagged; `(attempt + 1) * 2` in the working tree, per the item above), so a
-  sustained CDN outage no longer burns every
-  attempt in milliseconds; and `HttpClient::fetch`, the funnel for every JSON/API request, finally has
-  an `Err(ClientError::NetworkError(err))` arm of its own (`src/client/client.rs:62-68`) with the same
-  5s sleep, instead of falling straight through to `Err(err) => return Err(err)`. What replaces this
-  item is narrower and is written up separately below: the delay is a fixed 5s reached from only one of
-  the loop's five arms, and it is also slept after the final attempt, which is pure waste. The
-  detail-discarding half of `fetch`'s new arm belongs to the off-by-one item at the top of this
-  section, not here. The rest of this entry is kept as history.*
+  Retrying here is safe now: `82c7980`/`f3a944a` rebuild the whole writer stack per attempt, so a
+  `continue` gets a fresh file handle at the right offset, a zeroed MD5 and a clean zlib stream. The
+  two conditions are worth separating — `remaining() != 0` means the server sent less than the
+  declared size and is unambiguously worth retrying; a size-correct MD5 mismatch could also be a
+  stale manifest, where retrying won't help, but a couple of cheap attempts before failing the whole
+  job is still the better default. **Cheapest fix left in this section.**
 
-  *Still open at
-  `v0.0.11-restart`, but for a different reason than at the eleventh pass. `82c7980`/`f3a944a` relocated
-  the loop from `HttpClient::stream_chunk` to `Downloader::download_files`
-  (`src/downloader/downloader.rs:262-323`) and, in doing so, fixed the dirty-writer problem that made
-  the mid-transfer arm unable to succeed — so the mid-transfer `NetworkError` case, the one shape the
-  eleventh pass said could never actually recover, now genuinely retries. What remains
-  open is the part this entry always listed as uncovered: there is still no backoff or delay between
-  attempts (each retry is an immediate `continue`, so a sustained CDN outage burns all three attempts in
-  milliseconds), and `HttpClient::fetch` (`src/client/client.rs:40-70`), the funnel for every JSON/API
-  request, still has no `ClientError::NetworkError` arm and falls straight through to
-  `Err(err) => return Err(err)` at `:64-66` on a dropped connection. Read the paragraph below as intent
-  and history: the arms it describes now live in `download_files`'s match (`:282-302`), not in
-  `stream_chunk`, and two new defects were introduced with the move — see the two items at the top of
-  this section. Thirteenth-pass update: both of those defects are now fixed in the working tree, and
-  the loop reports its failures with full detail; the backoff gap and `fetch`'s missing `NetworkError`
-  arm are untouched and remain the whole of what this item still tracks.*
-  *Fixed for the chunk-transfer
-  path in `e4a8560` ("Retry transient network errors in chunk streaming"), on top of `de52483`'s
-  auth-shaped retries.* `HttpClient::stream_chunk` (`src/client/client.rs:71-144`) now retries all four
-  failure shapes it can hit, not just the two auth-shaped ones: a CDN 401 (invalidate + re-fetch secure
-  links), `AuthError::TokenExpired` (refresh), a non-401 `HttpError` such as a CDN `5xx` (`:122-127`,
-  `if attempts < 3 { continue; }`), and `ClientError::NetworkError` from a dropped connection/timeout
-  inside `stream_chunk_inner`'s `bytes_stream()` (`:132-137`, same pattern). A single timeout, connection
-  reset, or 5xx on any one chunk no longer aborts the entire multi-gigabyte download outright — it
-  retries up to 3 attempts before `download_files`'s
-  `results.into_iter().collect::<Result<(), DownloadError>>()?` (`src/downloader/downloader.rs:245-308`,
-  moved by `a11273a`) ever sees the error. Two things are still not covered: there's no backoff/delay
-  between attempts (each retry is an immediate `continue`, so a sustained outage burns through all 3
-  attempts near-instantly rather than spacing them out), and this fix is scoped to `stream_chunk` only —
-  `fetch` (`src/client/client.rs:40-70`), the funnel for every JSON/API request, still has no arm for
-  `ClientError::NetworkError` and falls straight to `Err(err) => return Err(err)` at `:64-66` on one.
-
-- [ ] **The retry delay is unjittered, so concurrent chunk tasks retry in lockstep — and it is now
-  also paid on failures that were never a congestion signal.** *Opened at the fourteenth pass against
-  `2b1cd7f` as three shortcomings; two of them are fixed by the uncommitted change reviewed at the
-  fifteenth and are struck below, and the change adds one new wrinkle. Line numbers re-derived against
-  the working tree.*
-  - ~~**Only the catch-all waits.**~~ *Fixed.* The same
-    `tokio::time::sleep(Duration::from_secs((attempt + 1) * 2))` is now in all four retrying arms of
-    `download_files`: `AuthError` (`src/downloader/downloader.rs:287`), `SecureLinksError` (`:295`),
-    `HttpError` (`:306`) and the catch-all (`:319`). A CDN `5xx` no longer retries with zero delay.
-  - ~~**It sleeps on the way out.**~~ *Fixed, as a consequence of the off-by-one fix rather than
-    directly.* The `sleep` lives inside `if attempt != 2 { .. }`, which is now genuinely false on the
-    final iteration of a `0..3` loop, so exhausting the retries reports immediately. A chunk that
-    fails all three attempts spends 6s waiting (2s + 4s), all of it between attempts.
-  - **Still open: linear, and not jittered.** `(attempt + 1) * 2` gives 2s then 4s — better than the
-    flat 5s it replaces, but every one of `self.threads` chunk tasks that fails against the same
-    downed CDN computes the identical delay from the same attempt number, so they all wake together
-    and retry in lockstep. That is the same synchronized-retry shape the secure-links thundering-herd
-    item below describes, on a different trigger. Multiply by a random factor, or offset per task.
-  - **Newly open: the auth-shaped arms now wait too.** A 401 on an expired secure link is routine,
-    local and entirely predictable — `invalidate_secure_links` plus a re-fetch fixes it immediately —
-    and the `AuthError`/`SecureLinksError` arms are the same shape. Making those wait 2s (then 4s) is
-    latency spent on a failure that was never a congestion signal, and secure links expire often
-    enough during a long download for it to be felt. The delay belongs on the transport-shaped arms
+- [ ] **The retry delay is unjittered, and is now also paid on failures that were never a congestion
+  signal.**
+  - *Linear, not jittered.* `Duration::from_secs((attempt + 1) * 2)` gives 2s then 4s. Every one of
+    `self.threads` chunk tasks failing against the same downed CDN computes the identical delay from
+    the same attempt number, so they all wake together and retry in lockstep — the same synchronized
+    -retry shape as the secure-links thundering herd below, on a different trigger. Multiply by a
+    random 0.5–1.5 factor, or offset per task.
+  - *The auth-shaped arms wait too.* A 401 on an expired secure link is routine, local and entirely
+    predictable — `invalidate_secure_links` plus a re-fetch fixes it immediately. Making the
+    `AuthError` (`src/downloader/downloader.rs:287`) and `SecureLinksError` (`:295`) arms sleep 2s
+    then 4s is latency spent on something that was never a congestion signal, and secure links expire
+    often enough during a long download to be felt. The delay belongs on the transport-shaped arms
     (`NetworkError`, `HttpError`); the auth-shaped ones should re-resolve and retry immediately.
 
-  A `const` retry count plus one small backoff helper (`base * 2^attempt`, times a random 0.5–1.5
-  factor) applied at the single exit the duplication item proposes would cover the two remaining
-  points and the retry-count coupling together.
-
-- [x] **`stream_chunk`'s retry resumes into a dirty writer, so the one failure shape its `NetworkError`
-  arm exists for can never actually recover.** *Opened by the eleventh pass, fixed one tag later across
-  `82c7980` ("Remove chunk download retry logic") and `f3a944a` ("Retry downloads after authentication
-  failures"), which move the retry loop out of `stream_chunk` and into `Downloader::download_files` —
-  the level that owns the writer stack. `download_files` now builds `open_file` → `OffsetWriter::new`
-  (which `seek`s to `download_unit.offset`) → `HashingWriter` → `ZlibDecoder` inside the loop
-  (`src/downloader/downloader.rs:264-274`) rather than once outside it, so each attempt gets a fresh
-  file handle at the correct offset, a zeroed MD5 accumulator and a clean zlib stream, and the
-  mid-transfer `NetworkError` case can genuinely recover. This is the "rebuild the decoder/writer stack
-  inside the retry loop" option the item's own last sentence recommended. Note the loop that replaced it
-  has two severe defects of its own — see the two new items at the top of this section — but they are
-  unrelated to writer state. The line references below describe the pre-fix code and are kept for
-  history.* `HttpClient::stream_chunk`
-  (`src/client/client.rs:71-144`) retries by looping back and calling `stream_chunk_inner(&url, &mut f)`
-  again with **the same `f`** — and `f` is the closure built in `download_files`
-  (`src/downloader/downloader.rs:272-277`) that writes into a single
-  `ZlibDecoder<HashingWriter<BufWriter<OffsetWriter>>>` stack. Nothing in that stack is reset between
-  attempts: `OffsetWriter`'s `pos`/`remaining` (`src/downloader/util/offset_writer.rs:58-59`) only ever
-  advance, the `ZlibDecoder` keeps its stream state, and `HashingWriter` keeps accumulating MD5. So a
-  retry restarts the HTTP GET at byte 0 and appends a fresh zlib stream onto a half-consumed one at the
-  wrong file offset. Every outcome is a failure: a zlib decode error, an
-  `OffsetWriter` "chunk decompressed past its declared size" error, or an MD5 mismatch at
-  `downloader.rs:286`. The two arms that *do* recover (`HttpError` 401 → invalidate secure links;
-  non-401 `HttpError`) are safe purely by accident — `stream_chunk_inner` checks
-  `response.status()` (`:211`) before touching `f`, so no bytes have been written when they fire. The
-  `ClientError::NetworkError` arm (`:132-137`) is the broken one, and `NetworkError` is exactly the
-  mid-body case: `stream.next()` yielding an `Err` at `:225`, after some bytes have already gone through
-  `f`. (`NetworkError` also covers a pre-body connect/`send()` failure — `#[from] reqwest::Error`,
-  `src/client/error.rs:11` — so the arm is correct for that half and broken for the other half, with no
-  way for the caller to tell them apart.) Mainline `master` solved this in `stream_unit_to_file`
-  (`src/downloader/stream.rs`) by re-seeking the file to the unit's `offset` at the top of *every*
-  attempt and carrying a `counted` high-water-mark across attempts; the `restart` branch needs the
-  equivalent — rebuild the decoder/writer stack (or re-seek and reset it) inside the retry loop rather
-  than outside it.
+  One small backoff helper (`base * 2^attempt` × a random factor), applied at the single exit the
+  retry-count item below proposes, covers this and the retry-count coupling together.
 
 - [ ] **`DownloadEvent::Progress` is emitted once per network read — the exact event-rate problem
-  mainline `v0.1.1` was cut to fix, now on two code paths.** *New in the eleventh pass; predates
-  `a11273a`, but `repair` makes `download_files` the transfer path for a second public workflow.*
-  `download_files`'s callback sends `DownloadEvent::Progress(chunk.len())` for every `Bytes` the
-  `bytes_stream()` yields (`src/downloader/downloader.rs:274`), into an unbounded channel that a
-  forwarding task re-sends into another unbounded channel (`:210-214` for `download`, `:129-133` for
-  `repair`). With `self.threads` chunks in flight on a fast connection that is thousands of sends per
-  second, bounded by read syscall size rather than by throughput. The workspace `CLAUDE.md` documents
-  this same shape as the repair-download memory leak that `master`'s `v0.1.1` exists to fix: there,
-  `gogdl_flutter`'s drain loops flooded an unbounded `StreamSink` faster than Dart could drain it, and
-  the fix had two halves — coalescing in the bridge *and* cutting the rate at the source, by moving
-  `Progress` to the write-buffer flush boundary (`master:src/downloader/stream.rs:45-70`, which spells
-  out the reasoning). The `restart` branch has neither half. Emit `Progress` at the `BufWriter`
-  flush boundary (or on a fixed byte/time threshold) before any Flutter consumer is wired up to
-  `repair_game`. *Twelfth-pass update: `f3a944a` made this materially worse in two ways. The send now
-  sits inside the `for _attempt in 0..3` loop (`src/downloader/downloader.rs:278`), and since that loop
-  has no `break` (see the new item at the top of this section), **every byte is reported three times** —
-  so the event rate triples and a consumer summing `Progress(chunk.len())` against the manifest total
-  climbs to 300%. Fixing the missing `break` fixes the triple-count but not the per-read rate; and note
-  that emitting at the `BufWriter` flush boundary, as this item recommends, is what makes retries
-  double-count in the first place, so whichever fix lands must also reset or discount the progress
-  already reported for an attempt that failed.* *Thirteenth-pass update: the `break` at
-  `src/downloader/downloader.rs:334` removes the unconditional 3× multiplier — a successful chunk is
-  now reported once. What remains is the narrower version of the same problem: bytes streamed by an
-  attempt that later fails are still counted, so progress over-reports by exactly the amount transferred
-  before each retry, and the per-network-read emission rate — the actual subject of this item, and the
-  memory-leak shape `master`'s `v0.1.1` was cut to fix — is unchanged.*
+  mainline `v0.1.1` was cut to fix, now on two code paths.** `download_files`'s callback sends
+  `DownloadEvent::Progress(chunk.len())` for every `Bytes` the `bytes_stream()` yields
+  (`src/downloader/downloader.rs:274`), into an unbounded channel that a forwarding task re-sends
+  into another unbounded channel (`:210-214` for `download`, `:129-133` for `repair`). With
+  `self.threads` chunks in flight on a fast connection that is thousands of sends per second, bounded
+  by read syscall size rather than by throughput.
 
-- [x] **One failed file allocation aborts the whole download.** *Resolved as intended behavior, not a
-  bug — confirmed with the person driving this rebuild.* `Downloader::download`
-  (`src/downloader/downloader.rs:195-200`, shifted down by `a11273a`'s new `repair` above it; `repair`
-  carries an identical copy at `:96-101`) still fails the
-  entire job the moment `allocate_missing_files` reports any failure, and that is the correct call: if
-  the disk cannot hold the files being allocated, there is no point continuing the download at all,
-  whatever the specific underlying cause of the allocation failure turns out to be. `2100296` ("Check
-  Disk Space Before Downloading") reinforces this rather than replacing it — a new proactive check right
-  before the allocation step (`:166-178` in `download`, copied verbatim to `:67-79` in `repair`) sums
-  the size of every file the size-verification step found
-  missing, compares it against `PathResolver::get_free_space()`'s reading of the target disk's
-  `available_space()`, and fails fast with `DownloadError::NotEnoughFreeSpace` (or
-  `DownloadError::CouldNotResolveFreeSpace` if no disk matches the target path) before allocation even
-  starts, so the common "not enough disk space" case now gets a specific, actionable error instead of the
-  generic `DownloadError::FileAllocationError` from the abort this item used to flag.
+  The workspace `CLAUDE.md` documents this same shape as the repair-download memory leak that
+  `master`'s `v0.1.1` exists to fix: there, `gogdl_flutter`'s drain loops flooded an unbounded
+  `StreamSink` faster than Dart could drain it, and the fix had two halves — coalescing in the bridge
+  *and* cutting the rate at the source by moving `Progress` to the write-buffer flush boundary
+  (`master:src/downloader/stream.rs:45-70` spells out the reasoning). The `restart` branch has
+  neither half. Fix before any Flutter consumer is wired up to `repair_game`.
 
-- [x] **`Downloader::verify` discards its own result.** *Fixed in `71d49a8` ("Fail On Incomplete
-  Download Chunks").* `Downloader::verify` (`src/downloader/downloader.rs:220-243`, shifted by
-  `a11273a`) now binds the
-  `verify_download_units` result as `missing_units` instead of `_missing_units`, and returns
-  `Err(DownloadError::ChunkIntegrityCheckFailed(missing_units_count))` (new variant,
-  `src/downloader/error.rs:48-49`) when `missing_units.len() > 0` instead of unconditionally returning
-  `Ok(())`. A caller that isn't listening on the `tx` event channel now learns verification failed via
-  the `Result` itself too.
+  Secondary: bytes streamed by an attempt that later fails are still counted, so progress
+  over-reports by exactly the amount transferred before each retry. Whichever fix lands must also
+  reset or discount the progress reported for a failed attempt.
 
-- [x] **Blocking syscalls run directly inside async tasks.** *Fixed across `31809e9` ("Use AsyncWrite
-  for Streaming Downloads") and `46b6ce3` ("Use Async File Operations for Downloads").*
-  `PathResolver::open_file` (`src/downloader/fs/path_resolver.rs:112-123`) now opens via
-  `tokio::fs::OpenOptions::new().write(write).open(&path).await` instead of the synchronous
-  `std::fs::OpenOptions`, matching `allocate_file` right above it. The chunk write path no longer calls
-  a blocking positioned write at all: `OffsetWriter` (`src/downloader/util/offset_writer.rs`) now holds
-  a `tokio::fs::File` and implements `AsyncWrite` by polling that file directly (`poll_write` at
-  `:29-58`), replacing the old `FileExt::write_at` call; it's wrapped in a `tokio::io::BufWriter` and
-  driven from `stream_chunk`'s callback, which `31809e9` changed from `FnMut` to `AsyncFnMut` so
-  `decoder.write_all(&chunk).await` (`src/downloader/downloader.rs:196-198`) can actually yield instead
-  of blocking the worker thread. Neither fix uses `spawn_blocking` — they replace the blocking calls
-  with real async I/O instead, which is a cleaner fix than wrapping them. `OffsetWriter::new` itself now
-  takes a `tokio::fs::File` directly rather than converting one via `from_std`. `grep -rn 'std::fs::\|
-  write_at' src/downloader/` is empty — no blocking filesystem call remains anywhere on the download
-  write path.
-
-- [x] **Secure links are cached forever with no expiry handling.** *The "no refresh path" half fixed
-  in `de52483` ("Handle secure link retries in HTTP client"); the proactive half is still open, restated
-  below.* `SecureLinksManager::links_cache` (`src/secure_links/links_manager.rs:19,32-63`) still never
-  evicts an entry on its own, and the fetched `CdnUrlParams`'s `expires_at`/`ttl` fields
-  (`src/secure_links/secure_links.rs:11,13`) are still parsed but never consulted proactively — but a
-  link that expires mid-download is no longer a dead end. `HttpClient::stream_chunk`
-  (`src/client/client.rs:71-144`) now reacts to a 401 from the CDN itself by calling the new
-  `SecureLinksManager::invalidate_secure_links` (`:64-67`, removes the cache entry) and re-fetching
-  before retrying, so the crate finally retries on a CDN-side 401, not just a GOG-API one. What's still
-  missing is purely proactive: nothing checks `expires_at`/`ttl` ahead of a request the way a `is_valid()`
-  margin would for auth tokens (see that Medium item below) — every chunk request still has to hit a 401
-  once before the stale link gets replaced, and see the new concurrency item below for what happens when
-  several chunks hit that 401 at once. *Twelfth-pass update: the invalidate-and-retry behavior survived
-  the retry loop's relocation intact, just at a different address — the 401 check and the
-  `invalidate_secure_links` call are now `download_files`'s `HttpError` arm
-  (`src/downloader/downloader.rs:292-298`), and the re-fetch happens implicitly because the next loop
-  iteration calls `stream_chunk`, which calls `get_secure_links` again at `src/client/client.rs:79`.
-  The proactive half is unchanged and still open. One thing did get quietly better: the arm now
-  invalidates on a `SecureLinksError` too (`:287-291`), so a links fetch that itself failed doesn't
-  leave a bad entry behind.* `a11273a` made the surrounding situation worse in one respect:
-  it deleted `download_files`'s secure-links pre-fetch loop, which used to populate the cache for every
-  bundle before the first chunk started, so the cache is now cold at the start of every download and
-  repair (see the updated concurrency item below).
-
-- [x] **Only per-chunk MD5 is verified; SHA-256 support is unused dead code.** *Resolved by deletion in
-  `2100296` ("Check Disk Space Before Downloading"), not by finally using the dead code.* `DepotFile.sha256`
-  is gone from `src/depot/depot_info.rs`, and `ChecksumAlgorithm`/`ChecksumAlgorithm::Sha256` are gone
-  entirely from `src/downloader/util/hash.rs` — `compute_chunk_checksum` no longer takes an algorithm
-  parameter and always hashes MD5, and the `sha2`/`cpufeatures` dependencies dropped out of `Cargo.toml`/
-  `Cargo.lock` with it. Whether GOG's whole-file SHA-256 manifest entries turn out to matter later is now
-  a fresh feature decision rather than an unfinished one sitting half-wired in the tree.
-
-## Medium — auth concurrency & lifetime
-
-- [x] **The `inner` mutex is held across the refresh/login network round-trip.** *Fixed in `9a1f780`,
-  unaffected by this pass beyond the file move.* `login_with_code` (`src/client/auth/auth_manager.rs:
-  50-64`) and `refresh_auth` (`:73-96`) each take their tokens/refresh-token out of the guard, drop the
-  lock, and only then await the request via `client.fetch_no_retry(...)`.
-
-- [x] **`refresh_lock` serializes refreshes but doesn't collapse them — and this is now the common-case
-  path, not a corner case.** *Fixed:* `refresh_auth` (`src/client/auth/auth_manager.rs:70-108`) now
-  snapshots the current `access_token` *before* queueing on `refresh_lock`. Once the lock is acquired it
-  re-reads the stored token and compares it against the pre-lock snapshot; if they differ, another
-  waiter already completed a refresh while this call was queued, so it returns `Ok(())` immediately
-  instead of performing a second network round-trip. Under a burst of N concurrent requests hitting
-  expiry at once, only the first waiter actually calls `REFRESH_URL` and fires
-  `on_token_refreshed`; the rest short-circuit and let the caller retry with the token the first waiter
-  installed. Token-identity comparison was chosen over re-checking `is_valid()` after the lock because
-  the latter would also swallow a genuine 401-driven refresh request for a token that is still locally
-  valid but was rejected/revoked server-side — that case still needs to reach the network. The one
-  remaining non-collapsed case (a 401 arriving after an unrelated refresh already landed) still performs
-  exactly one redundant refresh, which is rare and bounded.
-
-- [x] **The observer callback runs while the `inner` mutex is held.** *Fixed in `51b7a53` ("Avoid
-  Holding Lock During Token Refresh Callback").* `refresh_auth` (`src/client/auth/auth_manager.rs:
-  110-121`) now clones the observer out of the guard, `drop(inner)`s it, and only then calls
-  `observer.on_token_refreshed(...)` outside the lock. A slow or re-entrant `TokenObserver` can no
-  longer stall other in-flight authed requests waiting on `inner`.
-
-- [x] **`is_valid()` has no clock-skew / in-flight margin.** *Fixed in `d679048` ("Add token observer
-  removal and expiry buffer").* `src/client/auth/auth.rs:32-35` now subtracts a 60s buffer
-  (`t > chrono::Utc::now().timestamp() - 60`), so a token within 60s of expiry is treated as already
-  invalid and refreshed up front instead of being handed out and 401ing mid-request.
-
-- [x] **`AuthManager::set_auth` is still unreachable, but for a narrower reason now.** *Resolved by
-  removal.* The method no longer exists — `grep -n 'fn set_auth' src/` is empty, and the current
-  `src/client/auth/auth_manager.rs` only exposes `new`/`get_login_url`/`set_token_observer`/
-  `login_with_code`/`restore_from_string`/`refresh_auth`/`get_auth`. Whether that was a deliberate
-  cleanup or a side effect of the rewrite, the dead/unreachable method this item flagged is gone either
-  way.
-
-- [x] **A registered `TokenObserver` can never be replaced with "none".** *Fixed in `d679048` ("Add
-  token observer removal and expiry buffer").* `AuthManager::remove_token_observer`
-  (`src/client/auth/auth_manager.rs:40-42`) sets `token_observer` back to `None`, and the method is
-  wired all the way out through `HttpClient::remove_token_observer` (`src/client/client.rs:159-161`) and
-  `GogDl::remove_token_observer` (`src/gogdl/gogdl.rs:129-131`), so a consumer can now detach on
-  logout/teardown.
+- [ ] **Secure links are never proactively expired.** `SecureLinksManager::links_cache`
+  (`src/secure_links/links_manager.rs:19,32-63`) never evicts an entry on its own, and the fetched
+  `CdnUrlParams`'s `expires_at`/`ttl` fields (`src/secure_links/secure_links.rs:11,13`) are parsed
+  but never consulted. The reactive half works — a CDN 401 triggers `invalidate_secure_links` and a
+  re-fetch (`src/downloader/downloader.rs:292-298`) — but every chunk request still has to *fail*
+  once before a stale link gets replaced, and when several chunks hit that 401 together the misses
+  aren't collapsed (see the thundering-herd item below). Wants the same shape `Auth::is_valid()`'s
+  60s margin already has for tokens.
 
 ## Medium — duplication & consistency
 
-- [ ] **The retry count is two facts that have to agree, in two loops now — and they already stopped
-  agreeing.** *Opened at the thirteenth pass as a hypothetical; the hypothetical came true in the very
-  commit that pass was reviewing. The correctness consequences are tracked as a High item ("Both retry
-  loops are off by one") in the downloader-reliability section; what stays here is the structural
-  cause.* `download_files`'s loop bound (`src/downloader/downloader.rs:263`) and the last-attempt
-  sentinel repeated in all four of its match arms (`:286,294,305,318`) are independent literals with
-  nothing tying them together, and since `2b1cd7f` `HttpClient::fetch` has the same split
-  (`src/client/client.rs:46` vs. `:63`) — five sentinels against two bounds. The thirteenth pass wrote:
-  *"Lowering the bound to `0..2` — an entirely plausible 'two attempts is enough' tweak — makes
-  `attempt != 2` true on every iteration, so every arm `continue`s, the loop runs out, and the
-  swallowed-error bug the thirteenth pass just fixed returns in full, silently, with no compiler or
-  clippy signal."* That is exactly what `ac061e0` shipped, and `2b1cd7f` then copied the shape into
-  `fetch` — which this item had been holding up as the loop with the *better* structure (`while
-  attempts < 3` with a single trailing `Err(ClientError::MaxRetriesReached)`, one exit rather than
-  four). The uncommitted fix reviewed at the fifteenth pass puts both bounds back to `0..3`, so the
-  literals agree again — but they agree by hand, and nothing enforces it, which is the whole of this
-  item. The same change adds a **third** coupled literal: the delay `(attempt + 1) * 2` at four sites
-  in `download_files` (`:287,295,306,319`) and one in `fetch` (`client.rs:64`) is written in terms of
-  the same attempt number, so changing the retry count silently rescales the backoff too. A
-  `const RETRIES: usize = 3;` with `attempt + 1 == RETRIES` and one backoff helper, or a restructure
-  that lets the last error fall out of the loop and be returned once after it, removes all of the
-  coupling in both places — and is a further argument for the unification the "bypassed the funnel"
-  item above keeps circling.
+- [ ] **The retry count is two facts that have to agree, in two loops — and they already stopped
+  agreeing once.** `download_files`'s loop bound (`src/downloader/downloader.rs:263`) and the
+  last-attempt sentinel repeated in all four of its match arms (`:286,294,305,318`) are independent
+  literals with nothing tying them together; `HttpClient::fetch` has the same split
+  (`src/client/client.rs:46` vs. `:63`) — five sentinels against two bounds.
 
-- [x] **The "fetch → on 401 refresh → retry once" block used to be copy-pasted six times.** *Fixed by
-  this pass* — the six near-identical pre-flight blocks (lock the manager, `get_auth().await` and bail
-  on `Err`, clone the manager, drop the lock) are gone outright, not just mechanically updated:
-  `depot_info.rs`, `build_metadata.rs`, `owned_games.rs`, `game_details.rs`, `game_build.rs`, and
-  `secure_links.rs` all now call `.fetch(url, decode, require_auth)` directly with no local `AuthManager`
-  in scope at all (the managers dropped their own `auth: AuthManager` field — see `depot_manager.rs`,
-  `games_manager.rs`, `links_manager.rs`, `download_manager.rs`). The double-`get_auth`-per-request cost
-  this item used to note is gone with it (see the fixed panic item above). The mechanism this closed
-  duplication with — folding auth into `HttpClient` itself and gating on a `bool` — is also what
-  introduced the swapped-boolean-args regression (fixed in `22bf182`) and the local-expiry-bypass gap
-  (fixed in the change on top of `3ed4dd0`, see the High-severity section) along the way; both are
-  resolved now, so this has settled into a clean win in hindsight.
+  This is not hypothetical. The thirteenth pass wrote it up as a risk: *"lowering the bound to `0..2`
+  makes `attempt != 2` true on every iteration, so every arm `continue`s, the loop runs out, and the
+  swallowed-error bug returns in full, silently, with no compiler or clippy signal."* That is exactly
+  what `ac061e0` shipped, and `2b1cd7f` then copied the shape into `fetch`. `2469b13` put both bounds
+  back to `0..3`, so the literals agree again — **by hand, with nothing enforcing it.** A third
+  coupled literal now exists: the delay `(attempt + 1) * 2` at four sites in `download_files`
+  (`:287,295,306,319`) and one in `fetch` (`client.rs:64`) is written in terms of the same attempt
+  number, so changing the retry count silently rescales the backoff too.
 
-- [x] **`DownloadError` was left out of the `a962ef7` error unification.** *Fixed in `9a1f780`,
-  restructured again by this pass.* `DownloadError::Unauthorized` is gone; `src/downloader/error.rs`
-  carried `AuthError(#[from] AuthError)` through `43c1d85`, and this pass removed that variant too
-  (matching `Depot`/`Games`/`SecureLinks`Error, see the dead-variant finding below) since `AuthError` can
-  no longer reach `DownloadError` by any route other than already being wrapped in `ClientError`. Only
-  `ClientError(#[from] ClientError)` remains for both concerns. The second half of the original item is
-  still open, restated below as its own Medium finding — the downloader's transfer path
-  (`stream_chunk`) still has no 401-refresh-retry of its own.
+  Fix: `const RETRIES: usize = 3;` with `attempt + 1 == RETRIES` and one backoff helper — or better,
+  restructure so the last error falls out of the loop and is returned once after it, one exit instead
+  of five.
 
-- [ ] **"Not a game" handling is inconsistent across near-identical fetchers.**
-  Only `GameDetails::get_game_details` (`src/games/game_details.rs:17-24`, line numbers shifted down by
-  the pre-flight-auth-block removal in this pass) turns a cached `None` into `GamesError::ProductNotAGame`.
-  `GameBuilds`, `GameLinks`, `GameSummary`, and `OwnedGames` don't apply the same reasoning, so calling
-  e.g. `get_game_builds` for a DLC/non-game product surfaces a raw `DecodeError` instead of the more
-  meaningful `ProductNotAGame`.
+- [ ] **The two retry loops are hand-copied rather than shared, and `download_files` carries a dead
+  arm.** `download_files`'s match and `fetch`'s both independently carry an `HttpError{status, body}`
+  arm and their own notion of what to retry; a change to one won't propagate to the other. And
+  `download_files`'s `Err(ClientError::AuthError(err))` arm (`src/downloader/downloader.rs:283-289`)
+  is unreachable: `stream_chunk` converts an auth failure during the secure-links fetch to
+  `ClientError::SecureLinksError { inner: String }`, and `stream_chunk_inner` never calls
+  `get_auth()` at all (CDN URLs are pre-signed, no bearer token), so a bare `AuthError` can never
+  arrive here. It was copied from `fetch` and widened from `AuthError::TokenExpired` to any
+  `AuthError`, so it now reads as if it handles more than it does — and `2469b13` gave it a
+  `return Err(..)` and a `sleep` of its own, more unreachable code on an unreachable path.
 
-- [ ] **Caching is inconsistent between depot data of similar shape.**
-  `DepotManagerInner` caches `ProductDetails` (`src/depot/depot_manager.rs:20`) but has no cache for
-  `DepotInfo` — the actual per-depot manifest, likely the largest payload fetched in the whole crate.
+- [ ] **`Downloader::repair` is a near-verbatim copy of `Downloader::download`.** `repair`
+  (`src/downloader/downloader.rs:39-138`) and `download` (`:139-219`) are the same function apart
+  from one inserted stage. Lines `45-101` of `repair` and `145-200` of `download` — path-resolver
+  construction, the `depot_files` flat_map, the whole file-size-verification stage with its
+  channel/`tokio::join!`/forwarding boilerplate, the free-space computation and its two error
+  returns, the whole allocation stage with the same boilerplate again, and the `FileAllocationError`
+  abort — are identical modulo two extra `drop()`s and the stage-forwarding variable names. The only
+  real difference is `repair`'s `verify_download_units` stage (`:103-121`), whose `missing_units` it
+  passes to `download_files` where `download` passes `DownloadUnit::from_product_bundles(&bundles)`
+  wholesale.
+
+  Every fix in this doc against `download`'s pipeline has to be applied twice, and the free-space
+  error-discard item below already exists in two places because of it. `download` is expressible as
+  `repair` with the verification stage skipped — or better, as a shared private helper taking a
+  "which units to download" closure.
+
+- [ ] **`download` re-downloads every chunk regardless of what's already correct on disk, so `repair`
+  is the crate's only resume path — and nothing says so.** `download` runs a file-size verification
+  stage and computes `missing_files`, then ignores that result when building the transfer list:
+  `DownloadUnit::from_product_bundles(&bundles)` (`src/downloader/downloader.rs:205`) enumerates
+  every chunk of every file in every bundle, including files that just verified as complete. An
+  interrupted download restarted through `download_game` re-transfers the whole game from byte 0,
+  while `repair_game` transfers only what fails MD5.
+
+  Given pause/resume was deliberately removed chain-wide (see the workspace `CLAUDE.md`),
+  `repair_game` is the de-facto resume entry point — and a consumer has no way to know that from the
+  API surface: the two methods have identical signatures and neither has a doc comment. Either make
+  `download` skip already-verified units, or document that resuming means calling `repair_game`.
+
+- [ ] **`repair` checksums the chunks of files it has just allocated.** Stage 2 allocates every file
+  that failed size verification (`set_len` on a fresh or truncated file,
+  `src/downloader/fs/path_resolver.rs:76`), and stage 3 then MD5s **every** unit of **every** file
+  (`src/downloader/downloader.rs:103-115`) — including those just-allocated, all-zero ranges, whose
+  chunks cannot possibly match. On a repair where a large file is missing outright that's a full-size
+  read plus MD5 of zeroes purely to conclude what stage 1 already knew. Filter the units belonging to
+  `missing_files` out of the verification pass and add them straight to the download list.
+
+- [ ] **`DownloadStageEvent::VerificationStage` is a source-breaking addition for existing
+  consumers.** The variant (`src/downloader/progress_reporting/download_stage_event.rs:9`) is emitted
+  only by `repair`'s stage 3, but it widens a `pub` enum that consumers match exhaustively.
+  `lumen-cli` (sibling repo, currently pinned at `tag = "v0.0.9-restart"` in its `Cargo.toml:12`) has
+  an exhaustive four-arm `match ev` with no `_` arm in `apply_download_stage_event`
+  (`src/middleware/downloads.rs:555-607`), so bumping its pin is a hard `E0004` — on top of the
+  `E0599: no method named 'get_secure_links'` break the export item below flags for the same bump.
+  Its `DownloadStage` enum has no verification state to map the new variant onto either, so this
+  needs a code change there, not just a new arm. Same applies to `gogdl_flutter`'s `restart` branch
+  whenever `repair_game` gets bridged.
+
+- [ ] **Secure-link fetches aren't collapsed across concurrent chunk downloads, and `a11273a`
+  deleted the pre-fetch that used to hide it.** `SecureLinksManager::get_secure_links`/
+  `invalidate_secure_links` (`src/secure_links/links_manager.rs:32-67`) have no in-flight-request
+  dedup. `download_files` runs up to `self.threads` chunk downloads concurrently via
+  `buffer_unordered` (`src/downloader/downloader.rs:256,327`), each calling `stream_chunk`
+  independently, and `stream_chunk` calls `get_secure_links` per chunk (`src/client/client.rs:79`).
+  - *Cold start (new with `a11273a`):* `download_files` used to warm the cache first — a
+    `stream::iter(bundles).map(|b| get_secure_links(..)).buffer_unordered(self.threads)` block that
+    `a11273a` removed along with the `(String, DownloadUnit)` tupling it sat beside. Nothing replaced
+    it, so the first `self.threads` chunk tasks all miss the empty `links_cache` at once and each
+    issues its own round-trip. The cache-check and the fetch are not under one lock
+    (`links_manager.rs:39-60`), so the mutex doesn't collapse them either. **Per product bundle, on
+    every download and every repair.**
+  - *Expiry:* if a link expires with several chunks in flight, each hits the CDN 401 at roughly the
+    same time, each calls `invalidate_secure_links`, and each re-fetches independently.
+
+  Restoring the pre-fetch would paper over the cold-start half only; an in-flight dedup (a
+  per-`game_id` `OnceCell`/shared future — the shape `PathResolver::dir_cache` already uses at
+  `src/downloader/fs/path_resolver.rs:87-99`) fixes both.
+
+- [ ] **Types a consumer must be able to name are not exported: `DepotFile`, `Chunk`,
+  `DownloadUnit`.** The exported `ProductBundle` declares `pub product_files: Vec<DepotFile>`
+  (`src/downloader/product_bundle.rs:8-10`); `DepotFile.chunks` (`src/depot/depot_info.rs:33`) is
+  `Option<Vec<Chunk>>`; `DepotFile::to_download_units` (`:45`) is a `pub` method on the unexported
+  `DepotFile` returning `Vec<DownloadUnit>`. None of the three is re-exported from `src/lib.rs`
+  (`998829d` dropped the first two without narrowing what still *emits* them). A consumer that walks
+  `ProductBundle.product_files` — which `verify_files`/`download_game` require holding onto, since
+  `ProductBundle` isn't `Clone` — receives a `Vec` of a type it cannot name in a signature, a `let`
+  binding, or a test fixture.
+
+  `lumen-cli` previously failed with `E0432: unresolved imports gogdl_lib::DepotFile,
+  gogdl_lib::SecureLinks` and has doc comments noting the workaround
+  (`src/middleware/downloads.rs:176-182`). It also calls `gog.get_secure_links(product_id)` at two
+  sites (`:131,200`) — a method `2ae200d` deleted outright — so once it bumps its pin those become a
+  hard `E0599`, not a workaroundable type-naming problem. **This consumer needs either the method
+  restored or a replacement API before that pin bump.** Either re-export `DepotFile`/`Chunk`/
+  `DownloadUnit`, or narrow the public field that leaks them.
+
+- [ ] **A dead refresh token and a routine expiry both surface as the same opaque, unstructured
+  error** — effectively a recurrence of the `982dc82` collapsing regression (see `lumen-cli/CLAUDE.md`,
+  "Auth refresh regression"). `login_with_code` (`src/client/auth/auth_manager.rs:57-64`) and
+  `refresh_auth` (`:80-87`) each call `client.fetch_no_retry(&url, false, false)`, match
+  `Err(ClientError::AuthError(e)) => return Err(e)` first, and otherwise fall to
+  `AuthError::ClientError { inner: e.to_string() }`. But `require_auth` is hardcoded `false` in both
+  calls, so `inner_fetch` (`src/client/client.rs:81-97`) can **never** produce
+  `ClientError::AuthError` on these paths — that branch only fires when `require_auth: true` and the
+  internal `get_auth()` fails locally.
+
+  So every real failure from `AUTH_URL`/`REFRESH_URL` — including a 401 because the refresh token is
+  dead rather than merely expired — falls to the stringified arm. `AuthError` is now `pub` from the
+  crate root, so a consumer can at least distinguish `ClientError { inner }` from
+  `TokenExpired`/`NotAuthenticated`, but `inner` is a `Display`-formatted string with no structure: a
+  dead refresh token and a transient network blip remain indistinguishable *within* that variant.
+  Fix needs a status-aware variant on `AuthError` for this case — or at minimum, delete the dead
+  `Err(ClientError::AuthError(e))` arm so the code stops implying a distinction it can't make.
+
+- [ ] **Five dead variants per error enum.** `Http`/`UrlParseError`/`NetworkError`/`DecodeError`/
+  `DeflateError` on `DepotError`, `GamesError`, `SecureLinksError` and `DownloadError` are
+  unconstructible. `43c1d85` deleted the four hand-written `impl From<ClientError> for XError` blocks
+  that used to translate into them, replacing each with a blanket `ClientError(#[from] ClientError)`.
+  Every network call in `depot/`, `games/` and `secure_links/` goes exclusively through `HttpClient`
+  (`grep -rn "reqwest::\|url::Url::parse\|serde_json::from_str" src/depot src/games src/secure_links`
+  matches nothing outside `error.rs`), and `downloader/` is the same but for its own directly
+  constructed `DeflateError` (`src/downloader/downloader.rs:200,204`). Confirmed unconstructible with
+  `grep -rn "::Http {" src/` and the per-variant equivalents, all empty.
+
+  Because these enums are `pub`, `dead_code` doesn't warn, so clippy will never surface this. Either
+  delete the unreachable variants (and their now-unused `use reqwest::StatusCode`/`use std::io`
+  imports, e.g. `src/depot/error.rs:1,3`) or reinstate a translation that uses them. A working
+  wrapper *plus* five dead siblings per enum is confusing surface for whoever reads these next.
+
+- [ ] **"Not a game" handling is inconsistent across near-identical fetchers.** Only
+  `GameDetails::get_game_details` (`src/games/game_details.rs:17-24`) turns a cached `None` into
+  `GamesError::ProductNotAGame`. `GameBuilds`, `GameLinks`, `GameSummary` and `OwnedGames` don't, so
+  calling e.g. `get_game_builds` for a DLC/non-game product surfaces a raw `DecodeError`.
+
+- [ ] **Caching is inconsistent between depot data of similar shape.** `DepotManagerInner` caches
+  `ProductDetails` (`src/depot/depot_manager.rs:20`) but has no cache for `DepotInfo` — the actual
+  per-depot manifest, likely the largest payload the crate fetches.
   `ProductBundle::get_download_files` (`src/downloader/product_bundle.rs`) re-fetches every depot's
-  manifest from the CDN on every call, even for a build/product combination already resolved seconds
-  earlier by `DownloadableProduct::get_downloadable_products`, which *is* cached.
+  manifest from the CDN on every call, even for a build/product combination
+  `DownloadableProduct::get_downloadable_products` resolved seconds earlier — and *that* one is
+  cached.
 
 - [ ] **Language and OS are hardcoded with no selection surface.**
   `BuildMetadata::filter_languages` is always called with `"en-US"`
   (`src/depot/build_metadata.rs:34`), and `GameBuilds::get_game_builds` always queries
-  `os/windows/builds` (`src/games/game_build.rs:34`). There's currently no way for a caller to ask for
-  a different language depot or a native Linux build. The OS choice may be intentional given Proton is
-  used for everything, but it's worth documenting as a deliberate limitation rather than leaving it
-  implicit.
+  `os/windows/builds` (`src/games/game_build.rs:34`). No way for a caller to ask for a different
+  language depot or a native Linux build. The OS choice may well be intentional given Proton is used
+  for everything — worth documenting as a deliberate limitation rather than leaving it implicit.
 
 - [ ] **`GameScreenshots::resolve_links` picks a magic formatter index.**
   `src/games/game_screenshots.rs:76-77` calls `formatter.get(2)` — the third available formatter —
-  with no explanation of why index 2 specifically, and silently drops the screenshot entirely
-  (`continue`) if fewer than 3 formatters are present instead of falling back to whatever's available.
-
-- [x] **`HttpClient::stream_chunk` bypassed the `fetch`/`inner_fetch` funnel entirely.** *Given its own
-  parallel retry loop across `de52483` ("Handle secure link retries in HTTP client") and `e4a8560`
-  ("Retry transient network errors in chunk streaming"), rather than being rewritten to go through the
-  funnel.* `stream_chunk` (`src/client/client.rs:71-144`) now retries up to 3 attempts and handles a
-  CDN-side 401 (invalidate + re-fetch secure links, see the fixed item above), `AuthError::TokenExpired`
-  (calls `refresh_auth`, same as `fetch`'s arm at `:61-63`), a non-401 `HttpError`, and
-  `ClientError::NetworkError` — so the method that moves the actual multi-gigabyte payload is no longer a
-  dead end for any of its failure modes (see the "no retry/backoff for transient network failures" item
-  above for the one remaining gap, a lack of backoff between attempts). It still isn't unified with
-  `fetch`/`inner_fetch`: the retry `match` is hand-copied rather than shared (both now independently
-  contain a `HttpError{status,body}` arm and a `TokenExpired` arm — a future change to one's retry logic
-  won't propagate to the other without someone remembering to update both), and `fetch` itself still has
-  no `NetworkError` arm, so the two loops have now drifted further apart in what they cover, not closer.
-  Two corrections from the eleventh pass, both consequences of that hand-copying: (a) `stream_chunk`'s
-  `Err(ClientError::AuthError(AuthError::TokenExpired))` arm (`src/client/client.rs:129-131`) is dead
-  code — it was copied from `fetch`, but `stream_chunk_inner` never calls `get_auth()` (CDN URLs are
-  pre-signed and `:207` builds the request with no bearer token), so the only error variants it can
-  return are `UrlParseError`/`NetworkError`/`HttpError`/`ChunkStreamCallbackError`. An auth failure
-  during the *secure-links* fetch is already converted to `ClientError::SecureLinksError { inner: String }`
-  and returned without retrying at `:86-91`. (b) The retry itself doesn't work for the mid-transfer case
-  — see the "retry resumes into a dirty writer" item in the High section.
-
-  *Twelfth-pass update: the duplication this item describes is gone, and so is the caveat in (b).*
-  `82c7980` deleted `stream_chunk`'s retry loop outright — the method is now straight-line
-  (`src/client/client.rs:71-103`: resolve secure links, pick the highest-priority URL, build the URL,
-  `stream_chunk_inner` once) and `f3a944a` re-created the loop one level up in
-  `Downloader::download_files` (`src/downloader/downloader.rs:262-323`). There is once again exactly one
-  hand-rolled retry `match` per concern rather than two copies in the same file, and `stream_chunk` no
-  longer returns `ClientError::MaxRetriesReached` at all (`fetch` at `client.rs:69` is now its only
-  producer, so the variant is still live). Correction (b) is fixed — the loop's new home is the level
-  that owns the writer stack, so it rebuilds it per attempt. Correction (a) was **not** fixed, only
-  relocated: the dead arm is now `Err(ClientError::AuthError(_err)) => { invalidate_secure_links(..);
-  continue; }` at `src/downloader/downloader.rs:283-286`, and it is still unreachable for exactly the
-  same reason — `stream_chunk` returns `SecureLinksError` for an auth failure during the links fetch
-  and can never produce a bare `AuthError`. It now also widened from `AuthError::TokenExpired` to any
-  `AuthError`, so it reads as if it handles more than it does. *(Thirteenth-pass update: still dead,
-  and the uncommitted fix gave it a `return Err(DownloadError::ClientError(ClientError::AuthError(err)))`
-  of its own at `downloader.rs:288` — more unreachable code on an unreachable path, though
-  harmless.)* The two loops still aren't unified:
-  `download_files`'s match and `fetch`'s still both carry their own `HttpError{status, body}` arm, and
-  `fetch` still has no `NetworkError` arm.
-
-- [ ] **`Downloader::repair` is a near-verbatim copy of `Downloader::download`.** *New in `a11273a`.*
-  `repair` (`src/downloader/downloader.rs:39-138`) and `download` (`:139-219`) are the same function
-  apart from one inserted stage. Lines `45-101` of `repair` and `145-200` of `download` — path-resolver
-  construction, the `depot_files` flat_map, the whole file-size-verification stage with its
-  channel/`tokio::join!`/forwarding-task boilerplate, the free-space computation and its two error
-  returns, the whole allocation stage with the same boilerplate again, and the `FileAllocationError`
-  abort — are identical modulo two extra `drop()`s and the stage-forwarding variable names
-  (`tx_stage3`/`tx_stage4` vs `tx_stage3`). The only real difference is that `repair` inserts a
-  `verify_download_units` stage (`:103-121`) and passes its `missing_units` to `download_files`, where
-  `download` passes `DownloadUnit::from_product_bundles(&bundles)` wholesale. Every fix this doc lists
-  against `download`'s pipeline now has to be applied twice, and the free-space error-discard item in
-  the Low section already exists in two places because of it. `download` is expressible as `repair` with
-  the verification stage skipped (or better: as a shared private helper taking a "which units to
-  download" closure).
-
-- [ ] **`download` re-downloads every chunk regardless of what's already correct on disk, so `repair` is
-  now the crate's only resume path — and nothing says so.** *Pre-existing, made visible by `a11273a`.*
-  `Downloader::download` runs a file-size verification stage and computes `missing_files`, then ignores
-  that result when building the transfer list: `DownloadUnit::from_product_bundles(&bundles)`
-  (`src/downloader/downloader.rs:205`) enumerates every chunk of every file in every bundle, including
-  files that just verified as complete and correctly sized. An interrupted download restarted through
-  `download_game` therefore re-transfers the whole game from byte 0, while `repair_game` transfers only
-  what fails MD5. Given pause/resume was deliberately removed chain-wide (see the workspace
-  `CLAUDE.md`), `repair_game` is the de-facto resume entry point, and a consumer has no way to know that
-  from the API surface — the two methods have identical signatures and neither has a doc comment.
-  Either make `download` skip already-verified units, or document that resuming means calling
-  `repair_game`.
-
-- [ ] **`DownloadStageEvent::VerificationStage` is a source-breaking addition for existing consumers.**
-  *New in `a11273a`.* The variant (`src/downloader/progress_reporting/download_stage_event.rs:9`) is
-  emitted only by `repair`'s stage 3, but it widens a `pub` enum that consumers match exhaustively.
-  `lumen-cli` (`/home/fernando/repo/lumen-project/lumen-cli`, sibling repo, currently pinned at
-  `tag = "v0.0.9-restart"` in its `Cargo.toml:12`) has an exhaustive four-arm `match ev` with no `_`
-  arm in `apply_download_stage_event` (`src/middleware/downloads.rs:555-607`), so bumping its pin to
-  `v0.0.10-restart` is a hard `E0004` compile break — on top of the `E0599: no method named
-  'get_secure_links'` break the export item below already flags for the same pin bump. Its
-  `DownloadStage` enum has no verification state to map the new variant onto either, so this needs a
-  code change there, not just a new arm. Same applies to `gogdl_flutter`'s `restart` branch whenever
-  `repair_game` gets bridged.
-
-- [ ] **`repair` checksums the chunks of files it has just allocated.** *New in `a11273a`.* Stage 2
-  allocates every file that failed size verification (`set_len` on a fresh or truncated file,
-  `src/downloader/fs/path_resolver.rs:76`), and stage 3 then MD5s **every** unit of **every** file
-  (`src/downloader/downloader.rs:103-115`) — including those just-allocated, all-zero ranges, whose
-  chunks cannot possibly match. On a repair where a large file is missing outright, that's a full-size
-  read plus MD5 of zeroes purely to conclude what stage 1 already knew. Filtering the units belonging to
-  `missing_files` out of the verification pass (and adding them straight to the download list) skips
-  that entirely.
-
-- [ ] **Secure-link fetches aren't collapsed across concurrent chunk downloads — and since `a11273a`
-  deleted the pre-fetch that used to hide it, this fires at the start of every download and repair, not
-  just on expiry.** `SecureLinksManager::get_secure_links`/`invalidate_secure_links`
-  (`src/secure_links/links_manager.rs:32-67`) have no in-flight-request dedup, unlike the note this doc
-  already has on `refresh_lock` not collapsing concurrent auth refreshes below. `Downloader::download_files`
-  runs up to `self.threads` chunk downloads concurrently via `buffer_unordered`
-  (`src/downloader/downloader.rs:256,327`, shifted by `f3a944a`), each calling `HttpClient::stream_chunk`
-  independently, and `stream_chunk` calls `get_secure_links` per chunk (`src/client/client.rs:79`) —
-  since `f3a944a`, three times per chunk rather than once, because the retry loop around it never
-  breaks (see the new item in the High section). The extra two are cache hits in the steady state, so
-  this multiplies the lookups but not the cold-start misses.
-  - *Cold-start (new with `a11273a`):* `download_files` used to warm the cache first — a
-    `stream::iter(bundles).map(|bundle| get_secure_links(product_id)).buffer_unordered(self.threads)`
-    block that `a11273a` removed along with the `(String, DownloadUnit)` tupling it sat next to. Nothing
-    replaced it, so the first `self.threads` chunk tasks now all miss the empty `links_cache` at once and
-    each issue its own `SecureLinks::get_secure_links` round-trip. The cache-check and the fetch are not
-    under one lock (`links_manager.rs:39-60`), so the misses aren't collapsed by the mutex either.
-    This is per product bundle, on every download and every repair.
-  - *Expiry (as before):* if a game's secure link expires while several chunks are in flight, every one
-    of them can hit the CDN's 401 at roughly the same time; each independently calls
-    `invalidate_secure_links` (removing the same already-removed cache entry is harmless) and then
-    independently re-fetches, instead of one task refreshing and the rest reusing its result.
-
-  In both cases a single event can trigger up to `self.threads` redundant secure-link fetches instead of
-  one. Restoring the pre-fetch would paper over the cold-start half; an in-flight dedup (a per-`game_id`
-  `OnceCell`/shared future, the shape `PathResolver::dir_cache` already uses at
-  `src/downloader/fs/path_resolver.rs:87-99`) fixes both.
-
-- [ ] **Types a consumer must be able to name are not exported (`DepotFile`, `Chunk`, and — since
-  `a11273a` — `DownloadUnit`).** The exported
-  `ProductBundle` declares `pub product_files: Vec<DepotFile>` (`src/downloader/product_bundle.rs:8-10`);
-  `DepotFile.chunks` (`src/depot/depot_info.rs:33`) is `Option<Vec<Chunk>>`. Neither `DepotFile` nor
-  `Chunk` is re-exported from `src/lib.rs` — `998829d` dropped both (in favor of exporting
-  `TokenObserver`) without narrowing what still *emits* them. A consumer that walks
-  `ProductBundle.product_files` (which `verify_files`/`download_game` require holding onto, since
-  `ProductBundle` isn't `Clone`) receives a `Vec` of a type it cannot name in a signature, `let` binding,
-  or test fixture. `2ae200d` ("Remove secure links API and expose TokenObserver") closed the third leg of
-  this item by removing `GogDl::get_secure_links` and `SecureLinks`'s re-export from
-  `secure_links/mod.rs` entirely, rather than exporting the type — a bigger break for any consumer that
-  was calling it (the method itself is gone, not just the return type unnameable), but it does mean
-  `SecureLinks` is no longer a type a consumer needs to name at all. `a11273a` widened the leak slightly
-  rather than narrowing it: `DepotFile::to_download_units` (`src/depot/depot_info.rs:45`) is a new `pub`
-  method on the unexported `DepotFile`, returning `Vec<DownloadUnit>` — and `DownloadUnit` is a third
-  type that isn't re-exported from `src/lib.rs`. It's only reachable through `ProductBundle.product_files`,
-  so nothing *newly* breaks, but it does mean the public field now leaks three unnameable types instead
-  of two. `lumen-cli`
-  (`/home/fernando/repo/lumen-project/lumen-cli`, sibling repo in this workspace), which previously
-  failed to compile with `E0432: unresolved imports gogdl_lib::DepotFile, gogdl_lib::SecureLinks`,
-  actively calls `gog.get_secure_links(product_id)` at two call sites
-  (`src/middleware/downloads.rs:131,200`) — its own doc comments there already note working around
-  `SecureLinks` not being nameable (`downloads.rs:176-182`). Once `lumen-cli` bumps its `gogdl-lib` pin
-  past this pass, both call sites become a hard `E0599: no method named 'get_secure_links'` compile
-  break, not the type-naming workaround it currently has code for — this consumer needs either the
-  method restored or a replacement API before that pin bump happens. Either re-export `DepotFile`/`Chunk`
-  or narrow the public field that leaks them.
-
-- [ ] **The `982dc82` collapsing regression has effectively recurred: a dead refresh token and a
-  routine expiry now both surface as the same opaque, unstructured error.** This item used to describe
-  a *risk* — `ClientError::AuthError(#[from] AuthError)` wrapping one way and a manual `impl
-  From<ClientError> for AuthError` unwrapping the other, at the exact seam where `982dc82` previously
-  collapsed "expired access token" and "dead refresh token" into an indistinguishable `Unauthorized`
-  (per `lumen-cli/CLAUDE.md`'s "Auth refresh regression" section). The rewrite that landed as `43c1d85`
-  deleted that `impl From<ClientError> for AuthError` entirely (it no longer exists in
-  `src/client/auth/error.rs`) and replaced it with ad hoc `match`es at the two call sites in
-  `auth_manager.rs` (`login_with_code:57-64`, `refresh_auth:80-87`, current line numbers after the
-  `client/auth` move): both call `client.fetch_no_retry(&url, false, false)`, match
-  `Err(ClientError::AuthError(e)) => return Err(e)` first, and otherwise fall to `Err(e) =>
-  AuthError::ClientError { inner: e.to_string() }`. But because `require_auth` is hardcoded to `false` in
-  both calls (unchanged by this pass), `inner_fetch` (`src/client/client.rs:81-97`) can *never* produce
-  `ClientError::AuthError` on these paths — that branch only fires when `require_auth: true` is passed
-  and the internal `get_auth()` fails locally. So every real failure from `AUTH_URL`/`REFRESH_URL` —
-  including a 401 because the refresh token is dead, not just refreshable — falls straight to the
-  stringified `ClientError { inner: String }` arm. That's `982dc82`'s exact failure mode back in a new
-  shape: a dead-refresh-token 401 and a transient network blip are now both just an opaque string. `Auth`
-  export work elsewhere in this pass (`AuthError` is now `pub` from the crate root — see the error-detail
-  item above) means an external consumer can at least match `AuthError::ClientError { inner }` as its own
-  variant now, distinguishing "some client-level failure happened during auth" from `TokenExpired`/
-  `NotAuthenticated`/the decode errors — but `inner` is still just a `Display`-formatted string with no
-  structure, so a dead refresh token and a transient network blip remain indistinguishable *within* that
-  variant. Fix needs either a real status-aware variant on `AuthError` for this case, or at minimum
-  removing the dead `Err(ClientError::AuthError(e))` arm so the code doesn't imply a distinction it can't
-  actually make.
-
-- [ ] **`Http`/`UrlParseError`/`NetworkError`/`DecodeError`/`DeflateError` on `DepotError`, `GamesError`,
-  `SecureLinksError`, and `DownloadError` are now dead code.** The `43c1d85` rewrite deleted the four
-  hand-written `impl From<ClientError> for XError` blocks that used to translate a `ClientError` into
-  one of these per-type variants (e.g. `ClientError::Http{status: 401,..}` → `DepotError::AuthError(...)`,
-  everything else → the matching `Depot`-flavored variant), replacing each with a single blanket
-  `ClientError(#[from] ClientError)` variant. This pass additionally removed the now-redundant
-  `AuthError(#[from] AuthError)` variant each of the four enums had kept alongside `ClientError` (see
-  the "`DownloadError` was left out" item above), but left the five-per-enum dead variants untouched. But
-  every network call in `depot/`, `games/`, and
-  `secure_links/` already goes exclusively through `HttpClient` (confirmed: `grep -rn
-  "reqwest::\|url::Url::parse\|serde_json::from_str" src/depot src/games src/secure_links` matches
-  nothing outside `error.rs` itself), and `downloader/` is the same except for its own directly-
-  constructed `DeflateError` (`src/downloader/downloader.rs:200,204`). So with the translation gone,
-  `.fetch()?` now always arrives as `XError::ClientError(..)`, and nothing in the crate can construct
-  `DepotError::Http`/`UrlParseError`/`NetworkError`/`DecodeError`/`DeflateError` (or the `Games`/
-  `SecureLinks`/`Download` equivalents, `DeflateError` excepted for `Download`) anymore — confirmed with
-  `grep -rn "::Http {" src/` and the equivalent per-variant greps, all empty. Because these enums are
-  `pub`, `dead_code` doesn't warn on them, so this won't show up in `cargo clippy`. Either delete the
-  now-unreachable variants (and their `use reqwest::StatusCode`/`use std::io` imports, e.g.
-  `src/depot/error.rs:1,3`) or reinstate a translation that actually uses them — leaving both a working
-  wrapper *and* five dead siblings per enum is confusing surface for whoever reads these error types
-  next.
+  with no explanation of why index 2, and silently drops the screenshot (`continue`) if fewer than 3
+  formatters are present instead of falling back to whatever is available.
 
 ## Medium — missing coverage
 
 - [ ] **No automated tests anywhere in the crate.** Given the `restart` branch's explicit goal of a
   careful, from-scratch rebuild (per the workspace `CLAUDE.md`), this is worth addressing before the
-  crate grows further rather than after. The auth logic added in `998829d` is the clearest candidate
-  to start with: `Auth::is_valid` boundaries, the `to_string`/`from_string` restore round-trip
-  (regressed once already in `998829d`, fixed in `6c76f03`, and with no test to stop it happening
-  again), and concurrent `refresh_auth` collapsing are all unit-testable without network access.
+  crate grows further. Highest-value first:
+  - **One `#[tokio::test]` driving `download_files` against a chunk source that fails every
+    attempt.** This would have caught the swallowed-error regression on the day it was written, both
+    times, and would fail today against `v0.0.12-restart`.
+  - Auth logic, all unit-testable without network: `Auth::is_valid` boundaries (including the 60s
+    buffer), the `to_string`/`from_string` restore round-trip (regressed once in `998829d`, fixed in
+    `6c76f03`, still unpinned), `refresh_auth` persisting `valid_until` (broke twice across
+    refactors), and concurrent `refresh_auth` collapsing.
 
 - [ ] **No `CLAUDE.md`/`api.md` on the `restart` branch.** Both exist on `master` and are treated as
-  canonical specs for consumers (`gogdl_flutter`); the `restart` branch currently has neither, so
-  there's no single reference tracking what public surface has been rebuilt so far vs. still stubbed.
-  `a11273a` sharpens this: it adds a public `GogDl::repair_game` and a new `DownloadStageEvent` variant
-  with no doc comment anywhere, and the download-vs-repair semantics (which one resumes, which one
-  re-transfers everything, which stages each emits) are only discoverable by reading `downloader.rs`.
-  This crate now has two near-identical public entry points whose difference is undocumented — see the
-  consistency items above.
+  canonical specs for consumers (`gogdl_flutter`); `restart` has neither, so there's no single
+  reference tracking what public surface has been rebuilt vs. still stubbed. `a11273a` sharpens
+  this: it adds a public `GogDl::repair_game` and a new `DownloadStageEvent` variant with no doc
+  comment anywhere, and the download-vs-repair semantics (which resumes, which re-transfers, which
+  stages each emits) are discoverable only by reading `downloader.rs`.
 
 ## Low — style / clippy
 
-- [ ] **Vestigial `let _ = body;` in `download_files`'s `HttpError` arm — and in `fetch`'s.** *Opened
-  at the thirteenth pass; line numbers re-derived at `2b1cd7f`.*
-  `src/downloader/downloader.rs:301` discards `body` into `_` seven lines before `:308` returns
-  `ClientError::HttpError { status, body }` with it. The statement was load-bearing at
-  `v0.0.11-restart` — it was what kept rustc quiet about the then-unused binding, and so part of why
-  the swallowed-error bug drew no warning at all — but now that `body` is genuinely returned it is a
-  no-op that reads as if the value were being deliberately dropped. Delete it. The matching
-  `let _ = inner;` in the arm above was correctly removed by `ac061e0`. `HttpClient::fetch` has the
-  identical pair (`src/client/client.rs:50` discarding a `body` that `:56` returns), older and never
-  noted before — delete both, and `:56`'s `body: body` with them (that one clippy does flag; see the
-  count section below).
+- [ ] **Vestigial `let _ = body;` in two retry arms.** `src/downloader/downloader.rs:301` discards
+  `body` into `_` seven lines before `:308` returns `ClientError::HttpError { status, body }` with
+  it. The statement was load-bearing at `v0.0.11-restart` — it kept rustc quiet about the then-unused
+  binding, and so is part of why the swallowed-error bug drew no warning — but now reads as if the
+  value were deliberately dropped. `HttpClient::fetch` has the identical pair (`client.rs:50`
+  discarding a `body` that `:56` returns). Delete both, and `:56`'s `body: body` with them.
 
-- [x] **Leftover debug `println!` in a filter closure.** *Fixed in `1d98eb7` ("Remove Debug Print From
-  Product Filtering", 2026-08-31, first tagged in `v0.0.7-restart`) — the fix landed four tags ago but
-  this item was never ticked; caught on the eleventh pass.* The line in
-  `src/downloader/downloadable_product.rs` that printed every candidate `product_id` on each call to
-  `get_downloadable_products` is gone, and `grep -rn 'println!\|eprintln!\|log::\|tracing::' src/` is now
-  empty crate-wide. It was never flagged by `cargo clippy --all -- -W clippy::all` (`print_stdout` is an
-  allow-by-default restriction lint, not part of the `clippy::all` group this doc's warning count
-  tracks), so the fix shows up nowhere in the counts above. The crate still has no logging facade at
-  all — if one is ever adopted, this is the kind of call site that would want it.
-
-- [ ] **The free-space check discards its own error detail — now in two places.** `Downloader::download`
-  (`src/downloader/downloader.rs:172-175`) and, since `a11273a`, the copy of the same block in
-  `Downloader::repair` (`:73-76`) each match `path_resolver.get_free_space()`'s `Err(_)` and always
-  return the generic `DownloadError::CouldNotResolveFreeSpace`, throwing away the
+- [ ] **The free-space check discards its own error detail, in two places.** `Downloader::download`
+  (`src/downloader/downloader.rs:172-175`) and its copy in `Downloader::repair` (`:73-76`) each match
+  `path_resolver.get_free_space()`'s `Err(_)` and always return the unit variant
+  `DownloadError::CouldNotResolveFreeSpace`, throwing away the
   `FileSystemError::NoDiskMatchingPath(PathBuf)` that names exactly which resolved base path had no
-  matching disk (`src/downloader/fs/path_resolver.rs:39-55`). Same "detail thrown away at the call site"
-  shape this doc has flagged elsewhere (see the error-detail items in the auth/client sections) — carry
-  the path (or the whole `FileSystemError`) into `DownloadError::CouldNotResolveFreeSpace` instead of a
-  unit variant.
+  matching disk (`src/downloader/fs/path_resolver.rs:39-55`). Carry the path (or the whole
+  `FileSystemError`) into the variant.
 
-**Current count: 38 warnings**, at `2b1cd7f` / `v0.0.12-restart` and unchanged by the uncommitted
-change on top of it — see the fifteenth-pass update at the end of this section for the current
-breakdown and line numbers. The paragraph below and the bullets that follow it were written at the
-sixth pass and are kept for the history; where a location has moved since, the bullet says so.
+**Clippy: 38 warnings** at `2469b13`. Locations re-derived against this tree:
 
-`cargo clippy --lib -- -W clippy::all` reports 34 warnings on the then-current (2026-08-31, sixth pass) staged
-tree (34 at the still-uncommitted `403` version reviewed in the previous pass, 33 at `3ed4dd0`, 32 at
-`43c1d85`, 31 at `c7d39b9`, 33 at `v0.0.4-restart`/`32e8786`, 30 at `a962ef7`, 34 at `377314c`, 37 at
-`998829d`) — the 403-removal edit changed nothing about the warning count or categories, only shifted
-three of them up by two lines as the function shrank. The net +1 from `3ed4dd0` still breaks down as:
-**−1** "this `if` statement can be collapsed" — gone, because the nested `if status == UNAUTHORIZED { if
-require_auth {..} }` shape it applied to no longer exists (the `if` got an `else` branch instead, per the
-fixed non-401 item above); **+1** "redundant field names in struct initialization", now at
-`src/client/client.rs:54` — `return Err(ClientError::HttpError { status, body: body })` should just be
-`body`; **+1** "this expression creates a reference which is immediately dereferenced by the compiler",
-now appearing *twice* instead of once (`src/client/client.rs:51` and `:58`) — the same
-`self.auth_manager.refresh_auth(&self)` needless-borrow this doc already flagged, now duplicated because
-the `AuthError::TokenExpired` arm makes the identical call a second time. Everything else below carries
-forward unchanged in count from `3ed4dd0`; only file paths moved for anything under the old `src/auth/`,
-now `src/client/auth/`:
-- [x] Redundant `if let None = ...` patterns instead of `.is_none()` in five files. *Fixed as a side
-  effect of `a962ef7`.*
-- [ ] `Auth::is_valid`'s `map_or(false, ...)` should be `is_some_and(...)`
-  (`src/client/auth/auth.rs:33-34`, moved from `src/auth/auth.rs`).
-- [ ] `OwnedGames::default()` is a hand-written inherent method that shadows/confuses with
-  `std::default::Default` (`src/games/owned_games.rs:14-16`) — implement the trait instead.
-- [ ] The "useless use of `format!`" on `format!("https://embed.gog.com/user/data/games")` with no
-  interpolation is still there (`src/games/owned_games.rs:25`, shifted up from `:32` now that the
-  pre-flight auth block above it is gone).
-- [ ] 7 "returning the result of a `let` binding from a block" (`downloader/download_manager.rs:70,85,100`
-  — the third added by `a11273a`'s `repair_game`, `downloader/downloader.rs:366,454,539`,
-  `downloader/product_bundle.rs:47`) and 4 "redundant redefinition of a binding `path_resolver`"
-  (`downloader/downloader.rs:256,318,377,465`, all the same `let path_resolver = path_resolver;` idiom
-  moving it into a closure) — the bulk of the count, unchanged in shape since at least `a962ef7`, both
-  confined to the downloader. Note `DownloadUnit::from_product_bundles`'s own
-  `let download_units: Vec<DownloadUnit> = ...; download_units` is *not* flagged, because the explicit
-  type annotation suppresses `let_and_return`.
-- [ ] Module inception, still 5: `mod auth` (now nested as `client::auth::auth`, same shape as before
-  under a new parent), `mod client`, `mod downloader`, `mod gogdl`, `mod secure_links`.
-- [x] 1 "all variants have the same postfix: `Error`" on `FileSystemError`
-  (`downloader/fs/error.rs:6-21`, `enum_variant_names`) — *no longer fires, as of the tenth pass;* the new
-  `NoDiskMatchingPath` variant `2100296` added doesn't end in `Error`, so the enum's variants no longer
-  share a uniform postfix and the lint stopped matching. Not a fix, just a side effect — `ClientError`
-  still isn't flagged for the same reason despite also having a non-`Error`-suffixed variant among its
-  six (`MaxRetriesReached`), so this was never a real signal to begin with.
-- [ ] A handful of smaller one-offs (locations re-derived at `a11273a`): an explicit-closure-for-cloning
-  in `depot/build_metadata.rs:38`, 3 `len_zero` (`downloader.rs:97,118,196` — one pre-existing in
-  `download`, two added by `repair`), `io_other_error` at `util/hash.rs:44`, a redundant `&` in a
-  `format!` call at `depot/depot_info.rs:80`, the pre-existing "redundant field names in struct
-  initialization" `offset: offset` — now at `depot/depot_info.rs:58`, having moved with the code from
-  `downloader/download_unit.rs:33` — and two `or_insert_with(Vec::new)` that should be `or_default()`
-  (`downloader/downloadable_product.rs:50`, `downloader/product_bundle.rs:42`). The `redundant_closure`
-  at the old `downloader.rs:115` is gone: it was `DownloadUnit::from_depot_file`, which `a11273a`
-  deleted. There are no `redundant_closure` warnings left in the crate.
+- [ ] 7 `let_and_return` — `download_manager.rs:70,85,100`, `downloader.rs:414,502,587`,
+  `product_bundle.rs:47`.
+- [ ] 4 "redundant redefinition of a binding `path_resolver`" — `downloader.rs:258,366,425,513`, all
+  the same `let path_resolver = path_resolver;` idiom moving it into a closure.
+- [ ] 5 module inception — `client::auth::auth`, `client::client`, `downloader::downloader`,
+  `gogdl::gogdl`, `secure_links::secure_links`.
+- [ ] 4 `needless_return` — `client.rs:142,145`, `downloader.rs:575`, `path_resolver.rs:49`.
+- [ ] 3 `redundant_field_names` — `client.rs:56` (`body: body`), `depot_info.rs:58`
+  (`offset: offset`), `downloader.rs:298` (`inner: inner`).
+- [ ] 3 `len_zero` — `downloader.rs:99,120,198`.
+- [ ] 2 `needless_borrow` on `refresh_auth(&self)` — `client.rs:53,60`.
+- [ ] 2 `manual_map` — `auth_manager.rs:113` (clone-observer-out-of-guard, wants `.cloned()`),
+  `depot_info.rs:39` (`DepotFile::size`, wants `.as_ref().map(..)`).
+- [ ] 2 `or_insert_with(Vec::new)` → `or_default()` — `downloadable_product.rs:50`,
+  `product_bundle.rs:42`.
+- [ ] `Auth::is_valid`'s `map_or(false, ..)` should be `is_some_and(..)`
+  (`client/auth/auth.rs:33-34`).
+- [ ] `OwnedGames::default()` is a hand-written inherent method shadowing `std::default::Default`
+  (`games/owned_games.rs:14-16`) — implement the trait.
+- [ ] Useless `format!` with no interpolation on `format!("https://embed.gog.com/user/data/games")`
+  (`games/owned_games.rs:25`).
+- [ ] One-offs: explicit-closure-for-cloning (`depot/build_metadata.rs:38`), `io_other_error`
+  (`util/hash.rs:44`), redundant `&` in a `format!` (`depot/depot_info.rs:80`).
 
-A seventh-pass update (`31809e9`/`46b6ce3`, never logged in this section before now): the count dropped
-34→33. The only change was **−1** "redundant closure" at the old `downloader.rs:200` — `31809e9`'s
-switch to an `AsyncFnMut` callback replaced the sync closure clippy was flagging there with a body that
-directly awaits `decoder.write_all(&chunk)`, so the pattern clippy matched no longer exists. Nothing
-else moved by more than a line-number shift from the file growing.
+`cargo clippy --fix --lib -p gogdl-lib -- -W clippy::all` auto-applies most of these — but only
+against a clean tree; it will otherwise try to "fix" whatever is mid-edit.
 
-An eighth-pass update (`71d49a8`/`de52483`) brings the count 33→35, both new warnings inside the new
-`stream_chunk` retry loop (`src/client/client.rs:71-135`), mirroring warnings `fetch` already had:
-**+1** "redundant field names in struct initialization" at `client.rs:123` — `return
-Err(ClientError::HttpError { status, body: body })` in `stream_chunk`'s non-401 arm, the same pattern
-`fetch`'s arm at `:58` already has (now three total in the crate alongside `download_unit.rs:33`); **+1**
-"this expression creates a reference which is immediately dereferenced by the compiler" at `client.rs:127`
-— `stream_chunk`'s own `AuthError::TokenExpired` arm calls `self.auth_manager.refresh_auth(&self)`, the
-same needless-borrow `fetch` has at `:55`/`:62` (now three occurrences of that one, not two). `71d49a8`
-itself added no new warnings — `Downloader::verify`'s new early return is plain, unflagged code.
-
-A ninth-pass update (`e4a8560`) leaves the count at 35 — unchanged. `stream_chunk` grew by 9 lines
-(`71-135`→`71-144`) adding the `attempts < 3` retry branch on the non-401 `HttpError` arm and the whole
-new `ClientError::NetworkError` arm, which pushed the two warnings logged above down to `client.rs:126`
-and `:130` respectively; neither new branch introduced a warning of its own (`if attempts < 3 { continue;
-}` and `return Err(ClientError::NetworkError(err))` are both plain, unflagged code).
-
-A tenth-pass update (`2100296`) moves the count 35→36. **−1** `enum_variant_names` on `FileSystemError`
-— gone, per the updated bullet above, a side effect of the new `NoDiskMatchingPath` variant rather than a
-fix. **+1** `manual_map` on the new `DepotFile::size` (`depot/depot_info.rs:36-40`) — its `if let
-Some(chunks) = &self.chunks { Some(...) } else { None }` should be
-`self.chunks.as_ref().map(|chunks| ...)`. **+1** `needless_return` on the new
-`PathResolver::get_free_space`'s `return Err(FileSystemError::NoDiskMatchingPath(...))`
-(`downloader/fs/path_resolver.rs:49-51`) — sitting inside a `match` arm where a bare expression would do,
-same lint category as the three other `needless_return`s already in the crate (`client.rs:175,178`,
-`downloader.rs:451`, none of which this doc had previously called out by name — folded into "a handful of
-smaller one-offs" above until now). Deleting `ChecksumAlgorithm`/`sha2` introduced no warnings of its own.
-
-An eleventh-pass update covers two steps at once, since the three commits between `2100296` and
-`v0.0.9-restart` were never logged here. **36→37** across `d679048`/`51b7a53`/`8e8a392`: **+1**
-`manual_map` at `client/auth/auth_manager.rs:113` — `51b7a53`'s "clone the observer out of the guard"
-fix writes `if let Some(observer) = &inner.token_observer { Some(observer.clone()) } else { None }`,
-which should be `inner.token_observer.as_ref().map(|observer| observer.clone())` (or just `.cloned()`).
-Nothing else changed. Then **37→39** across `a11273a`: **+2** `len_zero` in the new `repair`
-(`downloader.rs:97` `files_allocation_error.len() != 0`, `:118` `missing_units.len() == 0`, both copies
-of the idiom `download` already had at `:196`); **+1** `let_and_return` in the new
-`DownloadManager::repair_game` (`download_manager.rs:100`, the third copy of the same
-`let links = { .. let links = ..; links }` block); **+1** `redundant_field_names` at
-`depot/depot_info.rs:58` and **−1** at `download_unit.rs:33` — the same `offset: offset`, relocated
-with the code; **−1** `redundant_closure` at the old `downloader.rs:115`, since
-`DownloadUnit::from_depot_file` no longer exists. Every one of the four net-new warnings is in code
-`a11273a` copied rather than wrote, which is the clippy-visible shadow of the duplication item above.
-`cargo build --lib` remains free of rustc warnings.
-
-A twelfth-pass update (`82c7980`/`f3a944a`) moves the count **39→37**, and both removals are the two
-warnings the eighth pass logged as *added* by `stream_chunk`'s retry loop, now gone with the loop
-itself: **−1** `redundant_field_names` (`return Err(ClientError::HttpError { status, body: body })`,
-last seen at `client.rs:123`) and **−1** `needless_borrow` on `refresh_auth(&self)` in `stream_chunk`'s
-`TokenExpired` arm (last seen at `:127`). Both patterns still exist once each in `fetch`
-(`client.rs:58` and `:55`/`:62`), which is where they came from. `f3a944a`'s new retry loop in
-`download_files` introduces **no** warnings at all — worth stating plainly, because the loop is missing
-its `break` and silently discards every error, and clippy has no lint for either shape. `cargo build
---lib` likewise stays free of rustc warnings; the `let _ = inner;`/`let _ = body;` discards
-(`downloader.rs:288,293`) are exactly the idiom that suppresses the unused-variable warning that would
-otherwise have pointed at the swallowed errors. Line numbers referenced in the bullets above shifted
-with `f3a944a`'s indentation of the task body: the 4 `redundant redefinition of a binding
-'path_resolver'` are now `downloader.rs:257,343,402,490`; the 7 `let_and_return` are
-`download_manager.rs:70,85,100`, `downloader.rs:391,479,564`, `product_bundle.rs:47`; the 3 `len_zero`
-are `downloader.rs:98,119,197`; the `needless_return`s are `client.rs:137,140`,
-`downloader.rs:552`, `path_resolver.rs:49`; and `manual_map` is now at `depot_info.rs:39`.
-
-A thirteenth-pass update (the uncommitted change on top of `f3a944a`) moves the count **37→38**:
-**+1** `redundant_field_names` at `downloader.rs:295` — `ClientError::SecureLinksError { inner: inner }`
-in that arm's new `return`, making three live instances of the lint in the crate alongside
-`client.rs:58` and `depot_info.rs:58`. Nothing else moved, and `cargo build --lib` stays free of rustc
-warnings. One correction to the twelfth-pass note above: of the two `let _ = ..` discards it cites,
-`let _ = inner;` is gone (its binding is returned now), and `let _ = body;` at `:298` survives but no
-longer suppresses anything, since `body` is returned at `:305` — it is purely vestigial, and has its
-own item in this section.
-
-A fourteenth-pass update (`ac061e0`/`7eb5d5e`/`2b1cd7f`) leaves the count at **38** — the thirteenth
-pass's `+1` is the whole of the move, since it was reviewing what became `ac061e0`; `7eb5d5e` and
-`2b1cd7f` each add nothing. The three `redundant_field_names` are now `client.rs:56` (`body: body`),
-`depot_info.rs:58` (`offset: offset`) and `downloader.rs:296` (`inner: inner`). Worth stating plainly
-for the third pass running: **clippy has no lint for any of the three defects these commits are about.**
-`for attempt in 0..2` tested against `attempt != 2` is an always-true comparison against a literal
-outside the loop's range, and neither rustc nor `clippy::all` flags it; the five `return Err(..)`
-statements it renders unreachable are unreachable only at runtime, so `unreachable_code` never fires
-either. `cargo build --lib` stays free of rustc warnings throughout. Line numbers for the bullets above,
-re-derived at `2b1cd7f`: the 7 `let_and_return` are `download_manager.rs:70,85,100`,
-`downloader.rs:411,499,584`, `product_bundle.rs:47`; the 4 `redundant redefinition of a binding
-'path_resolver'` are `downloader.rs:258,363,422,510`; the 3 `len_zero` are `downloader.rs:99,120,198`;
-the 4 `needless_return` are `client.rs:142,145`, `downloader.rs:572`, `path_resolver.rs:49`; the 2
-`needless_borrow` on `refresh_auth(&self)` are `client.rs:53,60`; the 2 `manual_map` are
-`auth_manager.rs:113` and `depot_info.rs:39`; module inception is still 5.
-
-A fifteenth-pass update (the uncommitted `0..3`/backoff change on top of `2b1cd7f`) leaves the count at
-**38** — nothing added, nothing removed. `cargo build --lib` stays free of rustc warnings. The point
-the fourteenth pass made stands and is worth repeating now that the bug is fixed rather than shipped:
-**no lint in `clippy::all` distinguishes the broken loop from the fixed one.** `for attempt in 0..2`
+**Clippy caught none of the three retry defects this branch has shipped.** `for attempt in 0..2`
 against `attempt != 2` and `for attempt in 0..3` against `attempt != 2` produce byte-identical clippy
-output; only reading the code, or a test, tells them apart. Line numbers for the bullets above,
-re-derived against this working tree: the `redundant_field_names` trio is `client.rs:56`,
-`depot_info.rs:58`, `downloader.rs:298`; the 7 `let_and_return` are `download_manager.rs:70,85,100`,
-`downloader.rs:414,502,587`, `product_bundle.rs:47`; the 4 `redundant redefinition of a binding
-'path_resolver'` are `downloader.rs:258,366,425,513`; the 3 `len_zero` are `downloader.rs:99,120,198`;
-the 4 `needless_return` are `client.rs:142,145`, `downloader.rs:575`, `path_resolver.rs:49`; the 2
-`needless_borrow` on `refresh_auth(&self)` are `client.rs:53,60`; the 2 `manual_map` are
-`auth_manager.rs:113` and `depot_info.rs:39`; module inception is still 5.
+output; a `for` loop missing its `break` fires no lint; and the `return`s an always-true guard
+renders dead are unreachable only at runtime, so `unreachable_code` never fires. Only reading the
+code, or a test, tells them apart.
 
-Run `cargo clippy --fix --lib -p gogdl-lib -- -W clippy::all` for a current full list and to
-auto-apply most of these — but only against a clean tree; it will also try to "fix" whatever's
-mid-edit if run against uncommitted work.
+---
+
+## Closed
+
+One line per fixed item, newest first within each group. Detail is in the referenced commits.
+
+### Downloader reliability
+
+- [x] **Both retry loops off by one (`0..2` bound tested against `!= 2`), making every last-attempt
+  branch dead code** — `2469b13`. Both bounds back to `0..3`; all five `return Err(..)` reachable.
+- [x] **A chunk that fails every attempt was reported as a successful download** — introduced by
+  `f3a944a`, fixed in `ac061e0`, re-introduced by the same commit's `0..2` bound, closed by
+  `2469b13`. Failures now propagate through `buffer_unordered` with full detail.
+- [x] **The retry loop never broke, so every chunk was downloaded three times** — `ac061e0`. `break`
+  at `:342`, after `decoder.shutdown()`/MD5 verification, so the successful attempt is still verified.
+- [x] **Local, non-retryable failures burned all three attempts** — `7eb5d5e`.
+  `ChunkStreamCallbackError` (full disk, over-length guard, zlib error) and `UrlParseError` return on
+  first occurrence, above the catch-all, with no `attempt` guard.
+- [x] **No retry/backoff for transient network failures** — `2b1cd7f` (arms + delay), `2469b13`
+  (delay on all four `download_files` arms, linear `(attempt+1)*2`, none on the way out).
+- [x] **`stream_chunk`'s retry resumed into a dirty writer, so its `NetworkError` arm could never
+  recover** — `82c7980` + `f3a944a` moved the retry loop up to `download_files`, which owns the
+  writer stack and now rebuilds `open_file` → `OffsetWriter` → `HashingWriter` → `ZlibDecoder` per
+  attempt.
+- [x] **`stream_chunk` bypassed the `fetch`/`inner_fetch` funnel entirely** — resolved via its own
+  retry path (`de52483`, `e4a8560`), then relocated to `download_files`. Residual duplication and the
+  dead `AuthError` arm are tracked as open items above.
+- [x] **Secure links cached forever with no expiry handling** — reactive half fixed in `de52483`
+  (CDN 401 → `invalidate_secure_links` → re-fetch), relocated intact by `f3a944a`, which also
+  invalidates on `SecureLinksError`. Proactive half is open above.
+- [x] **Blocking syscalls ran directly inside async tasks** — `31809e9` + `46b6ce3`. Real async I/O
+  rather than `spawn_blocking`: `tokio::fs`, `OffsetWriter` as `AsyncWrite`, `AsyncFnMut` callback.
+  `grep -rn 'std::fs::\|write_at' src/downloader/` is empty.
+- [x] **`Downloader::verify` discarded its own result** — `71d49a8`. Returns
+  `DownloadError::ChunkIntegrityCheckFailed(n)` instead of unconditional `Ok(())`.
+- [x] **One failed file allocation aborts the whole download** — resolved as *intended* behavior,
+  confirmed with the person driving the rebuild. `2100296` reinforces it with a proactive free-space
+  check and a specific `NotEnoughFreeSpace` error.
+- [x] **Only per-chunk MD5 verified; SHA-256 support was unused dead code** — resolved by deletion in
+  `2100296`. `DepotFile.sha256`, `ChecksumAlgorithm` and the `sha2`/`cpufeatures` deps are gone.
+
+### Auth & client
+
+- [x] **Four authenticated endpoints fetched with no auth token at all** — `22bf182`, correcting the
+  `decode`/`require_auth` bools swapped at four call sites when `9cd8d0a` changed the signature.
+- [x] **`Auth` and `TokenObserver` were dropped from the crate root by `9cd8d0a`'s
+  `src/auth/*` → `src/client/auth/*` move** — `2ae200d` (`TokenObserver`) + `3ed4dd0` (`Auth`).
+  Verified with an external `impl TokenObserver for Dummy`.
+- [x] **`TokenObserver` couldn't be implemented outside the crate** — `32e8786`, re-broken by
+  `9cd8d0a`, re-fixed by `2ae200d` + `3ed4dd0`. `AuthManager` itself stays crate-private.
+- [x] **Error detail was invisible to consumers** — `5b7ca2f` re-exports every per-layer error enum
+  (`AuthError`, `ClientError`, `DepotError`, `DownloadError`, `GamesError`, `SecureLinksError`) from
+  `src/lib.rs`. No flat top-level `GogDlError::AuthError` — auth failures still arrive nested as
+  `XError::ClientError(ClientError::AuthError(..))`.
+- [x] **Local expiry was a hard failure, not a refresh-and-retry case** — `5b7ca2f`. `fetch` gained a
+  dedicated `Err(ClientError::AuthError(AuthError::TokenExpired))` arm, so the common "just launched
+  after an hour" case refreshes instead of failing.
+- [x] **Any non-401 HTTP error was silently retried three times with its detail discarded** —
+  `5b7ca2f`. Explicit `else` returns the original status/body immediately. A brief detour that also
+  retried 403 was reverted before landing, correctly.
+- [x] **`refresh_auth` persisted tokens without `valid_until`** — `998829d`, silently regressed by
+  `9a1f780`, fixed again in `5b7ca2f`. Broke twice across refactors with no test; see the coverage
+  item above.
+- [x] **Restoring persisted tokens locked the app out entirely** — `6c76f03` dropped
+  `#[serde(skip_deserializing)]` from `Auth::valid_until`.
+- [x] **`valid_until` was dead** — `998829d` wired `Auth::is_valid()` and gated `get_auth` on it.
+- [x] **`is_valid()` had no clock-skew / in-flight margin** — `d679048` subtracts a 60s buffer.
+- [x] **Silent, internal token refreshes were invisible to callers** — `998829d` + `b87d8dd`; the
+  observer hands over the whole `Auth`, so the rotated refresh token reaches the app.
+- [x] **Token observer only emitted the access token** — `b87d8dd`.
+- [x] **A registered `TokenObserver` could never be replaced with "none"** — `d679048` adds
+  `remove_token_observer`, wired out through `HttpClient` and `GogDl`.
+- [x] **The observer callback ran while the `inner` mutex was held** — `51b7a53` clones it out and
+  drops the guard first.
+- [x] **The `inner` mutex was held across the refresh/login network round-trip** — `9a1f780`.
+- [x] **`refresh_lock` serialized refreshes but didn't collapse them** — fixed by snapshotting the
+  access token before queueing and short-circuiting if it changed while waiting. Token-identity
+  comparison rather than a post-lock `is_valid()` check, so a genuine 401 on a locally-valid token
+  still reaches the network. One redundant refresh remains possible, rare and bounded.
+- [x] **`AuthManager::set_auth` was unreachable** — resolved by removal.
+- [x] **Twelve `get_auth().await.unwrap()` calls became reachable panics in `998829d`** — `9a1f780`.
+  Every authed request now does exactly one `get_auth()` await, down from two.
+- [x] **Two `.parse().unwrap()` calls could crash the process on untrusted input, and a sibling file
+  handled the identical failure differently** — fixed on top of `5b7ca2f`.
+  `SecureLinksManager::get_secure_links` returns `SecureLinksError::IncorrectGameId`; both filter
+  closures (`downloadable_product.rs`, `product_bundle.rs`) now drop the entry the same way, so the
+  panic-vs-`unwrap_or(0)` inconsistency is gone too.
+- [x] **The "fetch → on 401 refresh → retry once" block was copy-pasted six times** — `9cd8d0a`
+  folded auth into `HttpClient` and deleted all six pre-flight blocks. Introduced the swapped-bool
+  and local-expiry regressions above along the way; both since fixed.
+- [x] **`DownloadError` was left out of the `a962ef7` error unification** — `9a1f780`, restructured
+  by `9cd8d0a`. Only `ClientError(#[from] ClientError)` remains.
+
+### Style
+
+- [x] **Leftover debug `println!` in a filter closure** — `1d98eb7`.
+  `grep -rn 'println!\|eprintln!\|log::\|tracing::' src/` is empty crate-wide; the crate still has no
+  logging facade at all.
+- [x] **Redundant `if let None = ..` instead of `.is_none()` in five files** — `a962ef7`.
+- [x] **`enum_variant_names` on `FileSystemError`** — no longer fires, as a side effect of
+  `2100296`'s `NoDiskMatchingPath` variant breaking the uniform `Error` postfix. Never a real signal:
+  `ClientError` escapes the same lint for the same reason.
