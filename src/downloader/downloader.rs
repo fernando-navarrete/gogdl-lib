@@ -304,6 +304,12 @@ impl Downloader {
                                     }
                                     return Err(DownloadError::ClientError(ClientError::HttpError { status, body }));
                                 }
+                                Err(ClientError::ChunkStreamCallbackError(err)) => {
+                                    return Err(DownloadError::ClientError(ClientError::ChunkStreamCallbackError(err)))
+                                }
+                                Err(ClientError::UrlParseError(err)) => {
+                                    return Err(DownloadError::ClientError(ClientError::UrlParseError(err)))
+                                }
                                 Err(err) => {
                                     if attempt != 2 {
                                         continue;
