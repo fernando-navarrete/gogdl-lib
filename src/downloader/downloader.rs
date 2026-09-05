@@ -5,6 +5,7 @@ use futures_util::{StreamExt, stream};
 use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::sync::mpsc;
 
+use crate::ClientError;
 use crate::{
     client::HttpClient,
     depot::DepotFile,
@@ -257,45 +258,69 @@ impl Downloader {
                 tx.send(DownloadEvent::Downloading).ok();
                 let tx = tx.clone();
                 async move {
-                    let secure_links_manager = &self.secure_links.clone();
 
-                    let file = path_resolver.open_file(&download_unit.path, true).await?;
+                    for _attempt in 0..3 {
 
-                    let offset_writer =
-                        OffsetWriter::new(file, download_unit.offset, download_unit.size)
+                        let secure_links_manager = &self.secure_links.clone();
+
+                        let file = path_resolver.open_file(&download_unit.path, true).await?;
+
+                        let offset_writer =
+                            OffsetWriter::new(file, download_unit.offset, download_unit.size)
+                                .await
+                                .map_err(DownloadError::DeflateError)?;
+                        let sink =
+                            HashingWriter::new(BufWriter::with_capacity(1024 * 1024, offset_writer));
+                        let mut decoder = ZlibDecoder::new(sink);
+
+                        match self.client
+                            .stream_chunk(secure_links_manager, &download_unit.product_id, &download_unit.file_type, &download_unit.compressed_md5, async |chunk| {
+                                tx.send(DownloadEvent::Progress(chunk.len())).ok();
+                                decoder.write_all(&chunk).await
+                            })
+                            .await {
+                                Ok(_) => {},
+                                Err(ClientError::AuthError(_err)) => {
+                                    secure_links_manager.invalidate_secure_links(&download_unit.product_id).await;
+                                    continue;
+                                }
+                                Err(ClientError::SecureLinksError { inner }) => {
+                                    let _ = inner;
+                                    secure_links_manager.invalidate_secure_links(&download_unit.product_id).await;
+                                    continue;
+                                }
+                                Err(ClientError::HttpError { status, body }) => {
+                                    let _ = body;
+                                    if status == reqwest::StatusCode::UNAUTHORIZED {
+                                        secure_links_manager.invalidate_secure_links(&download_unit.product_id).await;
+                                    }
+                                    continue;
+                                }
+                                Err(_) => {
+                                    continue;
+                                }
+                            };
+
+                        decoder
+                            .shutdown()
                             .await
                             .map_err(DownloadError::DeflateError)?;
-                    let sink =
-                        HashingWriter::new(BufWriter::with_capacity(1024 * 1024, offset_writer));
-                    let mut decoder = ZlibDecoder::new(sink);
+                        let (buf_writer, actual_md5) = decoder.into_inner().into_parts();
+                        let writer = buf_writer.into_inner();
 
-                    self.client
-                        .stream_chunk(secure_links_manager, &download_unit.product_id, download_unit.file_type, &download_unit.compressed_md5, async |chunk| {
-                            tx.send(DownloadEvent::Progress(chunk.len())).ok();
-                            decoder.write_all(&chunk).await
-                        })
-                        .await?;
-
-                    decoder
-                        .shutdown()
-                        .await
-                        .map_err(DownloadError::DeflateError)?;
-                    let (buf_writer, actual_md5) = decoder.into_inner().into_parts();
-                    let writer = buf_writer.into_inner();
-
-                    if writer.remaining() != 0 || actual_md5 != download_unit.md5 {
-                        return Err(DownloadError::DeflateError(std::io::Error::new(
-                            std::io::ErrorKind::InvalidData,
-                            format!(
-                                "chunk verification failed for '{}' at offset {} (short by {} byte(s), checksum {})",
-                                download_unit.path,
-                                download_unit.offset,
-                                writer.remaining(),
-                                if actual_md5 == download_unit.md5 { "ok" } else { "mismatch" },
-                            ),
-                        )));
+                        if writer.remaining() != 0 || actual_md5 != download_unit.md5 {
+                            return Err(DownloadError::DeflateError(std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                format!(
+                                    "chunk verification failed for '{}' at offset {} (short by {} byte(s), checksum {})",
+                                    download_unit.path,
+                                    download_unit.offset,
+                                    writer.remaining(),
+                                    if actual_md5 == download_unit.md5 { "ok" } else { "mismatch" },
+                                ),
+                            )));
+                        }
                     }
-
                     Ok(())
                 }
             })

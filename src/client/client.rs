@@ -72,7 +72,7 @@ impl HttpClient {
         &self,
         secure_links_manager: &SecureLinksManager,
         game_id: &str,
-        file_type: FileType,
+        file_type: &FileType,
         chunk_hash: &str,
         mut f: impl AsyncFnMut(Bytes) -> std::io::Result<()>,
     ) -> Result<(), ClientError> {
