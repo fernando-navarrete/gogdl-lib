@@ -1,4 +1,4 @@
-use std::{io::Read, sync::Arc, time::Duration};
+use std::{io::Read, sync::Arc};
 
 use bytes::Bytes;
 use flate2::read::ZlibDecoder;
@@ -6,13 +6,15 @@ use futures_util::StreamExt;
 use reqwest::Client;
 use serde::de::DeserializeOwned;
 
+const MAX_ATTEMPTS: u32 = 6;
+
 use crate::{
     client::{
         TokenObserver,
         auth::{AuthError, AuthManager},
         error::ClientError,
     },
-    downloader::FileType,
+    downloader::{FileType, backoff},
     secure_links::SecureLinksManager,
 };
 
@@ -43,7 +45,7 @@ impl HttpClient {
         decode: bool,
         require_auth: bool,
     ) -> Result<T, ClientError> {
-        for attempt in 0..3 {
+        for attempt in 0..MAX_ATTEMPTS {
             match self.inner_fetch(url, decode, require_auth).await {
                 Ok(result) => return Ok(result),
                 Err(ClientError::HttpError { status, body }) => {
@@ -60,8 +62,8 @@ impl HttpClient {
                     self.auth_manager.refresh_auth(&self).await?;
                 }
                 Err(ClientError::NetworkError(err)) => {
-                    if attempt != 2 {
-                        tokio::time::sleep(Duration::from_secs((attempt + 1) * 2)).await;
+                    if attempt != MAX_ATTEMPTS - 1 {
+                        backoff(attempt as u32).await;
                         continue;
                     }
                     return Err(ClientError::NetworkError(err));

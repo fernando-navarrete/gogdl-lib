@@ -20,3 +20,4 @@ pub use progress_reporting::DownloadStageEvent;
 pub use progress_reporting::FileAllocationEvent;
 pub use progress_reporting::FileSizeVerificationEvent;
 pub use progress_reporting::VerificationEvent;
+pub use util::backoff;

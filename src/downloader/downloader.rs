@@ -1,4 +1,3 @@
-use std::time::Duration;
 use std::{path::PathBuf, sync::Arc};
 
 use async_compression::tokio::write::ZlibDecoder;
@@ -7,6 +6,7 @@ use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::sync::mpsc;
 
 use crate::ClientError;
+use crate::downloader::util::backoff;
 use crate::{
     client::HttpClient,
     depot::DepotFile,
@@ -25,6 +25,8 @@ pub struct Downloader {
     pub secure_links: SecureLinksManager,
     threads: usize,
 }
+
+const MAX_ATTEMPTS: u32 = 6;
 
 impl Downloader {
     pub fn new(client: HttpClient, secure_links: SecureLinksManager) -> Self {
@@ -260,7 +262,7 @@ impl Downloader {
                 let tx = tx.clone();
                 async move {
 
-                    for attempt in 0..3 {
+                    for attempt in 0..MAX_ATTEMPTS {
 
                         let secure_links_manager = &self.secure_links.clone();
 
@@ -283,16 +285,16 @@ impl Downloader {
                                 Ok(_) => {},
                                 Err(ClientError::AuthError(err)) => {
                                     secure_links_manager.invalidate_secure_links(&download_unit.product_id).await;
-                                    if attempt != 2 {
-                                        tokio::time::sleep(Duration::from_secs((attempt + 1) * 2)).await;
+                                    if attempt != MAX_ATTEMPTS - 1 {
+                                        backoff(attempt as u32).await;
                                         continue;
                                     }
                                     return Err(DownloadError::ClientError(ClientError::AuthError(err)));
                                 }
                                 Err(ClientError::SecureLinksError { inner }) => {
                                     secure_links_manager.invalidate_secure_links(&download_unit.product_id).await;
-                                    if attempt != 2 {
-                                        tokio::time::sleep(Duration::from_secs((attempt + 1) * 2)).await;
+                                    if attempt != MAX_ATTEMPTS - 1 {
+                                        backoff(attempt as u32).await;
                                         continue;
                                     }
                                     return Err(DownloadError::ClientError(ClientError::SecureLinksError { inner: inner }));
@@ -302,8 +304,11 @@ impl Downloader {
                                     if status == reqwest::StatusCode::UNAUTHORIZED {
                                         secure_links_manager.invalidate_secure_links(&download_unit.product_id).await;
                                     }
-                                    if attempt != 2 {
-                                        tokio::time::sleep(Duration::from_secs((attempt + 1) * 2)).await;
+                                    if attempt != MAX_ATTEMPTS - 1 {
+                                        if status == reqwest::StatusCode::UNAUTHORIZED {
+                                            continue;
+                                        }
+                                        backoff(attempt as u32).await;
                                         continue;
                                     }
                                     return Err(DownloadError::ClientError(ClientError::HttpError { status, body }));
@@ -315,8 +320,8 @@ impl Downloader {
                                     return Err(DownloadError::ClientError(ClientError::UrlParseError(err)))
                                 }
                                 Err(err) => {
-                                    if attempt != 2 {
-                                        tokio::time::sleep(Duration::from_secs((attempt + 1) * 2)).await;
+                                    if attempt != MAX_ATTEMPTS - 1 {
+                                        backoff(attempt as u32).await;
                                         continue;
                                     }
                                     return Err(DownloadError::ClientError(err))
@@ -331,6 +336,11 @@ impl Downloader {
                         let writer = buf_writer.into_inner();
 
                         if writer.remaining() != 0 || actual_md5 != download_unit.md5 {
+                            if attempt != MAX_ATTEMPTS - 1 {
+                                secure_links_manager.invalidate_secure_links(&download_unit.product_id).await;
+                                backoff(attempt).await;
+                                continue;
+                            }
                             return Err(DownloadError::DeflateError(std::io::Error::new(
                                 std::io::ErrorKind::InvalidData,
                                 format!(
