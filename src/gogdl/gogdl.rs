@@ -10,6 +10,7 @@ use crate::games::{
     GameBuilds, GameDetails, GameLinks, GameScreenshots, GameSummary, GamesManager, OwnedGames,
 };
 use crate::gogdl::error::GogDlError;
+use crate::proton::{ProtonGeReleasesPage, ProtonManager};
 use crate::secure_links::SecureLinksManager;
 
 /// The single entry point to this crate. Every operation — auth, catalog
@@ -22,6 +23,7 @@ pub struct GogDl {
     games: GamesManager,
     depot: DepotManager,
     downloader: DownloadManager,
+    proton: ProtonManager,
     client: HttpClient,
 }
 
@@ -43,14 +45,25 @@ impl GogDl {
             games_manager.clone(),
             http_client.clone(),
         );
-
+        let proton_manager = ProtonManager::new(http_client.clone());
         Self {
             games: games_manager,
             depot: depot_manager,
             downloader: download_manager,
+            proton: proton_manager,
             client: http_client,
         }
     }
+
+    pub async fn get_proton_releases(
+        &self,
+        page: u32,
+        per_page: u32,
+    ) -> Result<ProtonGeReleasesPage, GogDlError> {
+        let proton_releases = self.proton.get_releases_page(page, per_page).await?;
+        Ok(proton_releases)
+    }
+
     /// Restores a previously-persisted auth state, as returned by
     /// [`login_with_code`](Self::login_with_code) or captured via a
     /// [`TokenObserver`]. Does not touch the network.

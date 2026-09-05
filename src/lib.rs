@@ -38,6 +38,7 @@ mod depot;
 mod downloader;
 mod games;
 mod gogdl;
+mod proton;
 mod secure_links;
 
 pub use client::Auth;

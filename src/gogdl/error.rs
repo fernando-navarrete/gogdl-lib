@@ -2,7 +2,7 @@ use thiserror::Error;
 
 use crate::{
     client::ClientError, depot::DepotError, downloader::DownloadError, games::GamesError,
-    secure_links::SecureLinksError,
+    proton::ProtonError, secure_links::SecureLinksError,
 };
 
 /// The top-level error type returned by every fallible [`crate::GogDl`]
@@ -32,4 +32,7 @@ pub enum GogDlError {
     /// [`ClientError`].
     #[error("Client error: {0}")]
     ClientError(#[from] ClientError),
+
+    #[error("Proton error: {0}")]
+    ProtonError(#[from] ProtonError),
 }
