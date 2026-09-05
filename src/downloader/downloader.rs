@@ -259,7 +259,7 @@ impl Downloader {
                 let tx = tx.clone();
                 async move {
 
-                    for _attempt in 0..3 {
+                    for attempt in 0..2 {
 
                         let secure_links_manager = &self.secure_links.clone();
 
@@ -280,24 +280,35 @@ impl Downloader {
                             })
                             .await {
                                 Ok(_) => {},
-                                Err(ClientError::AuthError(_err)) => {
+                                Err(ClientError::AuthError(err)) => {
                                     secure_links_manager.invalidate_secure_links(&download_unit.product_id).await;
-                                    continue;
+                                    if attempt != 2 {
+                                        continue;
+                                    }
+                                    return Err(DownloadError::ClientError(ClientError::AuthError(err)));
                                 }
                                 Err(ClientError::SecureLinksError { inner }) => {
-                                    let _ = inner;
                                     secure_links_manager.invalidate_secure_links(&download_unit.product_id).await;
-                                    continue;
+                                    if attempt != 2 {
+                                        continue;
+                                    }
+                                    return Err(DownloadError::ClientError(ClientError::SecureLinksError { inner: inner }));
                                 }
                                 Err(ClientError::HttpError { status, body }) => {
                                     let _ = body;
                                     if status == reqwest::StatusCode::UNAUTHORIZED {
                                         secure_links_manager.invalidate_secure_links(&download_unit.product_id).await;
                                     }
-                                    continue;
+                                    if attempt != 2 {
+                                        continue;
+                                    }
+                                    return Err(DownloadError::ClientError(ClientError::HttpError { status, body }));
                                 }
-                                Err(_) => {
-                                    continue;
+                                Err(err) => {
+                                    if attempt != 2 {
+                                        continue;
+                                    }
+                                    return Err(DownloadError::ClientError(err))
                                 }
                             };
 
@@ -320,6 +331,7 @@ impl Downloader {
                                 ),
                             )));
                         }
+                        break;
                     }
                     Ok(())
                 }

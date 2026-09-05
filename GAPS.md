@@ -217,6 +217,76 @@ Still true and re-verified this pass: no automated tests exist anywhere
 (`grep -rn '#\[test\]\|#\[tokio::test\]' src/` returns nothing), so every fix in this doc — including
 the four the repair work now depends on — remains untested.
 
+A twelfth pass, 2026-09-04, covers the two code commits between `v0.0.10-restart` (`a11273a`) and the
+newly-pushed `v0.0.11-restart` (`f3a944a`): `82c7980` ("Remove chunk download retry logic") and
+`f3a944a` ("Retry downloads after authentication failures"). The third commit in the range, `1917464`,
+is the eleventh pass's own write-up of this file and contains no code.
+
+The two commits are one change split in half: **the chunk retry loop moves up one level**, out of
+`HttpClient::stream_chunk` and into `Downloader::download_files`. `82c7980` deletes `stream_chunk`'s
+entire `while attempts < 3` body (`src/client/client.rs:71-103`, down from `71-144`), leaving a
+straight-line method that resolves the secure link, builds the URL and calls `stream_chunk_inner`
+exactly once; its `file_type` parameter also becomes `&FileType` so the caller can keep ownership
+across attempts. `f3a944a` then wraps `download_files`'s per-unit task body in `for _attempt in 0..3`
+(`src/downloader/downloader.rs:262-323`), with a four-arm `match` on the `stream_chunk` result that
+invalidates the cached secure links on an auth-shaped failure and `continue`s on everything else.
+
+**The move itself is the right call, and it closes the eleventh pass's worst finding.** The whole
+decoder/writer stack — `open_file` → `OffsetWriter::new` (which `seek`s to `download_unit.offset`) →
+`HashingWriter` → `ZlibDecoder` — is now rebuilt *inside* the loop (`:264-274`), so every attempt
+starts from a fresh file handle positioned at the right offset, with a zeroed MD5 and a clean zlib
+stream. That is exactly what the "retry resumes into a dirty writer" item asked for; it is ticked
+below, and the `NetworkError` mid-transfer case it said could never recover now genuinely can.
+
+**But the loop as written has two severe defects, and nothing in the toolchain catches either.**
+`cargo build --lib` is free of rustc warnings and `cargo clippy --lib -- -W clippy::all` actually drops
+39→37 (both removals are warnings that lived inside the deleted `stream_chunk` loop; the new code adds
+none — no lint fires on a `for` loop that is missing its `break`):
+- There is no `break` after a successful transfer, so the loop always runs all three iterations and
+  **every chunk of every download and every repair is transferred three times.**
+- When all three attempts fail, the loop condition simply runs out and the task returns `Ok(())`
+  (`:324`), so **a chunk that never downloaded is reported as a success.**
+
+Both are written up as new High items at the top of the downloader-reliability section below. They also
+make two items this doc already tracks worse rather than better: `DownloadEvent::Progress` is now
+emitted three times per byte transferred, and the dead `AuthError` arm the eleventh pass found in
+`stream_chunk` was carried across into the new `match` rather than dropped with the rest of the loop.
+No other item changes state this pass. Still no tests anywhere
+(`grep -rn '#\[test\]\|#\[tokio::test\]' src/` returns nothing), which is the direct reason a
+regression this size — a 3× bandwidth multiplier and a silently-swallowed failure on the crate's
+primary workflow — can land without anything going red.
+
+A thirteenth pass, same day (2026-09-04), covers an **uncommitted** change staged on top of `f3a944a`
+(`git diff`; nothing committed, and `v0.0.11-restart` is still the tip tag), touching
+`src/downloader/downloader.rs` and nothing else. It fixes both High items the twelfth pass opened, and
+fixes the second more thoroughly than that item asked for:
+
+- `for _attempt in 0..3` becomes `for attempt in 0..3`, and the loop body now ends in `break` (`:334`),
+  placed after the `decoder.shutdown()` and MD5 verification block — exactly where the twelfth pass
+  said it had to go, so verification still runs on the attempt that succeeded. A chunk that transfers
+  correctly is requested once again instead of three times; the 3× bandwidth, wall-time and CPU
+  multiplier on every download and repair is gone.
+- Each of the four match arms grows an `if attempt != 2 { continue; }` guard and, on the third attempt,
+  returns the real error instead of letting the loop run out (`:283-312`), so a chunk that fails every
+  attempt now propagates a `DownloadError` rather than being collected as `Ok(())`. The error detail
+  survives too: the `HttpError` arm returns its original `status`/`body`, `SecureLinksError` its
+  `inner`, and the catch-all binds `err` instead of discarding it. That is better than the
+  pre-`82c7980` behavior this doc used as the baseline, which returned a detail-free
+  `ClientError::MaxRetriesReached` — and it is the same "stop throwing away the error" shape several
+  other items here have asked for.
+
+`cargo build --lib` is clean; `cargo clippy --lib -- -W clippy::all` moves 37→38 on a single
+`redundant_field_names` (`inner: inner` at `:295`).
+
+Three things the change leaves behind, all written up below: the retry count is now two literals that
+have to agree (`0..3` and four copies of `!= 2`), so shortening the loop silently reinstates the bug
+just fixed; `let _ = body;` at `:298` is now vestigial, since `body` is genuinely returned at `:305`;
+and the local, non-retryable failures (`ChunkStreamCallbackError` from a full disk or a zlib error,
+`UrlParseError` from a bad link template) still burn all three attempts before reporting — far less
+serious now that they report at all, but still the wrong shape. One further gap the change makes newly
+*visible* rather than newly broken: an MD5 mismatch still fails on the first try without retrying,
+which is the one failure a working retry loop is best placed to fix.
+
 ---
 
 ## High — correctness bugs
@@ -374,11 +444,108 @@ the four the repair work now depends on — remains untested.
 
 ## High — downloader reliability
 
-- [ ] **No retry/backoff for transient network failures during download.** *Re-opened by the eleventh
-  pass. The retry loop exists, but the arm that handles the mid-transfer case cannot actually succeed —
-  see the new "retry resumes into a dirty writer" item directly below; only the pre-body failure shapes
-  (a CDN 401 and a non-401 status, both detected before any body byte is delivered) genuinely retry
-  today. The rest of this entry describes what the code intends, which is still accurate as intent.*
+- [x] **The new retry loop never breaks, so every chunk is downloaded three times.** *Opened by the
+  twelfth pass; fixed by the uncommitted change on top of `f3a944a` reviewed in the thirteenth pass.
+  The loop body now ends in `break` (`src/downloader/downloader.rs:334`), placed after the
+  `decoder.shutdown()`/MD5 verification block rather than inside the `Ok(_)` match arm — the exact
+  placement this item's closing sentence called for, so the successful attempt is still verified before
+  the loop exits. A chunk that transfers correctly is requested exactly once.*
+
+  Original finding: `download_files`'s per-unit task is now `for _attempt in 0..3 { ... }`
+  (`src/downloader/downloader.rs:262-323`), and the success arm of the `stream_chunk` match is
+  `Ok(_) => {}` (`:282`) — it falls through to the verification block and then straight back to the top
+  of the loop. Nothing in the body `break`s, returns `Ok`, or records that the transfer already
+  succeeded; the only early exit is the `return Err(..)` on a short-write/MD5 mismatch (`:311-322`).
+  So a chunk that downloads correctly on the first attempt is re-requested from the CDN, re-decompressed
+  and re-written to the same file offset twice more. This is not a corner case: it is every chunk of
+  every `download_game` and every `repair_game` — **3× the bytes off the network, 3× the wall-clock
+  time, 3× the zlib and MD5 CPU**, plus three `get_secure_links` cache lookups per chunk instead of one.
+  The bytes on disk still end up correct (each attempt seeks back to `download_unit.offset` and writes
+  the same decompressed data), which is exactly why this will never surface as a failure — only as a
+  download that is inexplicably three times slower than the same game on mainline `master`. The fix is
+  one line: `break` after the verification block at `:322` (not in the `Ok(_)` arm at `:282`, which
+  would skip `decoder.shutdown()` and the MD5 check along with it).
+
+- [x] **A chunk that fails all three attempts is reported as a successful download.** *Opened by the
+  twelfth pass; fixed by the same uncommitted change. Every arm is now
+  `if attempt != 2 { continue; }` followed by `return Err(DownloadError::ClientError(..))`
+  (`src/downloader/downloader.rs:283-312`), so the third failed attempt propagates instead of falling
+  out of the loop, and the `Ok(())` at `:336` is reachable only through the new `break`. The fix also
+  keeps the error detail this doc has repeatedly asked for elsewhere: the `HttpError` arm returns its
+  original `status` and `body`, `SecureLinksError` returns its `inner`, and the catch-all binds `err`
+  rather than discarding it — strictly more informative than the `ClientError::MaxRetriesReached` the
+  pre-`82c7980` code produced. Both sub-points below survive as their own smaller items: the local,
+  non-retryable failures still burn all three attempts (see the item directly below), and `download`
+  still has no verification stage of its own.*
+
+  Original finding: every non-`Ok` arm of the match ends in `continue` (`:283-301`), including the
+  catch-all
+  `Err(_) => { continue; }` (`:299-301`), and there is nothing after the `for` loop but `Ok(())`
+  (`:324`). When the third attempt fails, the loop just ends and that `Ok(())` is what
+  `buffer_unordered` collects, so `results.into_iter().collect::<Result<(), DownloadError>>()`
+  (`:331`) sees no error and `download`/`repair` return success to the caller. The failed unit's slot in
+  the file keeps whatever was there — all-zero bytes, if the file was freshly allocated in the
+  allocation stage — and the user gets "download complete" for a broken install. This is strictly worse
+  than the pre-`82c7980` behavior, where `stream_chunk` returned `ClientError::MaxRetriesReached` after
+  its third attempt and the caller's `?` propagated it out as
+  `DownloadError::ClientError(ClientError::MaxRetriesReached)`. Two aggravating details:
+  - The catch-all also swallows the shapes that should never be retried at all.
+    `ClientError::ChunkStreamCallbackError` (`src/client/error.rs:26`) is the *local* write path
+    failing — a full disk, `OffsetWriter`'s "chunk decompressed past its declared size" guard
+    (`src/downloader/util/offset_writer.rs:38-46`), or a zlib decode error. Retrying a full disk twice
+    more and then declaring victory is the worst of both options.
+    `ClientError::UrlParseError` (a malformed secure-link template) is retried and swallowed the same
+    way.
+  - `download`'s pipeline has no verification stage, so nothing downstream catches it either. `repair`
+    would only catch it on a *subsequent* run, via its own stage-3 MD5 pass.
+
+  Fix: keep the last error and return it (or a `DownloadError` max-retries variant) after the loop
+  instead of `Ok(())`, and reserve `continue` for the genuinely transient shapes rather than using a
+  catch-all.
+
+- [ ] **Local, non-retryable failures still burn all three attempts.** *Split out of the fixed
+  "reported as a successful download" item above; the thirteenth pass made these report rather than
+  vanish, but not fail fast.* The catch-all arm (`src/downloader/downloader.rs:307-312`) covers
+  `ClientError::ChunkStreamCallbackError` (`src/client/error.rs:26`) — the *local* write path failing:
+  a full disk, `OffsetWriter`'s "chunk decompressed past its declared size" guard
+  (`src/downloader/util/offset_writer.rs:38-46`), or a zlib decode error — and
+  `ClientError::UrlParseError` from a malformed secure-link template. None of these can succeed on a
+  retry, so each one costs two extra full chunk transfers before the job gives up. With `self.threads`
+  units in flight, a disk that fills mid-download re-downloads and re-fails up to `2 × threads` chunks
+  on its way out. Match those two variants explicitly and return on the first occurrence, leaving the
+  catch-all for genuinely transient shapes.
+
+- [ ] **A chunk that fails its MD5 check is never retried, though a corrupted transfer is the one
+  failure a retry is best placed to fix.** *New in the thirteenth pass; the behavior itself predates it,
+  but a retry loop that finally works end-to-end is what makes the asymmetry actionable.*
+  `download_files` returns `DownloadError::DeflateError` the moment
+  `writer.remaining() != 0 || actual_md5 != download_unit.md5` (`src/downloader/downloader.rs:322-333`)
+  — inside the loop, but bypassing it. So a dropped connection gets three attempts while a chunk that
+  arrived looking clean and decompressed to the wrong bytes (a truncated CDN response that still ended
+  gracefully, a corrupt edge-cache entry, a flipped bit) fails the entire multi-gigabyte download on the
+  first try, when re-requesting that one chunk is exactly what would fix it. Since `82c7980`/`f3a944a`
+  rebuild the writer stack per attempt, `continue`ing here is now safe in a way it was not before. The
+  two conditions are worth separating: `remaining() != 0` means the server sent less than the declared
+  size, which is unambiguously worth retrying; a size-correct MD5 mismatch could also be a stale
+  manifest, where retrying won't help — but three cheap attempts before failing the job is still the
+  better default.
+
+- [ ] **No retry/backoff for transient network failures during download.** *Still open at
+  `v0.0.11-restart`, but for a different reason than at the eleventh pass. `82c7980`/`f3a944a` relocated
+  the loop from `HttpClient::stream_chunk` to `Downloader::download_files`
+  (`src/downloader/downloader.rs:262-323`) and, in doing so, fixed the dirty-writer problem that made
+  the mid-transfer arm unable to succeed — so the mid-transfer `NetworkError` case, the one shape the
+  eleventh pass said could never actually recover, now genuinely retries. What remains
+  open is the part this entry always listed as uncovered: there is still no backoff or delay between
+  attempts (each retry is an immediate `continue`, so a sustained CDN outage burns all three attempts in
+  milliseconds), and `HttpClient::fetch` (`src/client/client.rs:40-70`), the funnel for every JSON/API
+  request, still has no `ClientError::NetworkError` arm and falls straight through to
+  `Err(err) => return Err(err)` at `:64-66` on a dropped connection. Read the paragraph below as intent
+  and history: the arms it describes now live in `download_files`'s match (`:282-302`), not in
+  `stream_chunk`, and two new defects were introduced with the move — see the two items at the top of
+  this section. Thirteenth-pass update: both of those defects are now fixed in the working tree, and
+  the loop reports its failures with full detail; the backoff gap and `fetch`'s missing `NetworkError`
+  arm are untouched and remain the whole of what this item still tracks.*
   *Fixed for the chunk-transfer
   path in `e4a8560` ("Retry transient network errors in chunk streaming"), on top of `de52483`'s
   auth-shaped retries.* `HttpClient::stream_chunk` (`src/client/client.rs:71-144`) now retries all four
@@ -395,9 +562,19 @@ the four the repair work now depends on — remains untested.
   `fetch` (`src/client/client.rs:40-70`), the funnel for every JSON/API request, still has no arm for
   `ClientError::NetworkError` and falls straight to `Err(err) => return Err(err)` at `:64-66` on one.
 
-- [ ] **`stream_chunk`'s retry resumes into a dirty writer, so the one failure shape its `NetworkError`
-  arm exists for can never actually recover.** *New in the eleventh pass; the bug predates `a11273a` (it
-  arrived with `e4a8560`) but is only now written up.* `HttpClient::stream_chunk`
+- [x] **`stream_chunk`'s retry resumes into a dirty writer, so the one failure shape its `NetworkError`
+  arm exists for can never actually recover.** *Opened by the eleventh pass, fixed one tag later across
+  `82c7980` ("Remove chunk download retry logic") and `f3a944a` ("Retry downloads after authentication
+  failures"), which move the retry loop out of `stream_chunk` and into `Downloader::download_files` —
+  the level that owns the writer stack. `download_files` now builds `open_file` → `OffsetWriter::new`
+  (which `seek`s to `download_unit.offset`) → `HashingWriter` → `ZlibDecoder` inside the loop
+  (`src/downloader/downloader.rs:264-274`) rather than once outside it, so each attempt gets a fresh
+  file handle at the correct offset, a zeroed MD5 accumulator and a clean zlib stream, and the
+  mid-transfer `NetworkError` case can genuinely recover. This is the "rebuild the decoder/writer stack
+  inside the retry loop" option the item's own last sentence recommended. Note the loop that replaced it
+  has two severe defects of its own — see the two new items at the top of this section — but they are
+  unrelated to writer state. The line references below describe the pre-fix code and are kept for
+  history.* `HttpClient::stream_chunk`
   (`src/client/client.rs:71-144`) retries by looping back and calling `stream_chunk_inner(&url, &mut f)`
   again with **the same `f`** — and `f` is the closure built in `download_files`
   (`src/downloader/downloader.rs:272-277`) that writes into a single
@@ -434,7 +611,19 @@ the four the repair work now depends on — remains untested.
   `Progress` to the write-buffer flush boundary (`master:src/downloader/stream.rs:45-70`, which spells
   out the reasoning). The `restart` branch has neither half. Emit `Progress` at the `BufWriter`
   flush boundary (or on a fixed byte/time threshold) before any Flutter consumer is wired up to
-  `repair_game`.
+  `repair_game`. *Twelfth-pass update: `f3a944a` made this materially worse in two ways. The send now
+  sits inside the `for _attempt in 0..3` loop (`src/downloader/downloader.rs:278`), and since that loop
+  has no `break` (see the new item at the top of this section), **every byte is reported three times** —
+  so the event rate triples and a consumer summing `Progress(chunk.len())` against the manifest total
+  climbs to 300%. Fixing the missing `break` fixes the triple-count but not the per-read rate; and note
+  that emitting at the `BufWriter` flush boundary, as this item recommends, is what makes retries
+  double-count in the first place, so whichever fix lands must also reset or discount the progress
+  already reported for an attempt that failed.* *Thirteenth-pass update: the `break` at
+  `src/downloader/downloader.rs:334` removes the unconditional 3× multiplier — a successful chunk is
+  now reported once. What remains is the narrower version of the same problem: bytes streamed by an
+  attempt that later fails are still counted, so progress over-reports by exactly the amount transferred
+  before each retry, and the per-network-read emission rate — the actual subject of this item, and the
+  memory-leak shape `master`'s `v0.1.1` was cut to fix — is unchanged.*
 
 - [x] **One failed file allocation aborts the whole download.** *Resolved as intended behavior, not a
   bug — confirmed with the person driving this rebuild.* `Downloader::download`
@@ -489,7 +678,14 @@ the four the repair work now depends on — remains untested.
   missing is purely proactive: nothing checks `expires_at`/`ttl` ahead of a request the way a `is_valid()`
   margin would for auth tokens (see that Medium item below) — every chunk request still has to hit a 401
   once before the stale link gets replaced, and see the new concurrency item below for what happens when
-  several chunks hit that 401 at once. `a11273a` made the surrounding situation worse in one respect:
+  several chunks hit that 401 at once. *Twelfth-pass update: the invalidate-and-retry behavior survived
+  the retry loop's relocation intact, just at a different address — the 401 check and the
+  `invalidate_secure_links` call are now `download_files`'s `HttpError` arm
+  (`src/downloader/downloader.rs:292-298`), and the re-fetch happens implicitly because the next loop
+  iteration calls `stream_chunk`, which calls `get_secure_links` again at `src/client/client.rs:79`.
+  The proactive half is unchanged and still open. One thing did get quietly better: the arm now
+  invalidates on a `SecureLinksError` too (`:287-291`), so a links fetch that itself failed doesn't
+  leave a bad entry behind.* `a11273a` made the surrounding situation worse in one respect:
   it deleted `download_files`'s secure-links pre-fetch loop, which used to populate the cache for every
   bundle before the first chunk started, so the cache is now cold at the start of every download and
   repair (see the updated concurrency item below).
@@ -549,6 +745,19 @@ the four the repair work now depends on — remains untested.
   logout/teardown.
 
 ## Medium — duplication & consistency
+
+- [ ] **The chunk retry count is now two facts that have to agree: `0..3` and four copies of `!= 2`.**
+  *New in the thirteenth pass.* `download_files`'s loop bound (`src/downloader/downloader.rs:262`) and
+  the last-attempt sentinel repeated in all four match arms (`:285,292,302,308`) are independent
+  literals with nothing tying them together. Lowering the bound to `0..2` — an entirely plausible "two
+  attempts is enough" tweak — makes `attempt != 2` true on every iteration, so every arm `continue`s,
+  the loop runs out, and the swallowed-error bug the thirteenth pass just fixed returns in full,
+  silently, with no compiler or clippy signal. A `const RETRIES: usize = 3;` with `attempt + 1 ==
+  RETRIES`, or a restructure that lets the error fall out of the loop and be returned once after it,
+  removes the coupling. `HttpClient::fetch` (`src/client/client.rs:44-69`) already has the better
+  shape — `while attempts < 3` with a single trailing `Err(ClientError::MaxRetriesReached)`, one exit
+  rather than four — which is what this loop should be copying, and is a further argument for the
+  unification the "bypassed the funnel" item above keeps circling.
 
 - [x] **The "fetch → on 401 refresh → retry once" block used to be copy-pasted six times.** *Fixed by
   this pass* — the six near-identical pre-flight blocks (lock the manager, `get_auth().await` and bail
@@ -621,6 +830,26 @@ the four the repair work now depends on — remains untested.
   and returned without retrying at `:86-91`. (b) The retry itself doesn't work for the mid-transfer case
   — see the "retry resumes into a dirty writer" item in the High section.
 
+  *Twelfth-pass update: the duplication this item describes is gone, and so is the caveat in (b).*
+  `82c7980` deleted `stream_chunk`'s retry loop outright — the method is now straight-line
+  (`src/client/client.rs:71-103`: resolve secure links, pick the highest-priority URL, build the URL,
+  `stream_chunk_inner` once) and `f3a944a` re-created the loop one level up in
+  `Downloader::download_files` (`src/downloader/downloader.rs:262-323`). There is once again exactly one
+  hand-rolled retry `match` per concern rather than two copies in the same file, and `stream_chunk` no
+  longer returns `ClientError::MaxRetriesReached` at all (`fetch` at `client.rs:69` is now its only
+  producer, so the variant is still live). Correction (b) is fixed — the loop's new home is the level
+  that owns the writer stack, so it rebuilds it per attempt. Correction (a) was **not** fixed, only
+  relocated: the dead arm is now `Err(ClientError::AuthError(_err)) => { invalidate_secure_links(..);
+  continue; }` at `src/downloader/downloader.rs:283-286`, and it is still unreachable for exactly the
+  same reason — `stream_chunk` returns `SecureLinksError` for an auth failure during the links fetch
+  and can never produce a bare `AuthError`. It now also widened from `AuthError::TokenExpired` to any
+  `AuthError`, so it reads as if it handles more than it does. *(Thirteenth-pass update: still dead,
+  and the uncommitted fix gave it a `return Err(DownloadError::ClientError(ClientError::AuthError(err)))`
+  of its own at `downloader.rs:288` — more unreachable code on an unreachable path, though
+  harmless.)* The two loops still aren't unified:
+  `download_files`'s match and `fetch`'s still both carry their own `HttpError{status, body}` arm, and
+  `fetch` still has no `NetworkError` arm.
+
 - [ ] **`Downloader::repair` is a near-verbatim copy of `Downloader::download`.** *New in `a11273a`.*
   `repair` (`src/downloader/downloader.rs:39-138`) and `download` (`:139-219`) are the same function
   apart from one inserted stage. Lines `45-101` of `repair` and `145-200` of `download` — path-resolver
@@ -676,8 +905,11 @@ the four the repair work now depends on — remains untested.
   (`src/secure_links/links_manager.rs:32-67`) have no in-flight-request dedup, unlike the note this doc
   already has on `refresh_lock` not collapsing concurrent auth refreshes below. `Downloader::download_files`
   runs up to `self.threads` chunk downloads concurrently via `buffer_unordered`
-  (`src/downloader/downloader.rs:254,302`), each calling `HttpClient::stream_chunk` independently, and
-  `stream_chunk` calls `get_secure_links` per chunk (`src/client/client.rs:84`).
+  (`src/downloader/downloader.rs:256,327`, shifted by `f3a944a`), each calling `HttpClient::stream_chunk`
+  independently, and `stream_chunk` calls `get_secure_links` per chunk (`src/client/client.rs:79`) —
+  since `f3a944a`, three times per chunk rather than once, because the retry loop around it never
+  breaks (see the new item in the High section). The extra two are cache hits in the steady state, so
+  this multiplies the lookups but not the cold-start misses.
   - *Cold-start (new with `a11273a`):* `download_files` used to warm the cache first — a
     `stream::iter(bundles).map(|bundle| get_secure_links(product_id)).buffer_unordered(self.threads)`
     block that `a11273a` removed along with the `(String, DownloadUnit)` tupling it sat next to. Nothing
@@ -792,6 +1024,14 @@ the four the repair work now depends on — remains untested.
   consistency items above.
 
 ## Low — style / clippy
+
+- [ ] **Vestigial `let _ = body;` in `download_files`'s `HttpError` arm.** *New in the thirteenth pass.*
+  `src/downloader/downloader.rs:298` discards `body` into `_` seven lines before `:305` returns
+  `ClientError::HttpError { status, body }` with it. The statement was load-bearing at
+  `v0.0.11-restart` — it was what kept rustc quiet about the then-unused binding, and so part of why
+  the swallowed-error bug drew no warning at all — but now that `body` is genuinely returned it is a
+  no-op that reads as if the value were being deliberately dropped. Delete it. The matching
+  `let _ = inner;` in the arm above was correctly removed by the same change.
 
 - [x] **Leftover debug `println!` in a filter closure.** *Fixed in `1d98eb7` ("Remove Debug Print From
   Product Filtering", 2026-08-31, first tagged in `v0.0.7-restart`) — the fix landed four tags ago but
@@ -915,6 +1155,32 @@ with the code; **−1** `redundant_closure` at the old `downloader.rs:115`, sinc
 `DownloadUnit::from_depot_file` no longer exists. Every one of the four net-new warnings is in code
 `a11273a` copied rather than wrote, which is the clippy-visible shadow of the duplication item above.
 `cargo build --lib` remains free of rustc warnings.
+
+A twelfth-pass update (`82c7980`/`f3a944a`) moves the count **39→37**, and both removals are the two
+warnings the eighth pass logged as *added* by `stream_chunk`'s retry loop, now gone with the loop
+itself: **−1** `redundant_field_names` (`return Err(ClientError::HttpError { status, body: body })`,
+last seen at `client.rs:123`) and **−1** `needless_borrow` on `refresh_auth(&self)` in `stream_chunk`'s
+`TokenExpired` arm (last seen at `:127`). Both patterns still exist once each in `fetch`
+(`client.rs:58` and `:55`/`:62`), which is where they came from. `f3a944a`'s new retry loop in
+`download_files` introduces **no** warnings at all — worth stating plainly, because the loop is missing
+its `break` and silently discards every error, and clippy has no lint for either shape. `cargo build
+--lib` likewise stays free of rustc warnings; the `let _ = inner;`/`let _ = body;` discards
+(`downloader.rs:288,293`) are exactly the idiom that suppresses the unused-variable warning that would
+otherwise have pointed at the swallowed errors. Line numbers referenced in the bullets above shifted
+with `f3a944a`'s indentation of the task body: the 4 `redundant redefinition of a binding
+'path_resolver'` are now `downloader.rs:257,343,402,490`; the 7 `let_and_return` are
+`download_manager.rs:70,85,100`, `downloader.rs:391,479,564`, `product_bundle.rs:47`; the 3 `len_zero`
+are `downloader.rs:98,119,197`; the `needless_return`s are `client.rs:137,140`,
+`downloader.rs:552`, `path_resolver.rs:49`; and `manual_map` is now at `depot_info.rs:39`.
+
+A thirteenth-pass update (the uncommitted change on top of `f3a944a`) moves the count **37→38**:
+**+1** `redundant_field_names` at `downloader.rs:295` — `ClientError::SecureLinksError { inner: inner }`
+in that arm's new `return`, making three live instances of the lint in the crate alongside
+`client.rs:58` and `depot_info.rs:58`. Nothing else moved, and `cargo build --lib` stays free of rustc
+warnings. One correction to the twelfth-pass note above: of the two `let _ = ..` discards it cites,
+`let _ = inner;` is gone (its binding is returned now), and `let _ = body;` at `:298` survives but no
+longer suppresses anything, since `body` is returned at `:305` — it is purely vestigial, and has its
+own item in this section.
 
 Run `cargo clippy --fix --lib -p gogdl-lib -- -W clippy::all` for a current full list and to
 auto-apply most of these — but only against a clean tree; it will also try to "fix" whatever's
