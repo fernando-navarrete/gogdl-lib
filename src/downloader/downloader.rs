@@ -335,16 +335,17 @@ impl Downloader {
                                 }
                             };
 
-                        decoder
-                            .shutdown()
-                            .await
-                            .map_err(DownloadError::DeflateError)?;
+                        if let Err(err) = decoder.shutdown().await {
+                            tx.send(DownloadEvent::ProgressRegression(reported_bytes)).ok();
+                            return Err(DownloadError::DeflateError(err))
+                        }
+
                         let (buf_writer, actual_md5) = decoder.into_inner().into_parts();
                         let writer = buf_writer.into_inner();
 
                         if actual_md5 != download_unit.md5 {
                             tx.send(DownloadEvent::ProgressRegression(reported_bytes)).ok();
-                            if attempt != MAX_ATTEMPTS - 3 {
+                            if attempt < MAX_ATTEMPTS - 4 {
                                 secure_links_manager.invalidate_secure_links(&download_unit.product_id).await;
                                 backoff(attempt).await;
                                 continue;
