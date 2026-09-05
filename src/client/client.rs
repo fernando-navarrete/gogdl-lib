@@ -13,8 +13,7 @@ use crate::{
         error::ClientError,
     },
     constants::MAX_ATTEMPTS,
-    downloader::{FileType, backoff},
-    secure_links::SecureLinksManager,
+    downloader::backoff,
 };
 
 #[derive(Clone)]
@@ -76,36 +75,35 @@ impl HttpClient {
     }
     pub async fn stream_chunk(
         &self,
-        secure_links_manager: &SecureLinksManager,
-        game_id: &str,
-        file_type: &FileType,
-        chunk_hash: &str,
+        url: &str,
         mut f: impl AsyncFnMut(Bytes) -> std::io::Result<()>,
     ) -> Result<(), ClientError> {
-        let links = match secure_links_manager.get_secure_links(game_id).await {
-            Ok(links) => links,
-            Err(err) => {
-                return Err(ClientError::SecureLinksError {
-                    inner: err.to_string(),
-                });
+        let url = reqwest::Url::parse(url)?;
+        let request = self.client.get(url);
+
+        let response = request.send().await?;
+
+        if !response.status().is_success() {
+            let response_status = response.status();
+            let response_text = response.text().await?;
+            return Err(ClientError::HttpError {
+                status: response_status,
+                body: response_text,
+            });
+        }
+
+        let mut stream = response.bytes_stream();
+
+        while let Some(chunk) = stream.next().await {
+            let chunk = match chunk {
+                Ok(chunk) => chunk,
+                Err(e) => return Err(ClientError::NetworkError(e)),
+            };
+            if let Err(e) = f(chunk).await {
+                return Err(ClientError::ChunkStreamCallbackError(e));
             }
-        };
-
-        let url_format = match links.get_highest_priority_url() {
-            Ok(url_format) => url_format,
-            Err(err) => {
-                return Err(ClientError::SecureLinksError {
-                    inner: err.to_string(),
-                });
-            }
-        };
-
-        let url = match file_type {
-            FileType::DepotFile => url_format.parse_url(chunk_hash),
-            FileType::Other => url_format.parse_url_redist(chunk_hash),
-        };
-
-        self.stream_chunk_inner(&url, &mut f).await
+        }
+        Ok(())
     }
     pub async fn restore_auth_from_string(&self, json_str: &str) -> Result<(), ClientError> {
         self.auth_manager.restore_from_string(json_str).await?;
@@ -162,38 +160,6 @@ impl HttpClient {
         let response_text = response.text().await?;
         let result: T = serde_json::from_str(&response_text)?;
         Ok(result)
-    }
-    pub async fn stream_chunk_inner(
-        &self,
-        url: &str,
-        f: &mut impl AsyncFnMut(Bytes) -> std::io::Result<()>,
-    ) -> Result<(), ClientError> {
-        let url = reqwest::Url::parse(url)?;
-        let request = self.client.get(url);
-
-        let response = request.send().await?;
-
-        if !response.status().is_success() {
-            let response_status = response.status();
-            let response_text = response.text().await?;
-            return Err(ClientError::HttpError {
-                status: response_status,
-                body: response_text,
-            });
-        }
-
-        let mut stream = response.bytes_stream();
-
-        while let Some(chunk) = stream.next().await {
-            let chunk = match chunk {
-                Ok(chunk) => chunk,
-                Err(e) => return Err(ClientError::NetworkError(e)),
-            };
-            if let Err(e) = f(chunk).await {
-                return Err(ClientError::ChunkStreamCallbackError(e));
-            }
-        }
-        Ok(())
     }
     async fn get_and_decode<T: DeserializeOwned>(
         &self,

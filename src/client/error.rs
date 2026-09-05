@@ -48,12 +48,4 @@ pub enum ClientError {
     /// The auth layer failed — see [`AuthError`].
     #[error("Auth error: {0}")]
     AuthError(#[from] AuthError),
-
-    /// Resolving a CDN secure link failed while streaming a chunk.
-    #[error("Secure links error: {inner}")]
-    SecureLinksError {
-        /// The stringified underlying
-        /// [`SecureLinksError`](crate::SecureLinksError).
-        inner: String,
-    },
 }

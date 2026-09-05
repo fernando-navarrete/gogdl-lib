@@ -7,6 +7,7 @@ use tokio::sync::mpsc;
 
 use crate::ClientError;
 use crate::constants::MAX_ATTEMPTS;
+use crate::downloader::FileType;
 use crate::downloader::util::backoff;
 use crate::{
     client::HttpClient,
@@ -275,9 +276,38 @@ impl Downloader {
                             HashingWriter::new(BufWriter::with_capacity(1024 * 1024, offset_writer));
                         let mut decoder = ZlibDecoder::new(sink);
 
+                        let links = match secure_links_manager.get_secure_links(&download_unit.product_id).await {
+                            Ok(links) => links,
+                            Err(err) => {
+                                secure_links_manager.invalidate_secure_links(&download_unit.product_id).await;
+                                if attempt != MAX_ATTEMPTS - 1 {
+                                    backoff(attempt as u32).await;
+                                    continue;
+                                }
+                                return Err(DownloadError::SecureLinksError(err));
+                            },
+                        };
+
+                        let url_format = match links.get_highest_priority_url() {
+                            Ok(url_format) => url_format,
+                            Err(err) => {
+                                secure_links_manager.invalidate_secure_links(&download_unit.product_id).await;
+                                if attempt != MAX_ATTEMPTS - 1 {
+                                    backoff(attempt as u32).await;
+                                    continue;
+                                }
+                                return Err(DownloadError::SecureLinksError(err));
+                            },
+                        };
+
+                        let url = match download_unit.file_type {
+                            FileType::DepotFile => url_format.parse_url(&download_unit.compressed_md5),
+                            FileType::Other => url_format.parse_url_redist(&download_unit.compressed_md5),
+                        };
+
                         let mut reported_bytes = 0;
                         match self.client
-                            .stream_chunk(secure_links_manager, &download_unit.product_id, &download_unit.file_type, &download_unit.compressed_md5, async |chunk| {
+                            .stream_chunk(&url, async |chunk| {
                                 let chunk_lenght = chunk.len();
                                 reported_bytes += chunk_lenght;
                                 tx.send(DownloadEvent::Progress(chunk_lenght)).ok();
@@ -293,15 +323,6 @@ impl Downloader {
                                         continue;
                                     }
                                     return Err(DownloadError::ClientError(ClientError::AuthError(err)));
-                                }
-                                Err(ClientError::SecureLinksError { inner }) => {
-                                    tx.send(DownloadEvent::ProgressRegression(reported_bytes)).ok();
-                                    secure_links_manager.invalidate_secure_links(&download_unit.product_id).await;
-                                    if attempt != MAX_ATTEMPTS - 1 {
-                                        backoff(attempt as u32).await;
-                                        continue;
-                                    }
-                                    return Err(DownloadError::ClientError(ClientError::SecureLinksError { inner: inner }));
                                 }
                                 Err(ClientError::HttpError { status, body }) => {
                                     tx.send(DownloadEvent::ProgressRegression(reported_bytes)).ok();
