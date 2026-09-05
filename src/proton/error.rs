@@ -17,4 +17,7 @@ pub enum ProtonError {
     /// [`GogDl::get_proton_releases`](crate::GogDl::get_proton_releases).
     #[error("Client error: {0}")]
     ClientError(#[from] ClientError),
+
+    #[error("No suitable asset found for release: {0}")]
+    NoSuitableAsset(String),
 }

@@ -3,6 +3,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::{
+    ProtonGeRelease,
     client::HttpClient,
     proton::{error::ProtonError, proton_ge_releases_page::ProtonGeReleasesPage},
 };
@@ -39,5 +40,11 @@ impl ProtonManager {
         per_page: u32,
     ) -> Result<ProtonGeReleasesPage, ProtonError> {
         ProtonGeReleasesPage::get_releases_page(page, per_page, self).await
+    }
+    pub async fn download_proton_release(
+        &self,
+        release: &ProtonGeRelease,
+    ) -> Result<(), ProtonError> {
+        todo!()
     }
 }

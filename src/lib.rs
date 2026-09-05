@@ -71,7 +71,6 @@ pub use games::GameSummary;
 pub use games::OwnedGames;
 pub use gogdl::GogDl;
 pub use gogdl::GogDlError;
-pub use proton::GithubAsset;
 pub use proton::ProtonGeRelease;
 pub use proton::ProtonGeReleasesPage;
 /// The HTTP client type [`GogDl::new_from_client`] expects. Re-exported so
