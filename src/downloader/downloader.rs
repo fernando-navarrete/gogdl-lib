@@ -318,9 +318,11 @@ impl Downloader {
                                     return Err(DownloadError::ClientError(ClientError::HttpError { status, body }));
                                 }
                                 Err(ClientError::ChunkStreamCallbackError(err)) => {
+                                    tx.send(DownloadEvent::ProgressRegression(reported_bytes)).ok();
                                     return Err(DownloadError::ClientError(ClientError::ChunkStreamCallbackError(err)))
                                 }
                                 Err(ClientError::UrlParseError(err)) => {
+                                    tx.send(DownloadEvent::ProgressRegression(reported_bytes)).ok();
                                     return Err(DownloadError::ClientError(ClientError::UrlParseError(err)))
                                 }
                                 Err(err) => {
@@ -341,7 +343,8 @@ impl Downloader {
                         let writer = buf_writer.into_inner();
 
                         if actual_md5 != download_unit.md5 {
-                            if attempt != MAX_ATTEMPTS - 1 {
+                            tx.send(DownloadEvent::ProgressRegression(reported_bytes)).ok();
+                            if attempt != MAX_ATTEMPTS - 3 {
                                 secure_links_manager.invalidate_secure_links(&download_unit.product_id).await;
                                 backoff(attempt).await;
                                 continue;
@@ -350,6 +353,7 @@ impl Downloader {
                         }
 
                         if writer.remaining() != 0 {
+                            tx.send(DownloadEvent::ProgressRegression(reported_bytes)).ok();
                             if attempt != MAX_ATTEMPTS - 1 {
                                 secure_links_manager.invalidate_secure_links(&download_unit.product_id).await;
                                 backoff(attempt).await;
