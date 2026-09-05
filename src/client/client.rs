@@ -1,4 +1,4 @@
-use std::{io::Read, sync::Arc};
+use std::{io::Read, sync::Arc, time::Duration};
 
 use bytes::Bytes;
 use flate2::read::ZlibDecoder;
@@ -43,9 +43,7 @@ impl HttpClient {
         decode: bool,
         require_auth: bool,
     ) -> Result<T, ClientError> {
-        let mut attempts = 0;
-        while attempts < 3 {
-            attempts += 1;
+        for attempts in 0..2 {
             match self.inner_fetch(url, decode, require_auth).await {
                 Ok(result) => return Ok(result),
                 Err(ClientError::HttpError { status, body }) => {
@@ -60,6 +58,13 @@ impl HttpClient {
                 }
                 Err(ClientError::AuthError(AuthError::TokenExpired)) => {
                     self.auth_manager.refresh_auth(&self).await?;
+                }
+                Err(ClientError::NetworkError(err)) => {
+                    if attempts != 2 {
+                        tokio::time::sleep(Duration::from_secs(5)).await;
+                        continue;
+                    }
+                    return Err(ClientError::NetworkError(err));
                 }
                 Err(err) => {
                     return Err(err);

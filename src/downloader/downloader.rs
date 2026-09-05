@@ -1,3 +1,4 @@
+use std::time::Duration;
 use std::{path::PathBuf, sync::Arc};
 
 use async_compression::tokio::write::ZlibDecoder;
@@ -312,6 +313,7 @@ impl Downloader {
                                 }
                                 Err(err) => {
                                     if attempt != 2 {
+                                        tokio::time::sleep(Duration::from_secs(5)).await;
                                         continue;
                                     }
                                     return Err(DownloadError::ClientError(err))
