@@ -3,4 +3,5 @@ pub enum DownloadEvent {
     Prepared,
     Downloading,
     Progress(usize),
+    ProgressRegression(usize),
 }

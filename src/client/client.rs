@@ -6,14 +6,13 @@ use futures_util::StreamExt;
 use reqwest::Client;
 use serde::de::DeserializeOwned;
 
-const MAX_ATTEMPTS: u32 = 6;
-
 use crate::{
     client::{
         TokenObserver,
         auth::{AuthError, AuthManager},
         error::ClientError,
     },
+    constants::MAX_ATTEMPTS,
     downloader::{FileType, backoff},
     secure_links::SecureLinksManager,
 };

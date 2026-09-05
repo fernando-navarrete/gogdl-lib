@@ -6,6 +6,7 @@ use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::sync::mpsc;
 
 use crate::ClientError;
+use crate::constants::MAX_ATTEMPTS;
 use crate::downloader::util::backoff;
 use crate::{
     client::HttpClient,
@@ -25,8 +26,6 @@ pub struct Downloader {
     pub secure_links: SecureLinksManager,
     threads: usize,
 }
-
-const MAX_ATTEMPTS: u32 = 6;
 
 impl Downloader {
     pub fn new(client: HttpClient, secure_links: SecureLinksManager) -> Self {
@@ -276,14 +275,18 @@ impl Downloader {
                             HashingWriter::new(BufWriter::with_capacity(1024 * 1024, offset_writer));
                         let mut decoder = ZlibDecoder::new(sink);
 
+                        let mut reported_bytes = 0;
                         match self.client
                             .stream_chunk(secure_links_manager, &download_unit.product_id, &download_unit.file_type, &download_unit.compressed_md5, async |chunk| {
-                                tx.send(DownloadEvent::Progress(chunk.len())).ok();
+                                let chunk_lenght = chunk.len();
+                                reported_bytes += chunk_lenght;
+                                tx.send(DownloadEvent::Progress(chunk_lenght)).ok();
                                 decoder.write_all(&chunk).await
                             })
                             .await {
                                 Ok(_) => {},
                                 Err(ClientError::AuthError(err)) => {
+                                    tx.send(DownloadEvent::ProgressRegression(reported_bytes)).ok();
                                     secure_links_manager.invalidate_secure_links(&download_unit.product_id).await;
                                     if attempt != MAX_ATTEMPTS - 1 {
                                         backoff(attempt as u32).await;
@@ -292,6 +295,7 @@ impl Downloader {
                                     return Err(DownloadError::ClientError(ClientError::AuthError(err)));
                                 }
                                 Err(ClientError::SecureLinksError { inner }) => {
+                                    tx.send(DownloadEvent::ProgressRegression(reported_bytes)).ok();
                                     secure_links_manager.invalidate_secure_links(&download_unit.product_id).await;
                                     if attempt != MAX_ATTEMPTS - 1 {
                                         backoff(attempt as u32).await;
@@ -300,7 +304,7 @@ impl Downloader {
                                     return Err(DownloadError::ClientError(ClientError::SecureLinksError { inner: inner }));
                                 }
                                 Err(ClientError::HttpError { status, body }) => {
-                                    let _ = body;
+                                    tx.send(DownloadEvent::ProgressRegression(reported_bytes)).ok();
                                     if status == reqwest::StatusCode::UNAUTHORIZED {
                                         secure_links_manager.invalidate_secure_links(&download_unit.product_id).await;
                                     }
@@ -320,6 +324,7 @@ impl Downloader {
                                     return Err(DownloadError::ClientError(ClientError::UrlParseError(err)))
                                 }
                                 Err(err) => {
+                                    tx.send(DownloadEvent::ProgressRegression(reported_bytes)).ok();
                                     if attempt != MAX_ATTEMPTS - 1 {
                                         backoff(attempt as u32).await;
                                         continue;
@@ -335,7 +340,16 @@ impl Downloader {
                         let (buf_writer, actual_md5) = decoder.into_inner().into_parts();
                         let writer = buf_writer.into_inner();
 
-                        if writer.remaining() != 0 || actual_md5 != download_unit.md5 {
+                        if actual_md5 != download_unit.md5 {
+                            if attempt != MAX_ATTEMPTS - 1 {
+                                secure_links_manager.invalidate_secure_links(&download_unit.product_id).await;
+                                backoff(attempt).await;
+                                continue;
+                            }
+                            return Err(DownloadError::ChunkHashMismatch())
+                        }
+
+                        if writer.remaining() != 0 {
                             if attempt != MAX_ATTEMPTS - 1 {
                                 secure_links_manager.invalidate_secure_links(&download_unit.product_id).await;
                                 backoff(attempt).await;

@@ -1,75 +1,127 @@
 # GAPS.md
 
-Open findings for `gogdl-lib` on the `restart` branch. Current tree: HEAD **`37aac65`** ("Refresh
-GAPS documentation for current tree") **plus an uncommitted working tree** — modified `Cargo.toml`/
-`Cargo.lock` (new `rand = "0.10.2"` dependency), `src/client/client.rs`,
-`src/downloader/downloader.rs`, `src/downloader/mod.rs`, `src/downloader/util/mod.rs`, and a new
-untracked `src/downloader/util/backoff.rs`. Two commits past the tip tag `v0.0.12-restart`.
+Open findings for `gogdl-lib` on the `restart` branch. Current tree: HEAD **`527a9c1`** ("Add
+Jittered Backoff to Retry Loops", pushed — `origin/restart` is at the same commit) **plus an
+uncommitted working tree** — modified `src/client/client.rs`, `src/constants/mod.rs`,
+`src/downloader/downloader.rs`, `src/downloader/error.rs` and
+`src/downloader/progress_reporting/download_event.rs`. Three commits past the tip tag
+`v0.0.12-restart`.
 
-That working tree adds a jittered exponential-backoff helper and wires it through both retry loops,
-raises the attempt count from 3 to 6 behind a per-file `const MAX_ATTEMPTS` that the last-attempt
-sentinels now derive from, retries a chunk that fails its MD5/length check (invalidating its secure
-links and backing off first) instead of failing the whole download, and lets a CDN 401 retry
-immediately. Against the previous pass it closes six items — three of them defects that pass's own
-diff had introduced — and leaves three residuals: the cost of six attempts on a deterministic MD5
-failure, `MAX_ATTEMPTS` being two constants with a backoff ceiling tied to neither, and five
-redundant casts. The attempt-count rise is the one change that makes an existing item *worse*.
+The previous pass's uncommitted diff (the jittered `backoff` helper, `MAX_ATTEMPTS`, the MD5-failure
+retry, the CDN-401 fast path) is now `527a9c1`; the six items it closed are no longer "working tree
+only" and are re-labelled in [Closed](#closed).
 
-Line references were re-derived against this working tree, which shifted `downloader.rs` by 2-4
-lines from the previous pass's numbers; refs here supersede any earlier wording. Fixed items are
-collapsed to one line each in [Closed](#closed) at the bottom — the detail lives in the referenced
-commits, or in the uncommitted diff for the six newest.
+The **new** working tree does four things:
+
+1. Hoists `MAX_ATTEMPTS` out of the two per-file `const` declarations into one crate constant,
+   `src/constants/mod.rs:5`.
+2. Adds `DownloadEvent::ProgressRegression(usize)` and emits it — carrying the bytes this attempt
+   already reported — from the four *retrying* arms of `download_files`
+   (`downloader.rs:289,298,307,327`).
+3. Splits the fused `writer.remaining() != 0 || actual_md5 != download_unit.md5` check into two
+   `if`s (`:343-350`, `:352-368`), the MD5 half returning a new
+   `DownloadError::ChunkHashMismatch()`.
+4. Deletes the vestigial `let _ = body;` from `downloader.rs`'s `HttpError` arm.
+
+It closes two items outright (the duplicated `MAX_ATTEMPTS`, half the `let _ = body;` pair) and half
+of the progress over-reporting item. It leaves three things standing that it looks like it fixed:
+**`ProgressRegression` is not emitted from the two verification-failure retries** — the one case the
+previous pass identified as a *guaranteed* full-chunk over-count; the MD5/length split changed the
+error type but not the attempt budget, so the "six full re-downloads of a chunk that will never
+verify" cost is unchanged; and it introduces a second source-breaking `pub` enum widening for
+`lumen-cli`, on top of `VerificationStage`.
+
+Line references were re-derived against this working tree; `downloader.rs` shifted by roughly
++5 lines from the previous pass's numbers, and its clippy anchors moved further (the
+`path_resolver` redefinitions are now at `:259,390,449,537`). Refs here supersede any earlier
+wording. Fixed items are collapsed to one line each in [Closed](#closed) at the bottom — the detail
+lives in the referenced commits, or in the uncommitted diff for the four newest.
 
 **Three standing facts that apply to almost every item here:**
 
 - **No automated tests exist anywhere** (`grep -rn '#\[test\]\|#\[tokio::test\]' src/` is empty).
   Treat every fix in this doc as unverified. This is the direct reason the "a failed chunk is
   reported as success" bug was introduced twice (`f3a944a`, `ac061e0`) and fixed twice with nothing
-  but a re-read catching it either time.
+  but a re-read catching it either time. It is also why the missing `ProgressRegression` on the MD5
+  path below went unnoticed: a test asserting the reported byte total equals the chunk size would
+  fail on exactly that path.
 - **`v0.0.12-restart` as pushed still carries the retry off-by-one** fixed in `2469b13`. Anything
-  resolving that tag gets a downloader that reports failed chunks as successful. Tag `2469b13`
+  resolving that tag gets a downloader that reports failed chunks as successful, and `lumen-cli`
+  is pinned three tags below it (`tag = "v0.0.9-restart"`, its `Cargo.toml:12`). Tag `527a9c1`
   before any consumer bumps its pin.
-- **Every fix newer than `2469b13` exists only in the working tree** — uncommitted, unpushed,
-  untagged: the backoff helper, `MAX_ATTEMPTS`, the MD5-failure retry and the CDN-401 fast path.
-  Six items in [Closed](#closed) point at that diff rather than at a commit.
+- **Nothing since `2b1cd7f` is tagged.** `2469b13` and `527a9c1` are committed and pushed but
+  reachable only by branch; the four newest fixes are uncommitted. Four items in
+  [Closed](#closed) point at that working-tree diff rather than at a commit.
 
 `cargo build --lib` is free of rustc warnings. `cargo clippy --lib -- -W clippy::all` reports
-**43 warnings**, up from 38: `attempt` is now `u32` (it comes from `0..MAX_ATTEMPTS`), so the five
-surviving `backoff(attempt as u32)` calls are same-type casts. See the
-[clippy](#low--style--clippy) section.
+**43 warnings**, unchanged in count and composition from the previous pass — the five same-type
+`backoff(attempt as u32)` casts are all still present. See the [clippy](#low--style--clippy)
+section.
 
 ---
 
 ## High — downloader reliability
 
-- [ ] **The MD5/length retry is now correct in shape but uncapped in cost: a chunk that will never
-  verify is downloaded six times.** `downloader.rs:338-343` handles
-  `writer.remaining() != 0 || actual_md5 != download_unit.md5` the same way as a transport failure —
-  invalidate the secure links, `backoff(attempt)`, `continue` — which is the right treatment for the
-  likely cause (a truncating or poisoned edge-cache entry) and is safe because `82c7980`/`f3a944a`
-  rebuild the whole writer stack per attempt. But it is the one retrying arm where the failure is
-  frequently *deterministic*, and `MAX_ATTEMPTS` just went from 3 to 6:
+- [ ] **`ProgressRegression` is emitted from the four transport arms but *not* from the two
+  verification-failure retries — which are the only retries that over-count a guaranteed full
+  chunk.** The new event is sent at `downloader.rs:289` (`AuthError`), `:298` (`SecureLinksError`),
+  `:307` (`HttpError`) and `:327` (the catch-all), each carrying `reported_bytes`, the running total
+  the callback accumulated during *this* attempt (`:278` declares it inside the `for attempt` loop,
+  so it resets per attempt — the value is exactly "subtract this much"). That is the right shape.
+
+  Neither verification retry sends it. `:343-350` (MD5 mismatch) and `:352-368`
+  (`writer.remaining() != 0`) `continue` after `backoff` with no event at all. These two paths are
+  reachable **only after a chunk has streamed to completion**, so each retry over-reports by a full
+  chunk — where the transport arms over-report by however much arrived before the connection broke,
+  which is often little. With `MAX_ATTEMPTS = 6`, a chunk that never verifies still reports **6× its
+  size** to the consumer, exactly as before this change. The previous pass called this out as "the
+  one case where it is guaranteed rather than incidental"; the fix landed on the incidental half
+  only.
+
+  Two smaller holes on the same principle: `open_file` (`:268`) and `decoder.shutdown()`
+  (`:336-339`) both exit the closure with `?`, and the `ChunkStreamCallbackError` / `UrlParseError`
+  arms (`:320-325`) return terminally — all four after bytes may have been reported, none emitting a
+  regression. The terminal ones matter less (the download is failing anyway), but the inconsistency
+  is worth resolving deliberately rather than by omission.
+
+- [ ] **`ProgressRegression` has no defined semantics, no doc comment, and no in-crate consumer.**
+  `src/downloader/progress_reporting/download_event.rs:6` adds the variant to a `pub` enum
+  re-exported from `src/lib.rs:12`, and `download`/`repair` forward every `DownloadEvent` verbatim
+  into `DownloadStageEvent::DownloadStage` (`downloader.rs:213-219` and `:132-138`) without
+  interpreting any of them. Nothing in the crate ever matches the variant.
+
+  So the contract is entirely implicit: a consumer has to guess whether the payload is *bytes to
+  subtract from the running total* (what the code actually means) or *a new absolute total*, and
+  whether it can arrive after the last `Progress` for a unit (it can — the terminal-attempt arms
+  send it immediately before returning `Err`). It also has to guard the subtraction: `lumen-cli`
+  accumulates into a `u64` `state.downloaded_bytes` (`src/middleware/downloads.rs:618-620`), so a
+  naive `-=` is a panic in debug and a wrap in release. Since `restart` has no `api.md` (see the
+  coverage section), a doc comment on the variant is the only place this can be written down.
+
+- [ ] **The MD5/length split landed, but the attempt budget didn't: a chunk that will never verify
+  is still downloaded six times.** `downloader.rs:343-350` and `:352-368` are now two independent
+  checks, and the MD5 half returns a dedicated `DownloadError::ChunkHashMismatch()` instead of a
+  `DeflateError` — but both arms are still guarded by the same `attempt != MAX_ATTEMPTS - 1` and
+  still do the same invalidate-then-`backoff` before `continue`, so the cost is exactly what it was:
   - *A stale manifest costs 6× the transfer.* A size-correct MD5 mismatch against a bad manifest
-    entry cannot be fixed by retrying, and the chunk is now re-downloaded in full five more times,
-    with ~7.75s of backoff on top, before the identical error surfaces. It multiplies across every
-    affected chunk, and nothing short-circuits: `download_files` drains the whole
-    `buffer_unordered` stream and only then collects the results (`:360-364`), so the first chunk's
-    six failed attempts don't stop the remaining units from spending theirs.
-  - *Progress over-reports by up to 6× the chunk size.* This path only triggers *after* a chunk has
-    streamed to completion, so every retry double-counts a whole chunk — see the `Progress` item
-    below.
-  - Splitting the two conditions is the cheap fix: `remaining() != 0` (a short response — always
-    transport-shaped) keeps all six attempts; a size-correct MD5 mismatch retries once or twice and
-    then fails, since the second identical answer from a re-fetched link is strong evidence the
-    manifest, not the transfer, is wrong.
+    entry cannot be fixed by retrying, and the chunk is re-downloaded in full five more times, with
+    ~7.75s of backoff on top, before the identical error surfaces. It multiplies across every
+    affected chunk, and nothing short-circuits: `download_files` drains the whole `buffer_unordered`
+    stream and only then collects the results (`:374-378`), so the first chunk's six failed attempts
+    don't stop the remaining units from spending theirs.
+  - The split makes the cheap fix a one-line change now: `remaining() != 0` (a short response —
+    always transport-shaped) keeps all six attempts; the MD5 arm gets its own smaller bound, since a
+    second identical answer from a re-fetched link is strong evidence the manifest, not the
+    transfer, is wrong.
 
 - [ ] **`DownloadEvent::Progress` is emitted once per network read — the exact event-rate problem
   mainline `v0.1.1` was cut to fix, now on two code paths.** `download_files`'s callback sends
-  `DownloadEvent::Progress(chunk.len())` for every `Bytes` the `bytes_stream()` yields
-  (`src/downloader/downloader.rs:281`), into an unbounded channel that a forwarding task re-sends
-  into another unbounded channel (`:213-219` for `download`, `:132-138` for `repair`). With
-  `self.threads` chunks in flight on a fast connection that is thousands of sends per second, bounded
-  by read syscall size rather than by throughput.
+  `DownloadEvent::Progress(chunk_lenght)` for every `Bytes` the `bytes_stream()` yields
+  (`src/downloader/downloader.rs:281-283`), into an unbounded channel that a forwarding task
+  re-sends into another unbounded channel (`:213-219` for `download`, `:132-138` for `repair`). With
+  `self.threads` chunks in flight on a fast connection that is thousands of sends per second,
+  bounded by read syscall size rather than by throughput. `ProgressRegression` adds to that traffic
+  rather than reducing it.
 
   The workspace `CLAUDE.md` documents this same shape as the repair-download memory leak that
   `master`'s `v0.1.1` exists to fix: there, `gogdl_flutter`'s drain loops flooded an unbounded
@@ -78,80 +130,105 @@ surviving `backoff(attempt as u32)` calls are same-type casts. See the
   (`master:src/downloader/stream.rs:45-70` spells out the reasoning). The `restart` branch has
   neither half. Fix before any Flutter consumer is wired up to `repair_game`.
 
-  Secondary: bytes streamed by an attempt that later fails are still counted, so progress
-  over-reports by exactly the amount transferred before each retry. The MD5-failure retry
-  (`:338-343`) makes this worse in the one case where it is guaranteed rather than incidental: that
-  path only triggers *after* a chunk streamed to completion, so each such retry over-counts by a
-  full chunk, and with `MAX_ATTEMPTS` now 6 a chunk that never verifies reports **6× its size**
-  before erroring. Whichever fix lands must also reset or discount the progress reported for a
-  failed attempt.
-
 - [ ] **Secure links are never proactively expired.** `SecureLinksManager::links_cache`
   (`src/secure_links/links_manager.rs:19,32-63`) never evicts an entry on its own, and the fetched
   `CdnUrlParams`'s `expires_at`/`ttl` fields (`src/secure_links/secure_links.rs:11,13`) are parsed
-  but never consulted. The reactive half works, and is now cheap — a CDN 401 triggers
+  but never consulted. The reactive half works, and is cheap — a CDN 401 triggers
   `invalidate_secure_links` and an immediate retry with no backoff
-  (`src/downloader/downloader.rs:302-313`) — but every chunk request still has to *fail* once before
+  (`src/downloader/downloader.rs:306-317`) — but every chunk request still has to *fail* once before
   a stale link gets replaced, and when several chunks hit that 401 together the misses aren't
   collapsed (see the thundering-herd item below). Wants the same shape `Auth::is_valid()`'s
   60s margin already has for tokens.
 
 ## Medium — duplication & consistency
 
-- [ ] **`MAX_ATTEMPTS` fixed the sentinel coupling, but the constant itself is now declared twice
-  and the backoff ceiling still isn't tied to it.** The bug class is gone: both loops read
-  `for attempt in 0..MAX_ATTEMPTS` (`src/downloader/downloader.rs:265`, `src/client/client.rs:48`)
-  and all six last-attempt sentinels are `attempt != MAX_ATTEMPTS - 1` (`downloader.rs:288,296,307,
-  323,339`, `client.rs:65`), so changing the bound can no longer silently resurrect the
-  swallowed-error regression that `ac061e0` shipped and `2469b13` fixed. Three residuals:
-  - *Two constants, not one.* `const MAX_ATTEMPTS: u32 = 6;` is declared separately in
-    `downloader.rs:29` and `client.rs:9`, both private to their file. They agree today by
-    coincidence; nothing makes a change to one reach the other, and a reader has no way to tell
-    whether the two loops are meant to share a policy or deliberately differ. One crate-level
-    constant (or a `retry` module owning it alongside `backoff`) settles it.
+- [ ] **`ProgressRegression` is a second source-breaking addition for existing consumers, on the
+  same pin bump as `VerificationStage`.** `lumen-cli` (sibling repo, pinned at
+  `tag = "v0.0.9-restart"`, its `Cargo.toml:12`) matches `DownloadEvent` exhaustively with four arms
+  and no `_` inside `apply_download_stage_event` (`src/middleware/downloads.rs:607-621`), so the new
+  variant is a hard `E0004` there — as is `DownloadStageEvent::VerificationStage`
+  (`src/downloader/progress_reporting/download_stage_event.rs:9`) in the outer match at `:555-607`.
+  `DownloadError::ChunkHashMismatch()` (`src/downloader/error.rs:58-59`) widens a third `pub` enum,
+  though error enums are less often matched exhaustively.
+
+  Neither break is just a new arm: `lumen-cli`'s `DownloadStage` enum has no verification state to
+  map `VerificationStage` onto, and its `downloaded_bytes` accumulator needs a `saturating_sub` to
+  absorb `ProgressRegression`. Combined with the `E0599: no method named 'get_secure_links'` break
+  the export item below flags, that pin bump needs a real code change on the consumer side. Same
+  applies to `gogdl_flutter`'s `restart` branch whenever `repair_game` gets bridged.
+
+- [ ] **`ChunkHashMismatch()` names the failure but carries none of it — and its sibling arm's
+  message now has a dead branch.** `DownloadError::ChunkHashMismatch()`
+  (`src/downloader/error.rs:58-59`) is a unit-shaped variant written with empty parens, formatting
+  as the constant string "Chunk hash mismatch during download": no path, no offset, no expected or
+  actual digest, so a consumer that hits it on one chunk of a multi-gigabyte install has nothing to
+  report or retry against. The `remaining() != 0` arm eleven lines below does the opposite, building
+  a fully detailed `io::Error` (`:358-367`) — two adjacent verification failures with opposite
+  diagnostic quality.
+
+  That detailed message is also now partly dead: it ends with
+  `if actual_md5 == download_unit.md5 { "ok" } else { "mismatch" }` (`:365`), a leftover from when
+  the two conditions were fused. The MD5 check at `:343` returns first, so `:365` is only reachable
+  when the digests match and the string is always "checksum ok". Give `ChunkHashMismatch` the same
+  fields (path, offset, expected, actual) and drop the dead conditional.
+
+- [ ] **`MAX_ATTEMPTS` is now one constant, but the retry primitives are still split across two
+  modules and reached by two import paths.** The duplicated declaration is gone:
+  `src/constants/mod.rs:5` holds the single `pub const MAX_ATTEMPTS: u32 = 6;` (private at the crate
+  root — `lib.rs:2` declares `mod constants;`, so nothing leaks), imported by
+  `client.rs:15` and `downloader.rs:9`. Both loops read `for attempt in 0..MAX_ATTEMPTS`
+  (`downloader.rs:264`, `client.rs:47`) and all six sentinels are `attempt != MAX_ATTEMPTS - 1`
+  (`downloader.rs:291,300,311,328,344,353`, `client.rs:64`), so the `0..2`-vs-`!= 2` regression class
+  stays structurally impossible. Two residuals:
+  - *The constant and the function that consumes it live in different modules.* `MAX_ATTEMPTS` is in
+    `constants`, alongside three GOG endpoint URLs it has nothing to do with; `backoff` is in
+    `downloader::util`, re-exported by `downloader/mod.rs:23` beside the public event types and
+    imported by the client layer as `crate::downloader::{FileType, backoff}` (`client.rs:16`) while
+    `downloader.rs:9` imports the same function as `crate::downloader::util::backoff`. Two paths to
+    one item, one of which makes the client depend on the downloader for a generic retry primitive.
+    A `retry` module owning `MAX_ATTEMPTS` and `backoff` together — with a doc comment stating the
+    base, ceiling and jitter policy, which nothing currently records — is now a smaller move than it
+    was.
   - *`backoff`'s ceiling is still an unrelated literal, and still never binds.*
     `src/downloader/util/backoff.rs:4-6` caps at 20s, but `backoff` is only called when
     `attempt != MAX_ATTEMPTS - 1`, so the largest `attempt` it ever sees is 4 and the largest
     ceiling actually reachable is `500ms * 2^4` = 8s. The cap first binds at `attempt == 6`, so it
     is dead for any `MAX_ATTEMPTS <= 7`. Either derive the cap from `MAX_ATTEMPTS` or drop it and
-    say so.
-  - *The delay budget moved a lot, silently.* Five backoffs with ceilings 0.5/1/2/4/8s is ~7.75s of
-    sleeping on average and 15.5s worst case per chunk, on top of six connection attempts — where
-    the previous tree spent ~0.75s over two. That is a better failure profile, but it is now the
-    de-facto timeout for a chunk against a dead CDN and is worth stating as such rather than
-    leaving it implied by two constants in two files.
+    say so. The de-facto per-chunk timeout against a dead CDN — five backoffs, ~7.75s average and
+    15.5s worst case, on top of six connection attempts — is still recorded nowhere.
 
 - [ ] **The two retry loops are hand-copied rather than shared, and `download_files` carries a dead
   arm.** `download_files`'s match and `fetch`'s both independently carry an `HttpError{status, body}`
   arm and their own notion of what to retry; a change to one won't propagate to the other. And
-  `download_files`'s `Err(ClientError::AuthError(err))` arm (`src/downloader/downloader.rs:286-293`)
+  `download_files`'s `Err(ClientError::AuthError(err))` arm (`src/downloader/downloader.rs:288-296`)
   is unreachable: `stream_chunk` converts an auth failure during the secure-links fetch to
   `ClientError::SecureLinksError { inner: String }`, and `stream_chunk_inner` never calls
   `get_auth()` at all (CDN URLs are pre-signed, no bearer token), so a bare `AuthError` can never
   arrive here. It was copied from `fetch` and widened from `AuthError::TokenExpired` to any
   `AuthError`, so it now reads as if it handles more than it does — and each pass adds to it:
-  `2469b13` gave it a `return Err(..)` and a `sleep`, the working tree swapped that `sleep` for a
-  `backoff` call and re-derived its sentinel from `MAX_ATTEMPTS`, all of it on a path that cannot
-  execute.
+  `2469b13` gave it a `return Err(..)` and a `sleep`, `527a9c1` swapped that `sleep` for a `backoff`
+  call and re-derived its sentinel from `MAX_ATTEMPTS`, and the working tree has now added a
+  `ProgressRegression` send to it (`:289`) — all of it on a path that cannot execute.
 
-  The `HttpError` arm has picked up a smaller version of the same problem: `status ==
-  reqwest::StatusCode::UNAUTHORIZED` is now tested twice within it (`:304` to invalidate, `:308` to
-  skip the backoff), with the retry `continue` written out in both branches (`:309`, `:312`). One
-  test setting a `delay: bool`, or hoisting the check above the `if attempt != MAX_ATTEMPTS - 1`,
-  says the same thing once. The MD5 arm (`:339-343`) then writes the invalidate-and-back-off pair a
-  third time — four arms and a verification check now share one recovery shape, spelled out
-  separately at each site.
+  The `HttpError` arm still tests `status == reqwest::StatusCode::UNAUTHORIZED` twice (`:308` to
+  invalidate, `:312` to skip the backoff), with the retry `continue` written out in both branches
+  (`:313`, `:316`). One test setting a `delay: bool`, or hoisting the check above the
+  `if attempt != MAX_ATTEMPTS - 1`, says the same thing once. The two verification arms
+  (`:343-350`, `:352-368`) then write the invalidate-and-back-off pair a third and fourth time —
+  four match arms and two checks now share one recovery shape, spelled out separately at each of six
+  sites, and the working tree's `ProgressRegression` send had to be pasted into four of them (and
+  was missed on the other two — see the High item).
 
 - [ ] **`Downloader::repair` is a near-verbatim copy of `Downloader::download`.** `repair`
-  (`src/downloader/downloader.rs:43-142`) and `download` (`:143-223`) are the same function apart
-  from one inserted stage. Lines `49-105` of `repair` and `149-205` of `download` — path-resolver
+  (`src/downloader/downloader.rs:42-141`) and `download` (`:142-222`) are the same function apart
+  from one inserted stage. Lines `48-104` of `repair` and `148-204` of `download` — path-resolver
   construction, the `depot_files` flat_map, the whole file-size-verification stage with its
   channel/`tokio::join!`/forwarding boilerplate, the free-space computation and its two error
   returns, the whole allocation stage with the same boilerplate again, and the `FileAllocationError`
   abort — are identical modulo two extra `drop()`s and the stage-forwarding variable names. The only
-  real difference is `repair`'s `verify_download_units` stage (`:107-125`), whose `missing_units` it
+  real difference is `repair`'s `verify_download_units` stage (`:106-125`), whose `missing_units` it
   passes to `download_files` where `download` passes `DownloadUnit::from_product_bundles(&bundles)`
-  wholesale.
+  wholesale (`:208`).
 
   Every fix in this doc against `download`'s pipeline has to be applied twice, and the free-space
   error-discard item below already exists in two places because of it. `download` is expressible as
@@ -161,40 +238,30 @@ surviving `backoff(attempt as u32)` calls are same-type casts. See the
 - [ ] **`download` re-downloads every chunk regardless of what's already correct on disk, so `repair`
   is the crate's only resume path — and nothing says so.** `download` runs a file-size verification
   stage and computes `missing_files`, then ignores that result when building the transfer list:
-  `DownloadUnit::from_product_bundles(&bundles)` (`src/downloader/downloader.rs:209`) enumerates
+  `DownloadUnit::from_product_bundles(&bundles)` (`src/downloader/downloader.rs:208`) enumerates
   every chunk of every file in every bundle, including files that just verified as complete. An
   interrupted download restarted through `download_game` re-transfers the whole game from byte 0,
   while `repair_game` transfers only what fails MD5.
 
   Given pause/resume was deliberately removed chain-wide (see the workspace `CLAUDE.md`),
   `repair_game` is the de-facto resume entry point — and a consumer has no way to know that from the
-  API surface: the two methods have identical signatures and neither has a doc comment. Either make
-  `download` skip already-verified units, or document that resuming means calling `repair_game`.
+  API surface: the two methods have identical signatures (`download_manager.rs:73-101`) and neither
+  has a doc comment. Either make `download` skip already-verified units, or document that resuming
+  means calling `repair_game`.
 
 - [ ] **`repair` checksums the chunks of files it has just allocated.** Stage 2 allocates every file
   that failed size verification (`set_len` on a fresh or truncated file,
   `src/downloader/fs/path_resolver.rs:76`), and stage 3 then MD5s **every** unit of **every** file
-  (`src/downloader/downloader.rs:107-119`) — including those just-allocated, all-zero ranges, whose
+  (`src/downloader/downloader.rs:106-118`) — including those just-allocated, all-zero ranges, whose
   chunks cannot possibly match. On a repair where a large file is missing outright that's a full-size
   read plus MD5 of zeroes purely to conclude what stage 1 already knew. Filter the units belonging to
   `missing_files` out of the verification pass and add them straight to the download list.
-
-- [ ] **`DownloadStageEvent::VerificationStage` is a source-breaking addition for existing
-  consumers.** The variant (`src/downloader/progress_reporting/download_stage_event.rs:9`) is emitted
-  only by `repair`'s stage 3, but it widens a `pub` enum that consumers match exhaustively.
-  `lumen-cli` (sibling repo, currently pinned at `tag = "v0.0.9-restart"` in its `Cargo.toml:12`) has
-  an exhaustive four-arm `match ev` with no `_` arm in `apply_download_stage_event`
-  (`src/middleware/downloads.rs:555-607`), so bumping its pin is a hard `E0004` — on top of the
-  `E0599: no method named 'get_secure_links'` break the export item below flags for the same bump.
-  Its `DownloadStage` enum has no verification state to map the new variant onto either, so this
-  needs a code change there, not just a new arm. Same applies to `gogdl_flutter`'s `restart` branch
-  whenever `repair_game` gets bridged.
 
 - [ ] **Secure-link fetches aren't collapsed across concurrent chunk downloads, and `a11273a`
   deleted the pre-fetch that used to hide it.** `SecureLinksManager::get_secure_links`/
   `invalidate_secure_links` (`src/secure_links/links_manager.rs:32-67`; cache at `:19`) have no
   in-flight-request dedup. `download_files` runs up to `self.threads` chunk downloads concurrently via
-  `buffer_unordered` (`src/downloader/downloader.rs:258,360`), each calling `stream_chunk`
+  `buffer_unordered` (`src/downloader/downloader.rs:374`), each calling `stream_chunk`
   independently, and `stream_chunk` calls `get_secure_links` per chunk (`src/client/client.rs:87`).
   - *Cold start (new with `a11273a`):* `download_files` used to warm the cache first — a
     `stream::iter(bundles).map(|b| get_secure_links(..)).buffer_unordered(self.threads)` block that
@@ -204,7 +271,9 @@ surviving `backoff(attempt as u32)` calls are same-type casts. See the
     (`links_manager.rs:39-62`), so the mutex doesn't collapse them either. **Per product bundle, on
     every download and every repair.**
   - *Expiry:* if a link expires with several chunks in flight, each hits the CDN 401 at roughly the
-    same time, each calls `invalidate_secure_links`, and each re-fetches independently.
+    same time, each calls `invalidate_secure_links`, and each re-fetches independently. The two
+    verification retries (`:345`, `:354`) invalidate too, so a batch of chunks failing MD5 together
+    produces the same storm.
 
   Restoring the pre-fetch would paper over the cold-start half only; an in-flight dedup (a
   per-`game_id` `OnceCell`/shared future — the shape `PathResolver::dir_cache` already uses at
@@ -234,7 +303,7 @@ surviving `backoff(attempt as u32)` calls are same-type casts. See the
   `refresh_auth` (`:99-107`) each call `client.fetch_no_retry(&url, false, false)`, match
   `Err(ClientError::AuthError(e)) => return Err(e)` first, and otherwise fall to
   `AuthError::ClientError { inner: e.to_string() }`. But `require_auth` is hardcoded `false` in both
-  calls, so `inner_fetch` (`src/client/client.rs:129-150`) can **never** produce
+  calls, so `inner_fetch` (`src/client/client.rs:128-149`) can **never** produce
   `ClientError::AuthError` on these paths — that branch only fires when `require_auth: true` and the
   internal `get_auth()` fails locally.
 
@@ -253,7 +322,7 @@ surviving `backoff(attempt as u32)` calls are same-type casts. See the
   Every network call in `depot/`, `games/` and `secure_links/` goes exclusively through `HttpClient`
   (`grep -rn "reqwest::\|url::Url::parse\|serde_json::from_str" src/depot src/games src/secure_links`
   matches nothing outside `error.rs`), and `downloader/` is the same but for its own directly
-  constructed `DeflateError` (`src/downloader/downloader.rs:274,334,344`). Confirmed
+  constructed `DeflateError` (`src/downloader/downloader.rs:273,339,358`). Confirmed
   unconstructible with `grep -rn "::Http {" src/` and the per-variant equivalents, all empty.
 
   Because these enums are `pub`, `dead_code` doesn't warn, so clippy will never surface this. Either
@@ -294,8 +363,9 @@ surviving `backoff(attempt as u32)` calls are same-type casts. See the
   - **One `#[tokio::test]` driving `download_files` against a chunk source that fails every
     attempt.** This would have caught the swallowed-error regression on the day it was written, both
     times, and would fail today against `v0.0.12-restart`. The same harness, with a source that
-    serves truncated or wrong-MD5 bytes on the first attempt and good bytes on the second, pins the
-    working tree's new MD5-failure retry — including that it reports the right byte total.
+    serves wrong-MD5 bytes on the first attempt and good bytes on the second, pins the MD5-failure
+    retry — and **asserting that the net reported byte total equals one chunk would have caught the
+    missing `ProgressRegression` on that path**, which is the newest defect in this doc.
   - **`backoff`'s bounds** (`src/downloader/util/backoff.rs`) — the ceiling is deterministic even
     though the draw isn't, so `attempt` → ceiling is a plain table test, and a single assertion that
     the ceiling at `MAX_ATTEMPTS - 2` is the cap would have caught the still-dead 20s `.min(..)`
@@ -305,87 +375,86 @@ surviving `backoff(attempt as u32)` calls are same-type casts. See the
     `6c76f03`, still unpinned), `refresh_auth` persisting `valid_until` (broke twice across
     refactors), and concurrent `refresh_auth` collapsing.
 
+  For contrast, `lumen-cli` already has a `#[cfg(test)] mod tests` exercising
+  `apply_download_stage_event` against synthetic `DownloadStageEvent` sequences
+  (`src/middleware/downloads.rs:1117-1211`) — the consumer of these events is better covered than
+  the producer.
+
 - [ ] **No `CLAUDE.md`/`api.md` on the `restart` branch.** Both exist on `master` and are treated as
   canonical specs for consumers (`gogdl_flutter`); `restart` has neither, so there's no single
-  reference tracking what public surface has been rebuilt vs. still stubbed. `a11273a` sharpens
-  this: it adds a public `GogDl::repair_game` and a new `DownloadStageEvent` variant with no doc
-  comment anywhere, and the download-vs-repair semantics (which resumes, which re-transfers, which
-  stages each emits) are discoverable only by reading `downloader.rs`.
+  reference tracking what public surface has been rebuilt vs. still stubbed. Each pass sharpens
+  this: `a11273a` added a public `GogDl::repair_game` and a `DownloadStageEvent` variant with no doc
+  comment, and the working tree now adds a `DownloadEvent` variant whose meaning cannot be inferred
+  from its name (see the semantics item above). The download-vs-repair semantics (which resumes,
+  which re-transfers, which stages each emits) are discoverable only by reading `downloader.rs`.
 
 ## Low — style / clippy
 
-- [ ] **Vestigial `let _ = body;` in two retry arms.** `src/downloader/downloader.rs:303` discards
-  `body` into `_` eleven lines before `:314` returns `ClientError::HttpError { status, body }` with
-  it. The statement was load-bearing at `v0.0.11-restart` — it kept rustc quiet about the then-unused
-  binding, and so is part of why the swallowed-error bug drew no warning — but now reads as if the
-  value were deliberately dropped. `HttpClient::fetch` has the identical pair (`client.rs:52`
-  discarding a `body` that `:58` returns). Delete both, and `:58`'s `body: body` with them.
+- [ ] **Vestigial `let _ = body;` — one of the two is left.** The working tree deleted
+  `downloader.rs`'s copy; `HttpClient::fetch` still has the identical pair, `client.rs:51`
+  discarding a `body` that `:57` returns as `body: body`. Delete both together.
+
+- [ ] **`chunk_lenght` is misspelled.** `src/downloader/downloader.rs:281-283`, introduced by the
+  working tree when the callback needed to name the length twice. Rename before it gets copied.
 
 - [ ] **The free-space check discards its own error detail, in two places.** `Downloader::download`
-  (`src/downloader/downloader.rs:176-179`) and its copy in `Downloader::repair` (`:77-80`) each match
+  (`src/downloader/downloader.rs:175-178`) and its copy in `Downloader::repair` (`:76-79`) each match
   `path_resolver.get_free_space()`'s `Err(_)` and always return the unit variant
   `DownloadError::CouldNotResolveFreeSpace`, throwing away the
   `FileSystemError::NoDiskMatchingPath(PathBuf)` that names exactly which resolved base path had no
   matching disk (`src/downloader/fs/path_resolver.rs:39-58`). Carry the path (or the whole
-  `FileSystemError`) into the variant.
-
-- [ ] **The retry primitives are scattered across layers.** `backoff` lives in `downloader::util`
-  but `client.rs:17` imports it as `crate::downloader::{FileType, backoff}` while `downloader.rs:9`
-  imports the same function as `crate::downloader::util::backoff` — two paths to one item, one of
-  which makes the client layer depend on the downloader for a generic retry primitive.
-  `downloader/mod.rs:23` re-exports it beside the public event types; `mod downloader` is private in
-  `lib.rs`, so nothing leaks from the crate root. `MAX_ATTEMPTS` is then declared once per file
-  (`client.rs:9`, `downloader.rs:29`), and `client.rs`'s copy sits *between* the `use std::..` line
-  and the `use crate::{..}` block rather than with the other items. A small `retry` module owning
-  `MAX_ATTEMPTS` and `backoff` together — with a doc comment stating the base, ceiling and jitter
-  policy, which nothing currently records — puts all of it in one place.
+  `FileSystemError`) into the variant. Same shape as `ChunkHashMismatch()` above — a unit error
+  variant where the caller needed a name.
 
 - [ ] **`rand` with default features is a heavy dependency for retry jitter.** `rand = "0.10.2"`
-  pulls `chacha20`, `getrandom 0.4`, `rand_core 0.10` and `r-efi` — and with `chacha20` comes
-  `cpufeatures`, which `2100296` had removed from the tree along with `sha2`. A ChaCha20 CSPRNG for
-  a sleep duration is more than the job needs: a non-cryptographic generator, or jitter derived
-  from the chunk hash the task already holds, keeps the dependency graph where `2100296` left it.
+  (`Cargo.toml:22`) pulls `chacha20`, `getrandom 0.4`, `rand_core 0.10` and `r-efi` — and with
+  `chacha20` comes `cpufeatures`, which `2100296` had removed from the tree along with `sha2`. A
+  ChaCha20 CSPRNG for a sleep duration is more than the job needs: a non-cryptographic generator, or
+  jitter derived from the chunk hash the task already holds, keeps the dependency graph where
+  `2100296` left it.
 
-**Clippy: 43 warnings** against this tree, up from 38. Locations re-derived:
+**Clippy: 43 warnings** against this tree — same count and same composition as the previous pass;
+none of the working tree's four changes added or removed one. Locations re-derived:
 
-- [ ] **5 `unnecessary_cast` — new with this working tree.** `attempt` is `u32` now that it comes
-  from `0..MAX_ATTEMPTS`, so `backoff(attempt as u32)` casts `u32` to `u32` at `client.rs:66` and
-  `downloader.rs:289,297,311,324`. The MD5 arm added last (`downloader.rs:341`) already writes the
-  bare `backoff(attempt)`, so the five casts are also inconsistent with the sixth call site.
-- [ ] 7 `let_and_return` — `download_manager.rs:70,85,100`, `downloader.rs:424,512,597`,
+- [ ] **5 `unnecessary_cast`.** `attempt` is `u32` (it comes from `0..MAX_ATTEMPTS`), so
+  `backoff(attempt as u32)` casts `u32` to `u32` at `client.rs:65` and
+  `downloader.rs:292,301,315,329`. The two verification arms (`downloader.rs:346,355`) write the
+  bare `backoff(attempt)`, so the five casts are also inconsistent with the other two call sites.
+- [ ] 7 `let_and_return` — `download_manager.rs:70,85,100`, `downloader.rs:438,526,611`,
   `product_bundle.rs:47`.
-- [ ] 4 "redundant redefinition of a binding `path_resolver`" — `downloader.rs:260,376,435,523`, all
-  the same `let path_resolver = path_resolver;` idiom moving it into a closure.
+- [ ] 4 "redundant redefinition of a binding `path_resolver`" — `downloader.rs:259,390,449,537`
+  (each warning also points at the shadowed parameter, at `:251,385,444,532`), all the same
+  `let path_resolver = path_resolver;` idiom moving it into a closure.
 - [ ] 5 module inception — `client::auth::auth`, `client::client`, `downloader::downloader`,
   `gogdl::gogdl`, `secure_links::secure_links`.
-- [ ] 4 `needless_return` — `client.rs:144,147`, `downloader.rs:585`, `path_resolver.rs:49`.
-- [ ] 3 `redundant_field_names` — `client.rs:58` (`body: body`), `depot_info.rs:58`
-  (`offset: offset`), `downloader.rs:300` (`inner: inner`).
-- [ ] 3 `len_zero` — `downloader.rs:101,122,200`.
-- [ ] 2 `needless_borrow` on `refresh_auth(&self)` — `client.rs:55,62`.
+- [ ] 4 `needless_return` — `client.rs:143,146`, `downloader.rs:599`, `path_resolver.rs:49`.
+- [ ] 3 `redundant_field_names` — `client.rs:57` (`body: body`), `depot_info.rs:58`
+  (`offset: offset`), `downloader.rs:304` (`inner: inner`).
+- [ ] 3 `len_zero` — `downloader.rs:100,121,199`.
+- [ ] 2 `needless_borrow` on `refresh_auth(&self)` — `client.rs:54,61`.
 - [ ] 2 `manual_map` — `auth_manager.rs:113` (clone-observer-out-of-guard, wants `.cloned()`),
   `depot_info.rs:39` (`DepotFile::size`, wants `.as_ref().map(..)`).
 - [ ] 2 `or_insert_with(Vec::new)` → `or_default()` — `downloadable_product.rs:50`,
   `product_bundle.rs:42`.
 - [ ] `Auth::is_valid`'s `map_or(false, ..)` should be `is_some_and(..)`
-  (`client/auth/auth.rs:33-34`).
+  (`client/auth/auth.rs:33`).
 - [ ] `OwnedGames::default()` is a hand-written inherent method shadowing `std::default::Default`
-  (`games/owned_games.rs:14-16`) — implement the trait.
+  (`games/owned_games.rs:14`) — implement the trait.
 - [ ] Useless `format!` with no interpolation on `format!("https://embed.gog.com/user/data/games")`
   (`games/owned_games.rs:25`).
 - [ ] One-offs: explicit-closure-for-cloning (`depot/build_metadata.rs:38`), `io_other_error`
-  (`util/hash.rs:44`), redundant `&` in a `format!` (`depot/depot_info.rs:80`).
+  (`downloader/util/hash.rs:44`), redundant `&` in a `format!` (`depot/depot_info.rs:80`).
 
-`cargo clippy --fix --lib -p gogdl-lib -- -W clippy::all` auto-applies most of these — but only
+`cargo clippy --fix --lib -p gogdl-lib -- -W clippy::all` auto-applies 33 of these — but only
 against a clean tree; it will otherwise try to "fix" whatever is mid-edit.
 
-**Clippy caught none of the four retry defects this branch has shipped.** `for attempt in 0..2`
+**Clippy caught none of the five retry defects this branch has shipped.** `for attempt in 0..2`
 against `attempt != 2` and `for attempt in 0..3` against `attempt != 2` produce byte-identical clippy
 output; a `for` loop missing its `break` fires no lint; the `return`s an always-true guard renders
-dead are unreachable only at runtime, so `unreachable_code` never fires; and two consecutive
-`sleep`s — the doubled delay `fetch` briefly carried — are perfectly legal code. What clippy *did*
-notice about this retry code is five redundant casts. Only reading the code, or a test, tells the
-real defects apart.
+dead are unreachable only at runtime; two consecutive `sleep`s — the doubled delay `fetch` briefly
+carried — are perfectly legal code; and a `tx.send(..)` present in four match arms and absent from
+two sibling `if` blocks is invisible to any lint. What clippy *did* notice about this retry code is
+five redundant casts. Only reading the code, or a test, tells the real defects apart.
 
 ---
 
@@ -395,29 +464,44 @@ One line per fixed item, newest first within each group. Detail is in the refere
 
 ### Downloader reliability
 
-*The first six are in the **uncommitted working tree**, not in any commit or tag.*
+*The first four are in the **uncommitted working tree**, not in any commit or tag. The six after
+them are in `527a9c1`, committed and pushed since the last pass but still untagged.*
 
+- [x] **`MAX_ATTEMPTS` was declared twice, once per file, agreeing only by coincidence** — working
+  tree. One `pub const MAX_ATTEMPTS: u32 = 6;` in `src/constants/mod.rs:5`, imported by
+  `client.rs:15` and `downloader.rs:9`; `mod constants` is private in `lib.rs`, so nothing leaks from
+  the crate root. That it now sits apart from `backoff`, and that `backoff`'s ceiling still isn't
+  derived from it, are open above.
+- [x] **Bytes streamed by an attempt that later failed were counted as progress, with nothing to
+  undo them** — working tree, for the four transport arms:
+  `DownloadEvent::ProgressRegression(reported_bytes)` at `downloader.rs:289,298,307,327`, where
+  `reported_bytes` (`:278`) resets per attempt. **The two verification retries still don't emit it**,
+  which is the guaranteed-over-count case — open above.
+- [x] **The MD5 and length checks were fused, so a size-correct digest mismatch and a truncated
+  response were indistinguishable to the caller** — working tree. Two independent `if`s at
+  `downloader.rs:343-350` and `:352-368`, the former returning the new
+  `DownloadError::ChunkHashMismatch()`. Its missing detail, the now-dead conditional in the latter's
+  message, and the unchanged six-attempt budget are open above.
+- [x] **Vestigial `let _ = body;` in `download_files`'s `HttpError` arm** — working tree.
+  `HttpClient::fetch`'s copy (`client.rs:51`) survives; open above.
 - [x] **A chunk failing its MD5/length check was never retried, failing the whole download on the
-  first bad byte** — working tree. `downloader.rs:338-343` invalidates the secure links, backs off
-  and `continue`s. Its cost at `MAX_ATTEMPTS = 6` on a deterministic mismatch is open above.
+  first bad byte** — `527a9c1`. Invalidates the secure links, backs off and `continue`s.
 - [x] **The MD5/length retry hit the same edge node immediately, with no delay and no link
-  invalidation** — working tree, in the same pass that introduced it; `:340-341` now does both,
-  matching the transport-shaped arms.
+  invalidation** — `527a9c1`, in the same pass that introduced it.
 - [x] **The retry delay was linear and unjittered, so every in-flight chunk task retried in
-  lockstep** — working tree. `src/downloader/util/backoff.rs` draws a full-jitter delay from
+  lockstep** — `527a9c1`. `src/downloader/util/backoff.rs` draws a full-jitter delay from
   `0..=min(500ms * 2^attempt, 20s)`; every retrying site uses it. The dead 20s `.min(..)` is open
   above.
-- [x] **`HttpClient::fetch` slept twice per network retry** — working tree, in the pass that
-  introduced it: `backoff(..)` had been *appended* to the linear `tokio::time::sleep` rather than
-  replacing it, so a retried fetch waited 2s + jitter, then 4s + jitter. The `sleep` and the
-  now-unused `time::Duration` import are both gone.
+- [x] **`HttpClient::fetch` slept twice per network retry** — `527a9c1`, in the pass that introduced
+  it: `backoff(..)` had been *appended* to the linear `tokio::time::sleep` rather than replacing it,
+  so a retried fetch waited 2s + jitter, then 4s + jitter. The `sleep` and the now-unused
+  `time::Duration` import are both gone.
 - [x] **The retry bound and its five last-attempt sentinels were independent literals, in two
-  loops** — working tree. `const MAX_ATTEMPTS: u32 = 6;` with `attempt != MAX_ATTEMPTS - 1` at every
-  sentinel; the `0..2`-vs-`!= 2` regression class can't recur. That the constant is declared once
-  per file, and that `backoff`'s ceiling still isn't derived from it, are open above.
-- [x] **A routine CDN 401 paid the same congestion backoff as a downed CDN** — working tree. The
+  loops** — `527a9c1`. `attempt != MAX_ATTEMPTS - 1` at every sentinel; the `0..2`-vs-`!= 2`
+  regression class can't recur.
+- [x] **A routine CDN 401 paid the same congestion backoff as a downed CDN** — `527a9c1`. The
   `HttpError` arm invalidates the secure links and retries immediately when
-  `status == UNAUTHORIZED` (`:304-312`). The unreachable `AuthError` arm and the reachable
+  `status == UNAUTHORIZED` (`:306-317`). The unreachable `AuthError` arm and the reachable
   `SecureLinksError` arm still back off; the former is dead code (tracked above), the latter covers
   a failed secure-links *fetch*, which is transport-shaped, so backing off there is defensible.
 - [x] **Both retry loops off by one (`0..2` bound tested against `!= 2`), making every last-attempt
@@ -427,14 +511,14 @@ One line per fixed item, newest first within each group. Detail is in the refere
   `f3a944a`, fixed in `ac061e0`, re-introduced by the same commit's `0..2` bound, closed by
   `2469b13`. Failures now propagate through `buffer_unordered` with full detail.
 - [x] **The retry loop never broke, so every chunk was downloaded three times** — `ac061e0`. `break`
-  at `:355`, after `decoder.shutdown()`/MD5 verification, so the successful attempt is still
+  at `:369`, after `decoder.shutdown()`/MD5 verification, so the successful attempt is still
   verified.
 - [x] **Local, non-retryable failures burned all three attempts** — `7eb5d5e`.
   `ChunkStreamCallbackError` (full disk, over-length guard, zlib error) and `UrlParseError` return on
   first occurrence, above the catch-all, with no `attempt` guard.
 - [x] **No retry/backoff for transient network failures** — `2b1cd7f` (arms + delay), `2469b13`
-  (delay on all four `download_files` arms, linear `(attempt+1)*2`, none on the way out), then the
-  working tree's jittered `backoff` helper replacing that delay and raising 3 attempts to 6.
+  (delay on all four `download_files` arms, linear `(attempt+1)*2`, none on the way out), then
+  `527a9c1`'s jittered `backoff` helper replacing that delay and raising 3 attempts to 6.
 - [x] **`stream_chunk`'s retry resumed into a dirty writer, so its `NetworkError` arm could never
   recover** — `82c7980` + `f3a944a` moved the retry loop up to `download_files`, which owns the
   writer stack and now rebuilds `open_file` → `OffsetWriter` → `HashingWriter` → `ZlibDecoder` per

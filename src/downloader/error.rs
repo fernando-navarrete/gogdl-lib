@@ -54,4 +54,7 @@ pub enum DownloadError {
 
     #[error("Not enough free space")]
     NotEnoughFreeSpace,
+
+    #[error("Chunk hash mismatch during download")]
+    ChunkHashMismatch(),
 }
