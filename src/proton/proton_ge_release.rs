@@ -36,7 +36,7 @@ impl ProtonGeRelease {
         let asset = match self
             .assets
             .iter()
-            .find(|asset| asset.name.ends_with(".tar.gz") && asset.name.contains("x86_64"))
+            .find(|asset| asset.name.ends_with(".tar.gz") && !asset.name.contains("aarch64"))
         {
             Some(asset) => asset,
             None => return Err(ProtonError::NoSuitableAsset(self.tag_name.clone())),
