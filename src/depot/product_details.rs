@@ -47,8 +47,10 @@ impl ProductDetails {
         }
         let url = format!("https://api.gog.com/v2/games/{}", product_id);
 
-        let mut product_details: ProductDetails =
-            download_manager.client.fetch(&url, false, false).await?;
+        let mut product_details: ProductDetails = download_manager
+            .client
+            .fetch(&url, false, false, None)
+            .await?;
 
         product_details.title = product_details.embedded.product.title.clone();
         {
