@@ -31,6 +31,7 @@ impl ProtonGeReleasesPage {
             "https://api.github.com/repos/GloriousEggroll/proton-ge-custom/releases?page={}&per_page={}",
             page, per_page
         );
+        println!("Fetching page {} of {}", page, per_page);
 
         let releases_page: ProtonGeReleasesPage =
             proton_manager.client.fetch(&url, false, false).await?;
