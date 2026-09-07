@@ -36,7 +36,7 @@ impl GameDetails {
 
         let url = format!("https://embed.gog.com/account/gameDetails/{}.json", game_id);
 
-        let game_details: GameDetails = games_manager.client.fetch(&url, false, true).await?;
+        let game_details: GameDetails = games_manager.client.fetch(&url, false, true, None).await?;
 
         let mut lock = games_manager.inner.lock().await;
         lock.game_details

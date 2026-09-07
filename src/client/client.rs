@@ -34,17 +34,19 @@ impl HttpClient {
         url: &str,
         decode: bool,
         require_auth: bool,
+        headers: Option<&[(&str, &str)]>,
     ) -> Result<T, ClientError> {
-        self.inner_fetch(url, decode, require_auth).await
+        self.inner_fetch(url, decode, require_auth, headers).await
     }
     pub async fn fetch<T: DeserializeOwned>(
         &self,
         url: &str,
         decode: bool,
         require_auth: bool,
+        headers: Option<&[(&str, &str)]>,
     ) -> Result<T, ClientError> {
         for attempt in 0..MAX_ATTEMPTS {
-            match self.inner_fetch(url, decode, require_auth).await {
+            match self.inner_fetch(url, decode, require_auth, headers).await {
                 Ok(result) => return Ok(result),
                 Err(ClientError::HttpError { status, body }) => {
                     let _ = body;
@@ -127,6 +129,7 @@ impl HttpClient {
         url: &str,
         decode: bool,
         require_auth: bool,
+        headers: Option<&[(&str, &str)]>,
     ) -> Result<T, ClientError> {
         if require_auth {
             let auth = match self.auth_manager.get_auth().await {
@@ -134,19 +137,32 @@ impl HttpClient {
                 Err(err) => return Err(ClientError::AuthError(err)),
             };
             if decode {
-                let result = self.get_and_decode(url, &auth.access_token).await?;
+                let result = self
+                    .get_and_decode(url, &auth.access_token, headers)
+                    .await?;
                 return Ok(result);
             }
-            let result = self.get_json_with_auth(url, &auth.access_token).await?;
+            let result = self
+                .get_json_with_auth(url, &auth.access_token, headers)
+                .await?;
             return Ok(result);
         } else {
-            let result = self.get_json(url).await?;
+            let result = self.get_json(url, headers).await?;
             return Ok(result);
         }
     }
-    async fn get_json<T: DeserializeOwned>(&self, url: &str) -> Result<T, ClientError> {
+    async fn get_json<T: DeserializeOwned>(
+        &self,
+        url: &str,
+        headers: Option<&[(&str, &str)]>,
+    ) -> Result<T, ClientError> {
         let url = reqwest::Url::parse(url)?;
-        let request = self.client.get(url);
+        let mut request = self.client.get(url);
+        if let Some(headers) = headers {
+            for (key, value) in headers {
+                request = request.header(*key, *value);
+            }
+        }
         let response = request.send().await?;
 
         if !response.status().is_success() {
@@ -165,10 +181,16 @@ impl HttpClient {
         &self,
         url: &str,
         auth_token: &str,
+        headers: Option<&[(&str, &str)]>,
     ) -> Result<T, ClientError> {
         let url = reqwest::Url::parse(url)?;
         let mut request = self.client.get(url);
         request = request.bearer_auth(auth_token);
+        if let Some(headers) = headers {
+            for (key, value) in headers {
+                request = request.header(*key, *value);
+            }
+        }
 
         let response = request.send().await?;
 
@@ -197,10 +219,16 @@ impl HttpClient {
         &self,
         url: &str,
         auth_token: &str,
+        headers: Option<&[(&str, &str)]>,
     ) -> Result<T, ClientError> {
         let url = reqwest::Url::parse(url)?;
         let mut request = self.client.get(url);
         request = request.bearer_auth(auth_token);
+        if let Some(headers) = headers {
+            for (key, value) in headers {
+                request = request.header(*key, *value);
+            }
+        }
 
         let response = request.send().await?;
 

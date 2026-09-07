@@ -75,8 +75,10 @@ impl SecureLinks {
             "https://content-system.gog.com/products/{}/secure_link?generation=2&_version=2&path=/",
             game_id
         );
-        let secure_links: SecureLinks =
-            secure_links_manager.client.fetch(&url, false, true).await?;
+        let secure_links: SecureLinks = secure_links_manager
+            .client
+            .fetch(&url, false, true, None)
+            .await?;
 
         Ok(secure_links)
     }

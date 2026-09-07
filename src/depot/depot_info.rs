@@ -80,7 +80,10 @@ impl DepotInfo {
             &depot_manifest
         );
 
-        let depot_info: DepotInfo = download_manager.client.fetch(&url, true, true).await?;
+        let depot_info: DepotInfo = download_manager
+            .client
+            .fetch(&url, true, true, None)
+            .await?;
 
         Ok(depot_info)
     }

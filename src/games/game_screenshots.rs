@@ -58,7 +58,7 @@ impl GameScreenshots {
         let url = format!("https://api.gog.com/v2/games/{}", game_id);
 
         let game_screenshots: GameScreenshots =
-            games_manager.client.fetch(&url, false, false).await?;
+            games_manager.client.fetch(&url, false, false, None).await?;
 
         let mut lock = games_manager.inner.lock().await;
         lock.game_screenshots

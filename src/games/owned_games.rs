@@ -33,7 +33,7 @@ impl OwnedGames {
         }
         let url = format!("https://embed.gog.com/user/data/games");
 
-        let owned_games: OwnedGames = game_manager.client.fetch(&url, false, true).await?;
+        let owned_games: OwnedGames = game_manager.client.fetch(&url, false, true, None).await?;
 
         let mut lock = game_manager.inner.lock().await;
         lock.owned_games = owned_games.clone();

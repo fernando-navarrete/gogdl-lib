@@ -28,8 +28,10 @@ impl BuildMetadata {
         download_manager: &DepotManager,
         game_link: &str,
     ) -> Result<Self, DepotError> {
-        let mut build_metadata: BuildMetadata =
-            download_manager.client.fetch(game_link, true, true).await?;
+        let mut build_metadata: BuildMetadata = download_manager
+            .client
+            .fetch(game_link, true, true, None)
+            .await?;
 
         build_metadata.filter_languages("en-US");
         Ok(build_metadata)

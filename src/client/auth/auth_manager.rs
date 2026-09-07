@@ -47,7 +47,7 @@ impl AuthManager {
     ) -> Result<String, AuthError> {
         let url = format!("{AUTH_URL}&code={code}");
 
-        let mut auth: Auth = match client.fetch_no_retry(&url, false, false).await {
+        let mut auth: Auth = match client.fetch_no_retry(&url, false, false, None).await {
             Ok(auth) => auth,
             Err(ClientError::AuthError(e)) => return Err(e),
             Err(e) => {
@@ -96,7 +96,7 @@ impl AuthManager {
         let refresh_token = tokens.refresh_token;
         let url = format!("{REFRESH_URL}&refresh_token={refresh_token}");
 
-        let mut auth: Auth = match client.fetch_no_retry(&url, false, false).await {
+        let mut auth: Auth = match client.fetch_no_retry(&url, false, false, None).await {
             Ok(auth) => auth,
             Err(ClientError::AuthError(e)) => return Err(e),
             Err(e) => {

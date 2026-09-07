@@ -39,7 +39,8 @@ impl GameSummary {
             game_id
         );
 
-        let game_summary: GameSummary = games_manager.client.fetch(&url, false, false).await?;
+        let game_summary: GameSummary =
+            games_manager.client.fetch(&url, false, false, None).await?;
 
         let mut lock = games_manager.inner.lock().await;
         lock.game_summary.insert(game_id, game_summary.clone());

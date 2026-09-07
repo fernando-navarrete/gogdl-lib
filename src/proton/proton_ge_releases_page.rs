@@ -31,15 +31,19 @@ impl ProtonGeReleasesPage {
             "https://api.github.com/repos/GloriousEggroll/proton-ge-custom/releases?page={}&per_page={}",
             page, per_page
         );
-        println!("Fetching page {} of {}", page, per_page);
-
-        let releases_page: ProtonGeReleasesPage =
-            proton_manager.client.fetch(&url, false, false).await?;
-
-        println!("Fetched {} releases", releases_page.releases.len());
-        for release in &releases_page.releases {
-            println!("Release: {}", release.tag_name);
-        }
+        let releases_page: ProtonGeReleasesPage = proton_manager
+            .client
+            .fetch(
+                &url,
+                false,
+                false,
+                Some(&[
+                    ("Accept", "application/vnd.github.v3+json"),
+                    ("User-Agent", "gogdl"),
+                    ("X-GitHub-Api-Version", "2026-03-10"),
+                ]),
+            )
+            .await?;
 
         Ok(releases_page)
     }
