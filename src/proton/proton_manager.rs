@@ -56,4 +56,10 @@ impl ProtonManager {
         let downloader = ProtonDownloader::new(self.client.clone());
         downloader.download_proton_release(release, path, tx).await
     }
+    /// Fetches a single Proton-GE release by its tag. See
+    /// [`GogDl::get_proton_release_by_tag`](crate::GogDl::get_proton_release_by_tag)
+    /// for the public-facing contract.
+    pub async fn get_release_by_tag(&self, tag: &str) -> Result<ProtonGeRelease, ProtonError> {
+        ProtonGeRelease::get_by_tag(tag, self).await
+    }
 }

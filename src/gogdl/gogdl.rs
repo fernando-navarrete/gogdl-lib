@@ -87,6 +87,33 @@ impl GogDl {
         Ok(proton_releases)
     }
 
+    /// Fetches a single [Proton-GE](https://github.com/GloriousEggroll/proton-ge-custom)
+    /// release by its `tag` (e.g. `"GE-Proton11-6"`), rather than a whole page
+    /// as [`get_proton_releases`](Self::get_proton_releases) does. Like that
+    /// method, this talks to `api.github.com`, not GOG — no GOG auth is used
+    /// or required.
+    ///
+    /// **Not cached** — every call is a fresh round-trip.
+    ///
+    /// **Requires a `User-Agent` on the underlying client**, for the same
+    /// reason as [`get_proton_releases`](Self::get_proton_releases) — GitHub
+    /// answers 403 to any request with no `User-Agent` header. Subject to the
+    /// same unauthenticated rate limit (60 requests/hour per IP).
+    ///
+    /// # Errors
+    /// [`GogDlError::ProtonError`] wrapping
+    /// [`crate::ProtonError::ClientError`], notably a
+    /// [`crate::ClientError::HttpError`] with `status: 404` if `tag` doesn't
+    /// match any release, or `status: 403` for a missing `User-Agent` or an
+    /// exhausted rate limit.
+    pub async fn get_proton_release_by_tag(
+        &self,
+        tag: &str,
+    ) -> Result<ProtonGeRelease, GogDlError> {
+        let release = self.proton.get_release_by_tag(tag).await?;
+        Ok(release)
+    }
+
     /// Downloads and extracts one [Proton-GE](https://github.com/GloriousEggroll/proton-ge-custom)
     /// release, as returned by [`get_proton_releases`](Self::get_proton_releases).
     ///
@@ -127,7 +154,10 @@ impl GogDl {
         path: &Path,
         tx: mpsc::UnboundedSender<ProtonDownloadEvent>,
     ) -> Result<PathBuf, GogDlError> {
-        let extracted_path = self.proton.download_proton_release(release, path, tx).await?;
+        let extracted_path = self
+            .proton
+            .download_proton_release(release, path, tx)
+            .await?;
         Ok(extracted_path)
     }
 

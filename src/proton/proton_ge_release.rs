@@ -1,7 +1,10 @@
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
-use crate::{ProtonError, proton::GithubAsset};
+use crate::{
+    ProtonError,
+    proton::{GithubAsset, ProtonManager},
+};
 
 /// A single Proton-GE release, as returned inside
 /// [`ProtonGeReleasesPage`](crate::ProtonGeReleasesPage). Mirrors (a subset
@@ -48,5 +51,38 @@ impl ProtonGeRelease {
     pub fn get_release_size(&self) -> Result<u64, ProtonError> {
         let asset = self.get_suitable_asset()?;
         Ok(asset.size)
+    }
+
+    /// Fetches a single release from
+    /// `GET /repos/GloriousEggroll/proton-ge-custom/releases/tags/{tag}`,
+    /// with the same `Accept`/`User-Agent`/`X-GitHub-Api-Version` headers as
+    /// [`ProtonGeReleasesPage`](crate::ProtonGeReleasesPage)'s page fetch.
+    /// Not cached. See
+    /// [`GogDl::get_proton_release_by_tag`](crate::GogDl::get_proton_release_by_tag)
+    /// for the public-facing contract, including the `404`-on-unknown-`tag`
+    /// behavior that surfaces here as a [`ProtonError`].
+    pub async fn get_by_tag(
+        tag: &str,
+        proton_manager: &ProtonManager,
+    ) -> Result<ProtonGeRelease, ProtonError> {
+        let url = format!(
+            "https://api.github.com/repos/GloriousEggroll/proton-ge-custom/releases/tags/{}",
+            tag
+        );
+        let release: ProtonGeRelease = proton_manager
+            .client
+            .fetch(
+                &url,
+                false,
+                false,
+                Some(&[
+                    ("Accept", "application/vnd.github.v3+json"),
+                    ("User-Agent", "gogdl"),
+                    ("X-GitHub-Api-Version", "2026-03-10"),
+                ]),
+            )
+            .await?;
+
+        Ok(release)
     }
 }
