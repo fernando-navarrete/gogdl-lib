@@ -33,20 +33,26 @@ impl ProtonGeRelease {
     /// Returns the first suitable asset for this release, or an error if no
     /// suitable asset is found.
     pub fn get_suitable_asset(&self) -> Result<&GithubAsset, ProtonError> {
+        println!("Assets found: {}", self.assets.len());
+        for asset in &self.assets {
+            println!("{:?}", asset.name);
+        }
         let asset = match self
             .assets
             .iter()
-            .find(|asset| asset.name.ends_with(".tar.gz") && !asset.name.contains("aarch64"))
+            .find(|asset| asset.name.ends_with(".tar.gz") && asset.name.contains("x86_64"))
         {
             Some(asset) => asset,
             None => return Err(ProtonError::NoSuitableAsset(self.tag_name.clone())),
         };
+        println!("Selected asset: {}", asset.name);
         Ok(asset)
     }
 
     /// Returns the size of the release, in bytes.
     pub fn get_release_size(&self) -> Result<u64, ProtonError> {
         let asset = self.get_suitable_asset()?;
+        println!("Release size: {}", asset.size);
         Ok(asset.size)
     }
 }

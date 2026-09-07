@@ -35,6 +35,11 @@ impl ProtonGeReleasesPage {
         let releases_page: ProtonGeReleasesPage =
             proton_manager.client.fetch(&url, false, false).await?;
 
+        println!("Fetched {} releases", releases_page.releases.len());
+        for release in &releases_page.releases {
+            println!("Release: {}", release.tag_name);
+        }
+
         Ok(releases_page)
     }
 }
