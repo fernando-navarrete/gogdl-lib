@@ -12,7 +12,7 @@ use serde::Deserialize;
 /// (`aarch64`) tarball, and a detached `.sha512sum` file per tarball — the
 /// one to download is whichever `name` ends in `.tar.gz` and does not
 /// contain `aarch64`.
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 pub struct GithubAsset {
     /// The asset's filename, e.g. `"GE-Proton11-6.tar.gz"`.
     pub name: String,
