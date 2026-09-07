@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
-use crate::proton::GithubAsset;
+use crate::{ProtonError, proton::GithubAsset};
 
 /// A single Proton-GE release, as returned inside
 /// [`ProtonGeReleasesPage`](crate::ProtonGeReleasesPage). Mirrors (a subset
@@ -27,4 +27,26 @@ pub struct ProtonGeRelease {
     /// tarballs and their detached checksum files. See [`GithubAsset`] for
     /// how to pick the right one.
     pub assets: Vec<GithubAsset>,
+}
+
+impl ProtonGeRelease {
+    /// Returns the first suitable asset for this release, or an error if no
+    /// suitable asset is found.
+    pub fn get_suitable_asset(&self) -> Result<&GithubAsset, ProtonError> {
+        let asset = match self
+            .assets
+            .iter()
+            .find(|asset| asset.name.ends_with(".tar.gz") && asset.name.contains("x86_64"))
+        {
+            Some(asset) => asset,
+            None => return Err(ProtonError::NoSuitableAsset(self.tag_name.clone())),
+        };
+        Ok(asset)
+    }
+
+    /// Returns the size of the release, in bytes.
+    pub fn get_release_size(&self) -> Result<u64, ProtonError> {
+        let asset = self.get_suitable_asset()?;
+        Ok(asset.size)
+    }
 }

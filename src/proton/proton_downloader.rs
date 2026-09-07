@@ -52,14 +52,7 @@ impl ProtonDownloader {
         path: &Path,
         tx: mpsc::UnboundedSender<ProtonDownloadEvent>,
     ) -> Result<PathBuf, ProtonError> {
-        let asset = match release
-            .assets
-            .iter()
-            .find(|asset| asset.name.ends_with(".tar.gz") && !asset.name.contains("aarch64"))
-        {
-            Some(asset) => asset,
-            None => return Err(ProtonError::NoSuitableAsset(release.tag_name.clone())),
-        };
+        let asset = release.get_suitable_asset()?;
 
         let path_resolver = PathResolver::new(path.to_path_buf()).await?;
 
