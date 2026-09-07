@@ -2,7 +2,7 @@ use std::{io::Read, sync::Arc};
 
 use bytes::Bytes;
 use flate2::read::ZlibDecoder;
-use futures_util::StreamExt;
+use futures_util::{StreamExt, future::BoxFuture};
 use reqwest::Client;
 use serde::de::DeserializeOwned;
 
@@ -75,10 +75,10 @@ impl HttpClient {
         }
         Err(ClientError::MaxRetriesReached)
     }
-    pub async fn stream_chunk(
-        &self,
+    pub async fn stream_chunk<'a>(
+        &'a self,
         url: &str,
-        mut f: impl AsyncFnMut(Bytes) -> std::io::Result<()>,
+        mut f: impl FnMut(Bytes) -> BoxFuture<'a, std::io::Result<()>>,
     ) -> Result<(), ClientError> {
         let url = reqwest::Url::parse(url)?;
         let request = self.client.get(url);

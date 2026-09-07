@@ -1,9 +1,10 @@
 use std::{path::PathBuf, sync::Arc};
 
 use async_compression::tokio::write::ZlibDecoder;
+use bytes::Bytes;
 use futures_util::{StreamExt, stream};
 use tokio::io::{AsyncWriteExt, BufWriter};
-use tokio::sync::mpsc;
+use tokio::sync::{Mutex, mpsc};
 
 use crate::ClientError;
 use crate::constants::MAX_ATTEMPTS;
@@ -275,7 +276,7 @@ impl Downloader {
                                 .map_err(DownloadError::DeflateError)?;
                         let sink =
                             HashingWriter::new(BufWriter::with_capacity(1024 * 1024, offset_writer));
-                        let mut decoder = ZlibDecoder::new(sink);
+                        let decoder_slot = Mutex::new(ZlibDecoder::new(sink));
 
                         let links = match secure_links_manager.get_secure_links(&download_unit.product_id).await {
                             Ok(links) => links,
@@ -307,14 +308,17 @@ impl Downloader {
                         };
 
                         let mut reported_bytes = 0;
-                        match self.client
-                            .stream_chunk(&url, async |chunk| {
+                        let decoder_ref = &decoder_slot;
+                        let stream_result = self.client
+                            .stream_chunk(&url, |chunk: Bytes| {
                                 let chunk_lenght = chunk.len();
                                 reported_bytes += chunk_lenght;
                                 tx.send(DownloadEvent::Progress(chunk_lenght)).ok();
-                                decoder.write_all(&chunk).await
+                                let decoder = decoder_ref;
+                                Box::pin(async move { decoder.lock().await.write_all(&chunk).await })
                             })
-                            .await {
+                            .await;
+                        match stream_result {
                                 Ok(_) => {},
                                 Err(ClientError::AuthError(err)) => {
                                     tx.send(DownloadEvent::ProgressRegression(reported_bytes)).ok();
@@ -357,6 +361,7 @@ impl Downloader {
                                 }
                             };
 
+                        let mut decoder = decoder_slot.into_inner();
                         if let Err(err) = decoder.shutdown().await {
                             tx.send(DownloadEvent::ProgressRegression(reported_bytes)).ok();
                             return Err(DownloadError::DeflateError(err))

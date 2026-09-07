@@ -1,8 +1,12 @@
 use std::path::{Path, PathBuf};
 
+use bytes::Bytes;
 use flate2::read::GzDecoder;
 use tar::Archive;
-use tokio::{io::AsyncWriteExt, sync::mpsc};
+use tokio::{
+    io::AsyncWriteExt,
+    sync::{Mutex, mpsc},
+};
 use tokio_util::io::SyncIoBridge;
 
 use crate::{
@@ -77,17 +81,20 @@ impl ProtonDownloader {
         let (writer, reader) = tokio::io::duplex(1024 * 1024);
 
         let download_future = async {
-            let mut writer = writer;
+            let writer_slot = Mutex::new(writer);
+            let writer_ref = &writer_slot;
             let result = self
                 .client
-                .stream_chunk(&asset.browser_download_url, async |chunk| {
+                .stream_chunk(&asset.browser_download_url, |chunk: Bytes| {
                     tx.send(ProtonDownloadEvent::Progress(chunk.len())).ok();
-                    writer.write_all(&chunk).await
+                    let writer = writer_ref;
+                    Box::pin(async move { writer.lock().await.write_all(&chunk).await })
                 })
                 .await;
             // Always shut down the write half so extraction sees a clean
             // EOF rather than hanging, whether the transfer succeeded or
             // failed partway.
+            let mut writer = writer_slot.into_inner();
             let _ = writer.shutdown().await;
             result
         };
