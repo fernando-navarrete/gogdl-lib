@@ -62,4 +62,9 @@ impl ProductDetails {
     pub fn get_product_type(&self) -> String {
         self.embedded.product_type.clone()
     }
+
+    /// The product ID as reported by GOG.
+    pub fn get_product_id(&self) -> ProductId {
+        self.embedded.product.id
+    }
 }
