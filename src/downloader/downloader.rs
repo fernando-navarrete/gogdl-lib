@@ -109,7 +109,7 @@ impl Downloader {
         let download_units = DownloadUnit::from_product_bundles(&bundles);
         let (verification_tx, mut verification_rx) = mpsc::unbounded_channel();
         let missing_units_fut =
-            self.verify_download_units(&download_units, &path_resolver, verification_tx);
+            self.verify_download_units(download_units, path_resolver.clone(), verification_tx);
         let tx_stage3 = tx.clone();
         let progress_future = async move {
             while let Some(event) = verification_rx.recv().await {
@@ -119,7 +119,6 @@ impl Downloader {
             }
         };
         let (missing_units, _) = tokio::join!(missing_units_fut, progress_future);
-        drop(download_units);
 
         if missing_units.len() == 0 {
             // All units verified, no missing chunks
@@ -234,7 +233,7 @@ impl Downloader {
         let download_units = DownloadUnit::from_product_bundles(&bundles);
 
         let missing_units = self
-            .verify_download_units(&download_units, &path_resolver, tx)
+            .verify_download_units(download_units, path_resolver.clone(), tx)
             .await;
 
         let missing_units_count = missing_units.len();
@@ -565,13 +564,13 @@ impl Downloader {
 
     async fn verify_download_units(
         &self,
-        download_units: &[DownloadUnit],
-        path_resolver: &PathResolver,
+        download_units: Vec<DownloadUnit>,
+        path_resolver: Arc<PathResolver>,
         tx: mpsc::UnboundedSender<VerificationEvent>,
     ) -> Vec<DownloadUnit> {
         let units = stream::iter(download_units)
             .map(|download_unit| {
-                let path_resolver = path_resolver;
+                let path_resolver = path_resolver.clone();
                 let tx = tx.clone();
                 async move {
                     let opt_path = match path_resolver
@@ -643,7 +642,7 @@ impl Downloader {
         let missing_units = units
             .iter()
             .filter(|&unit| unit.is_some())
-            .map(|unit| unit.unwrap().clone())
+            .map(|unit| unit.clone().unwrap().clone())
             .collect::<Vec<_>>();
         missing_units
     }
