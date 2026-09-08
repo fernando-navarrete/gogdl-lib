@@ -19,7 +19,7 @@ pub struct DownloadUnit {
 }
 
 impl DownloadUnit {
-    pub fn from_product_bundles(bundles: &[ProductBundle]) -> Vec<DownloadUnit> {
+    pub fn from_product_bundles(bundles: Vec<ProductBundle>) -> Vec<DownloadUnit> {
         let download_units: Vec<DownloadUnit> = bundles
             .iter()
             .flat_map(|bundle| {

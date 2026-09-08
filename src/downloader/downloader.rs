@@ -58,7 +58,7 @@ impl Downloader {
         // File size verification step
         let (missing_files_tx, mut missing_files_rx) = mpsc::unbounded_channel();
         let missing_files_fut =
-            self.verify_files_size(&depot_files, &path_resolver, missing_files_tx);
+            self.verify_files_size(depot_files, path_resolver.clone(), missing_files_tx);
         let tx_stage1 = tx.clone();
         let progress_future = async move {
             while let Some(event) = missing_files_rx.recv().await {
@@ -68,7 +68,6 @@ impl Downloader {
             }
         };
         let (missing_files, _) = tokio::join!(missing_files_fut, progress_future);
-        drop(depot_files);
 
         // Check if there is space available on disk
         let required_space = missing_files
@@ -87,7 +86,7 @@ impl Downloader {
         // File allocation step
         let (files_allocation_tx, mut files_allocation_rx) = mpsc::unbounded_channel();
         let files_allocation_fut =
-            self.allocate_missing_files(&missing_files, &path_resolver, files_allocation_tx);
+            self.allocate_missing_files(missing_files, path_resolver.clone(), files_allocation_tx);
         let tx_stage2 = tx.clone();
         let progress_future = async move {
             while let Some(event) = files_allocation_rx.recv().await {
@@ -97,7 +96,6 @@ impl Downloader {
             }
         };
         let (files_allocation_error, _) = tokio::join!(files_allocation_fut, progress_future);
-        drop(missing_files);
 
         // Check if all files were allocated successfully, if not, we may have run out of disk space
         if files_allocation_error.len() != 0 {
@@ -106,7 +104,7 @@ impl Downloader {
         }
         drop(files_allocation_error);
 
-        let download_units = DownloadUnit::from_product_bundles(&bundles);
+        let download_units = DownloadUnit::from_product_bundles(bundles);
         let (verification_tx, mut verification_rx) = mpsc::unbounded_channel();
         let missing_units_fut =
             self.verify_download_units(download_units, path_resolver.clone(), verification_tx);
@@ -157,7 +155,7 @@ impl Downloader {
         // File size verification step
         let (missing_files_tx, mut missing_files_rx) = mpsc::unbounded_channel();
         let missing_files_fut =
-            self.verify_files_size(&depot_files, &path_resolver, missing_files_tx);
+            self.verify_files_size(depot_files, path_resolver.clone(), missing_files_tx);
         let tx_stage1 = tx.clone();
         let progress_future = async move {
             while let Some(event) = missing_files_rx.recv().await {
@@ -185,7 +183,7 @@ impl Downloader {
         // File allocation step
         let (files_allocation_tx, mut files_allocation_rx) = mpsc::unbounded_channel();
         let files_allocation_fut =
-            self.allocate_missing_files(&missing_files, &path_resolver, files_allocation_tx);
+            self.allocate_missing_files(missing_files, path_resolver.clone(), files_allocation_tx);
         let tx_stage2 = tx.clone();
         let progress_future = async move {
             while let Some(event) = files_allocation_rx.recv().await {
@@ -195,7 +193,6 @@ impl Downloader {
             }
         };
         let (files_allocation_error, _) = tokio::join!(files_allocation_fut, progress_future);
-        drop(missing_files);
 
         // Check if all files were allocated successfully, if not, we may have run out of disk space
         if files_allocation_error.len() != 0 {
@@ -207,7 +204,7 @@ impl Downloader {
         // Download step
 
         let (files_download_tx, mut files_download_rx) = mpsc::unbounded_channel();
-        let download_units = DownloadUnit::from_product_bundles(&bundles);
+        let download_units = DownloadUnit::from_product_bundles(bundles);
         let downloader_future =
             self.download_files(download_units, &path_resolver, files_download_tx);
         let tx_stage3 = tx.clone();
@@ -230,7 +227,7 @@ impl Downloader {
     ) -> Result<(), DownloadError> {
         let path_resolver = Arc::new(PathResolver::new(PathBuf::from(path)).await?);
 
-        let download_units = DownloadUnit::from_product_bundles(&bundles);
+        let download_units = DownloadUnit::from_product_bundles(bundles);
 
         let missing_units = self
             .verify_download_units(download_units, path_resolver.clone(), tx)
@@ -417,13 +414,13 @@ impl Downloader {
 
     async fn allocate_missing_files(
         &self,
-        files: &[DepotFile],
-        path_resolver: &PathResolver,
+        files: Vec<DepotFile>,
+        path_resolver: Arc<PathResolver>,
         tx: mpsc::UnboundedSender<FileAllocationEvent>,
     ) -> Vec<DepotFile> {
         let failed_files = stream::iter(files)
             .map(|file| {
-                let path_resolver = path_resolver;
+                let path_resolver = path_resolver.clone();
                 let tx = tx.clone();
                 async move {
                     let expected_file_size = match file.chunks.as_ref() {
@@ -469,20 +466,21 @@ impl Downloader {
         let failed_files = failed_files
             .iter()
             .filter(|&unit| unit.is_some())
-            .map(|unit| unit.unwrap().clone())
+            // Unwrap is safe here because we know the unit is Some(_)
+            .map(|unit| unit.clone().unwrap().clone())
             .collect::<Vec<_>>();
         failed_files
     }
 
     async fn verify_files_size(
         &self,
-        files: &[DepotFile],
-        path_resolver: &PathResolver,
+        files: Vec<DepotFile>,
+        path_resolver: Arc<PathResolver>,
         tx: mpsc::UnboundedSender<FileSizeVerificationEvent>,
     ) -> Vec<DepotFile> {
         let missing_files = stream::iter(files)
             .map(|file| {
-                let path_resolver = path_resolver;
+                let path_resolver = path_resolver.clone();
                 let tx = tx.clone();
                 async move {
                     let expected_file_size = match file.chunks.as_ref() {
@@ -557,7 +555,8 @@ impl Downloader {
         let missing_units = missing_files
             .iter()
             .filter(|&unit| unit.is_some())
-            .map(|unit| unit.unwrap().clone())
+            // Unwrap is safe here because we know the unit is Some
+            .map(|unit| unit.clone().unwrap().clone())
             .collect::<Vec<_>>();
         missing_units
     }
