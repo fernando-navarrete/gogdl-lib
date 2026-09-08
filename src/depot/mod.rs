@@ -2,7 +2,6 @@ mod build_metadata;
 mod depot_info;
 mod depot_manager;
 mod error;
-mod languages;
 mod product_details;
 
 pub use build_metadata::Depot;
