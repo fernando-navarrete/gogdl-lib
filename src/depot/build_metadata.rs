@@ -33,15 +33,17 @@ impl BuildMetadata {
             .fetch(game_link, true, true, None)
             .await?;
 
-        build_metadata.filter_languages("en-US");
+        build_metadata.filter_languages(&["en-US", "en"]);
         Ok(build_metadata)
     }
-    pub fn filter_languages(&mut self, language: &str) {
+    pub fn filter_languages(&mut self, languages: &[&str]) {
         let filtered_depots = self
             .depots
             .iter()
             .filter(|&depot| {
-                depot.languages.contains(&language.to_string())
+                languages
+                    .iter()
+                    .any(|&lang| depot.languages.iter().any(|l| l == lang))
                     || depot.languages.contains(&"*".to_string())
             })
             .map(|depot| depot.clone())
