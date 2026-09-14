@@ -425,6 +425,37 @@ impl GogDl {
         self.client.remove_token_observer().await;
     }
 
+    /// Obtains a game-scoped auth grant for GOG's cloud saves service.
+    ///
+    /// Cloud saves are authenticated per game: the user's current refresh
+    /// token is exchanged at `auth.gog.com/token` using the `client_id` and
+    /// `client_secret` from the build metadata of `build_name`, yielding
+    /// tokens tied to that game's client rather than to this crate's own
+    /// session. The session's own [`crate::Auth`] is left untouched, and no
+    /// [`TokenObserver`] is notified.
+    ///
+    /// `build_name` is matched exactly against
+    /// [`GameBuild::version_name`](crate::GameBuild::version_name) among the
+    /// builds returned by [`get_game_builds`](Self::get_game_builds) (cached
+    /// per `game_id`). The build metadata and the token exchange are fetched
+    /// fresh on every call — nothing here is cached, so persist the returned
+    /// [`SavesAuth`] yourself if you need it again before it expires.
+    ///
+    /// **Requires a still-valid session access token**, even though only the
+    /// refresh token is sent: unlike other authenticated calls, this does not
+    /// refresh an expired session first, and the exchange itself is not
+    /// retried.
+    ///
+    /// # Errors
+    /// - [`SavesError::BuildNotFound`] if no build of `game_id` has a
+    ///   `version_name` equal to `build_name`.
+    /// - [`SavesError::GamesError`] if listing the game's builds fails.
+    /// - [`SavesError::DepotError`] if fetching the build metadata fails.
+    /// - [`SavesError::ClientError`] wrapping
+    ///   [`crate::AuthError::NotAuthenticated`] if no session is logged in,
+    ///   [`crate::AuthError::TokenExpired`] if the session's access token has
+    ///   expired, or [`crate::ClientError::HttpError`] if GOG rejects the
+    ///   token exchange (e.g. a revoked refresh token).
     pub async fn get_saves_auth(
         &self,
         game_id: i32,

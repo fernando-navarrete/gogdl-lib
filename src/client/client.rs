@@ -244,6 +244,13 @@ impl HttpClient {
         let result: T = serde_json::from_str(&response_text)?;
         Ok(result)
     }
+    /// Returns the current session's refresh token, without refreshing.
+    ///
+    /// # Errors
+    /// [`ClientError::AuthError`] wrapping [`AuthError::NotAuthenticated`] if
+    /// no session is logged in, or [`AuthError::TokenExpired`] if the access
+    /// token has expired — even though the refresh token itself is likely
+    /// still usable.
     pub async fn get_refresh_token(&self) -> Result<String, ClientError> {
         let auth = self.auth_manager.get_auth().await?;
         Ok(auth.refresh_token)

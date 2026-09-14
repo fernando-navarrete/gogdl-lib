@@ -9,23 +9,34 @@ use crate::{
     saves::{error::SavesError, saves_auth::SavesAuth},
 };
 
+/// Crate-internal manager backing
+/// [`GogDl::get_saves_auth`](crate::GogDl::get_saves_auth). Not exported —
+/// `GogDl` is the only entry point, mirroring `GamesManager` and
+/// `DepotManager`.
 pub struct SavesManager {
     pub inner: Arc<Mutex<SavesManagerInner>>,
     pub client: HttpClient,
 }
 
+/// The managers `SavesManager` resolves builds and build metadata through.
+/// These are clones sharing state (and caches) with the ones held by
+/// `GogDl` itself.
 pub struct SavesManagerInner {
     pub depot: DepotManager,
     pub games: GamesManager,
 }
 
 impl SavesManager {
+    /// Builds a `SavesManager` around already-constructed shared managers.
     pub fn new(client: HttpClient, depot: DepotManager, games: GamesManager) -> Self {
         Self {
             inner: Arc::new(Mutex::new(SavesManagerInner { depot, games })),
             client,
         }
     }
+    /// Obtains a game-scoped cloud saves auth grant. See
+    /// [`GogDl::get_saves_auth`](crate::GogDl::get_saves_auth) for the
+    /// public-facing contract.
     pub async fn get_saves_auth(
         &self,
         game_id: i32,

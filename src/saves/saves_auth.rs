@@ -2,6 +2,14 @@ use serde::Deserialize;
 
 use crate::saves::{error::SavesError, saves_manager::SavesManager};
 
+/// A game-scoped GOG auth grant for the cloud saves service, returned by
+/// [`GogDl::get_saves_auth`](crate::GogDl::get_saves_auth).
+///
+/// Same shape as [`Auth`](crate::Auth), but issued to a specific game's
+/// client rather than this crate's session, and **not managed by the
+/// crate**: it is never refreshed, stored, or reported to a
+/// [`TokenObserver`](crate::TokenObserver). Once `access_token` expires,
+/// call [`GogDl::get_saves_auth`](crate::GogDl::get_saves_auth) again.
 #[derive(Deserialize, Clone)]
 pub struct SavesAuth {
     /// Short-lived bearer token sent on every authenticated request.
@@ -19,13 +27,20 @@ pub struct SavesAuth {
     pub scope: Option<String>,
     /// The authenticated account's GOG user ID.
     pub user_id: String,
-    /// Absolute Unix timestamp the access token expires at, computed at
-    /// issue/refresh time as `expires_in` seconds from then. `None` only if
-    /// this value was never set — see [`is_valid`](Self::is_valid).
+    /// Not populated. GOG's token response has no such field and nothing
+    /// computes it after deserialization — always `None`. Derive the expiry
+    /// from `expires_in` and the time the call returned instead.
     pub valid_until: Option<i64>,
 }
 
 impl SavesAuth {
+    /// Not reachable from outside the crate — `SavesManager` is not
+    /// exported. Call
+    /// [`GogDl::get_saves_auth`](crate::GogDl::get_saves_auth) instead,
+    /// which delegates here internally and documents the full contract.
+    ///
+    /// Holds the manager's `inner` lock only while resolving the build list
+    /// and the build metadata, not across the token exchange.
     pub async fn get_saves_auth(
         saves_manager: &SavesManager,
         game_id: i32,
