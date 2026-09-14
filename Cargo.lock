@@ -440,7 +440,7 @@ dependencies = [
 
 [[package]]
 name = "gogdl-lib"
-version = "1.0.0"
+version = "1.0.2"
 dependencies = [
  "async-compression",
  "bytes",
