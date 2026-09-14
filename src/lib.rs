@@ -51,6 +51,7 @@ mod fs;
 mod games;
 mod gogdl;
 mod proton;
+mod saves;
 mod secure_links;
 
 pub use client::Auth;
@@ -87,3 +88,6 @@ pub use downloader::DownloadError;
 pub use games::GamesError;
 pub use proton::ProtonError;
 pub use secure_links::SecureLinksError;
+
+pub use saves::SavesAuth;
+pub use saves::SavesError;

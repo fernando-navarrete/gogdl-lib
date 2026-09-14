@@ -12,6 +12,7 @@ use crate::games::{
 };
 use crate::gogdl::error::GogDlError;
 use crate::proton::{ProtonDownloadEvent, ProtonGeRelease, ProtonGeReleasesPage, ProtonManager};
+use crate::saves::{SavesAuth, SavesError, SavesManager};
 use crate::secure_links::SecureLinksManager;
 
 /// The single entry point to this crate. Every operation — auth, catalog
@@ -25,6 +26,7 @@ pub struct GogDl {
     depot: DepotManager,
     downloader: DownloadManager,
     proton: ProtonManager,
+    saves: SavesManager,
     client: HttpClient,
 }
 
@@ -46,12 +48,19 @@ impl GogDl {
             games_manager.clone(),
             http_client.clone(),
         );
+
         let proton_manager = ProtonManager::new(http_client.clone());
+        let saves_manager = SavesManager::new(
+            http_client.clone(),
+            depot_manager.clone(),
+            games_manager.clone(),
+        );
         Self {
             games: games_manager,
             depot: depot_manager,
             downloader: download_manager,
             proton: proton_manager,
+            saves: saves_manager,
             client: http_client,
         }
     }
@@ -414,5 +423,13 @@ impl GogDl {
     /// [`set_token_observer`](Self::set_token_observer), if any.
     pub async fn remove_token_observer(&self) {
         self.client.remove_token_observer().await;
+    }
+
+    pub async fn get_saves_auth(
+        &self,
+        game_id: i32,
+        build_name: &str,
+    ) -> Result<SavesAuth, SavesError> {
+        self.saves.get_saves_auth(game_id, build_name).await
     }
 }

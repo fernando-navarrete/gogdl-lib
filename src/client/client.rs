@@ -244,4 +244,8 @@ impl HttpClient {
         let result: T = serde_json::from_str(&response_text)?;
         Ok(result)
     }
+    pub async fn get_refresh_token(&self) -> Result<String, ClientError> {
+        let auth = self.auth_manager.get_auth().await?;
+        Ok(auth.refresh_token)
+    }
 }
