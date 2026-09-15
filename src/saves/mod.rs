@@ -6,6 +6,5 @@ mod saves_manager;
 
 pub use error::SavesError;
 pub use game_save_ids::GameSaveIds;
-pub use save_files::SaveFiles;
-pub use saves_auth::SavesAuth;
+pub use save_files::SaveFile;
 pub use saves_manager::SavesManager;

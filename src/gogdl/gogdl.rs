@@ -11,9 +11,9 @@ use crate::games::{
 };
 use crate::gogdl::error::GogDlError;
 use crate::proton::{ProtonDownloadEvent, ProtonGeRelease, ProtonGeReleasesPage, ProtonManager};
-use crate::saves::{SavesAuth, SavesError, SavesManager};
+use crate::saves::{SavesError, SavesManager};
 use crate::secure_links::SecureLinksManager;
-use crate::{DownloadStageEvent, SaveFiles};
+use crate::{DownloadStageEvent, SaveFile};
 
 /// The single entry point to this crate. Every operation — auth, catalog
 /// browsing, downloading — is a method on `GogDl`; the managers it holds
@@ -424,48 +424,6 @@ impl GogDl {
     pub async fn remove_token_observer(&self) {
         self.client.remove_token_observer().await;
     }
-
-    /// Obtains a game-scoped auth grant for GOG's cloud saves service.
-    ///
-    /// Cloud saves are authenticated per game: the user's current refresh
-    /// token is exchanged at `auth.gog.com/token` using the `client_id` and
-    /// `client_secret` from the build metadata of `build_name`, yielding
-    /// tokens tied to that game's client rather than to this crate's own
-    /// session. The session's own [`crate::Auth`] is left untouched, and no
-    /// [`TokenObserver`] is notified.
-    ///
-    /// `build_name` is matched exactly against
-    /// [`GameBuild::version_name`](crate::GameBuild::version_name) among the
-    /// builds returned by [`get_game_builds`](Self::get_game_builds) (cached
-    /// per `game_id`). The game's client credentials are cached per
-    /// `(game_id, build_name)` for the lifetime of this `GogDl`, and the
-    /// resulting [`SavesAuth`] is cached too and returned again while
-    /// [`SavesAuth::is_valid`] holds; once it expires, the next call performs
-    /// a fresh exchange. Neither cache is persisted.
-    ///
-    /// **Requires a still-valid session access token**, even though only the
-    /// refresh token is sent: unlike other authenticated calls, this does not
-    /// refresh an expired session first, and the exchange itself is not
-    /// retried.
-    ///
-    /// # Errors
-    /// - [`SavesError::BuildNotFound`] if no build of `game_id` has a
-    ///   `version_name` equal to `build_name`.
-    /// - [`SavesError::GamesError`] if listing the game's builds fails.
-    /// - [`SavesError::DepotError`] if fetching the build metadata fails.
-    /// - [`SavesError::ClientError`] wrapping
-    ///   [`crate::AuthError::NotAuthenticated`] if no session is logged in,
-    ///   [`crate::AuthError::TokenExpired`] if the session's access token has
-    ///   expired, or [`crate::ClientError::HttpError`] if GOG rejects the
-    ///   token exchange (e.g. a revoked refresh token).
-    pub async fn get_saves_auth(
-        &self,
-        game_id: i32,
-        build_name: &str,
-    ) -> Result<SavesAuth, SavesError> {
-        self.saves.get_saves_auth(game_id, build_name).await
-    }
-
     /// Fetches the current user's cloud save file listing for a game from
     /// `cloudstorage.gog.com`.
     ///
@@ -476,7 +434,7 @@ impl GogDl {
     /// [`GameBuild::version_name`](crate::GameBuild::version_name). The
     /// listing itself is never cached.
     ///
-    /// The response is returned unparsed as [`SaveFiles`].
+    /// The response is returned unparsed as [`SaveFile`].
     ///
     /// # Errors
     /// Everything [`get_saves_auth`](Self::get_saves_auth) can return, plus
@@ -489,7 +447,7 @@ impl GogDl {
         &self,
         game_id: i32,
         build_name: &str,
-    ) -> Result<SaveFiles, SavesError> {
+    ) -> Result<Vec<SaveFile>, SavesError> {
         self.saves.get_save_files(game_id, build_name).await
     }
 }

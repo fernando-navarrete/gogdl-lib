@@ -1,3 +1,6 @@
+use chrono::{DateTime, Utc};
+use serde::Deserialize;
+
 use crate::{SavesError, saves::SavesManager};
 
 /// The raw listing of a game's cloud save files for the current user,
@@ -5,10 +8,16 @@ use crate::{SavesError, saves::SavesManager};
 ///
 /// Wraps the response body from `cloudstorage.gog.com` unparsed. The inner
 /// value is private and there are no accessors yet.
-#[derive(Clone)]
-pub struct SaveFiles(String);
+#[derive(Clone, Deserialize)]
+pub struct SaveFile {
+    pub bytes: u64,
+    pub last_modified: DateTime<Utc>,
+    pub hash: String,
+    pub name: String,
+    pub content_type: String,
+}
 
-impl SaveFiles {
+impl SaveFile {
     /// Not reachable from outside the crate — `SavesManager` is not
     /// exported. Call
     /// [`GogDl::get_save_files`](crate::GogDl::get_save_files) instead,
@@ -22,7 +31,7 @@ impl SaveFiles {
         saves_manager: &SavesManager,
         game_id: i32,
         build_name: &str,
-    ) -> Result<SaveFiles, SavesError> {
+    ) -> Result<Vec<SaveFile>, SavesError> {
         let auth = saves_manager.get_saves_auth(game_id, build_name).await?;
         let game_ids = saves_manager.get_game_save_ids(game_id, build_name).await?;
 
@@ -31,9 +40,9 @@ impl SaveFiles {
             auth.user_id, game_ids.client_id
         );
 
-        let response: String = saves_manager
+        let response: Vec<SaveFile> = saves_manager
             .client
-            .fetch(
+            .fetch_no_retry(
                 &url,
                 false,
                 false,
@@ -44,7 +53,6 @@ impl SaveFiles {
             )
             .await?;
 
-        println!("{response:#}");
-        Ok(SaveFiles(response))
+        Ok(response)
     }
 }

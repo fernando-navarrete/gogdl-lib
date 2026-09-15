@@ -6,7 +6,7 @@ use crate::{
     client::HttpClient,
     depot::DepotManager,
     games::GamesManager,
-    saves::{GameSaveIds, SaveFiles, error::SavesError, saves_auth::SavesAuth},
+    saves::{GameSaveIds, SaveFile, error::SavesError, saves_auth::SavesAuth},
 };
 
 /// Crate-internal manager backing
@@ -75,7 +75,7 @@ impl SavesManager {
         &self,
         game_id: i32,
         build_name: &str,
-    ) -> Result<SaveFiles, SavesError> {
-        SaveFiles::get_save_files(self, game_id, build_name).await
+    ) -> Result<Vec<SaveFile>, SavesError> {
+        SaveFile::get_save_files(self, game_id, build_name).await
     }
 }

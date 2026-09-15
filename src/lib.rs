@@ -89,5 +89,5 @@ pub use games::GamesError;
 pub use proton::ProtonError;
 pub use secure_links::SecureLinksError;
 
-pub use saves::SaveFiles;
+pub use saves::SaveFile;
 pub use saves::SavesError;
