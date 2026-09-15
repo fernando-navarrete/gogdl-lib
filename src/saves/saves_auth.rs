@@ -46,6 +46,14 @@ impl SavesAuth {
         game_id: i32,
         build_name: &str,
     ) -> Result<Self, SavesError> {
+        {
+            let inner = saves_manager.inner.lock().await;
+            if let Some(auth) = inner.cache.get(&(game_id, build_name.to_string())) {
+                if auth.is_valid() {
+                    return Ok(auth.clone());
+                }
+            }
+        }
         let game_builds = {
             let inner = saves_manager.inner.lock().await;
             inner.games.get_game_builds(game_id).await?
@@ -67,11 +75,26 @@ impl SavesAuth {
         let url = format!(
             "https://auth.gog.com/token?client_id={client_id}&client_secret={client_secret}&grant_type=refresh_token&refresh_token={refresh_token}"
         );
-        let saves_auth: SavesAuth = saves_manager
+        let mut saves_auth: SavesAuth = saves_manager
             .client
             .fetch_no_retry(&url, false, false, None)
             .await?;
+        saves_auth.valid_until =
+            Some(saves_auth.expires_in as i64 + chrono::Utc::now().timestamp());
 
+        {
+            let mut inner = saves_manager.inner.lock().await;
+            inner
+                .cache
+                .insert((game_id, build_name.to_string()), saves_auth.clone());
+        }
         Ok(saves_auth)
+    }
+    /// Whether the access token is still usable, with a 60-second margin
+    /// subtracted from `valid_until` to absorb clock skew and in-flight
+    /// requests. `false` if `valid_until` was never set.
+    pub fn is_valid(&self) -> bool {
+        self.valid_until
+            .map_or(false, |t| t > chrono::Utc::now().timestamp() - 60)
     }
 }

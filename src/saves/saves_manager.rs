@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use tokio::sync::Mutex;
 
@@ -24,13 +24,18 @@ pub struct SavesManager {
 pub struct SavesManagerInner {
     pub depot: DepotManager,
     pub games: GamesManager,
+    pub cache: HashMap<(i32, String), SavesAuth>,
 }
 
 impl SavesManager {
     /// Builds a `SavesManager` around already-constructed shared managers.
     pub fn new(client: HttpClient, depot: DepotManager, games: GamesManager) -> Self {
         Self {
-            inner: Arc::new(Mutex::new(SavesManagerInner { depot, games })),
+            inner: Arc::new(Mutex::new(SavesManagerInner {
+                depot,
+                games,
+                cache: HashMap::new(),
+            })),
             client,
         }
     }
