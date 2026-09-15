@@ -6,7 +6,7 @@ use crate::{
     client::HttpClient,
     depot::DepotManager,
     games::GamesManager,
-    saves::{error::SavesError, saves_auth::SavesAuth},
+    saves::{GameSaveIds, SaveFiles, error::SavesError, saves_auth::SavesAuth},
 };
 
 /// Crate-internal manager backing
@@ -24,7 +24,8 @@ pub struct SavesManager {
 pub struct SavesManagerInner {
     pub depot: DepotManager,
     pub games: GamesManager,
-    pub cache: HashMap<(i32, String), SavesAuth>,
+    pub auth_cache: HashMap<(i32, String), SavesAuth>,
+    pub ids_cache: HashMap<(i32, String), GameSaveIds>,
 }
 
 impl SavesManager {
@@ -34,7 +35,8 @@ impl SavesManager {
             inner: Arc::new(Mutex::new(SavesManagerInner {
                 depot,
                 games,
-                cache: HashMap::new(),
+                auth_cache: HashMap::new(),
+                ids_cache: HashMap::new(),
             })),
             client,
         }
@@ -48,5 +50,20 @@ impl SavesManager {
         build_name: &str,
     ) -> Result<SavesAuth, SavesError> {
         SavesAuth::get_saves_auth(self, game_id, build_name).await
+    }
+    pub async fn get_game_save_ids(
+        &self,
+        game_id: i32,
+        build_name: &str,
+    ) -> Result<GameSaveIds, SavesError> {
+        GameSaveIds::get_game_save_ids(self, game_id, build_name).await
+    }
+
+    pub async fn get_save_files(
+        &self,
+        game_id: i32,
+        build_name: &str,
+    ) -> Result<SaveFiles, SavesError> {
+        SaveFiles::get_save_files(self, game_id, build_name).await
     }
 }

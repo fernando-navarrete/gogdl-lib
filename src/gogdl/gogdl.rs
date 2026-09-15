@@ -3,7 +3,6 @@ use std::sync::Arc;
 
 use tokio::sync::mpsc;
 
-use crate::DownloadStageEvent;
 use crate::client::{HttpClient, TokenObserver};
 use crate::depot::{DepotManager, ProductDetails};
 use crate::downloader::{DownloadManager, DownloadableProduct, ProductBundle, VerificationEvent};
@@ -14,6 +13,7 @@ use crate::gogdl::error::GogDlError;
 use crate::proton::{ProtonDownloadEvent, ProtonGeRelease, ProtonGeReleasesPage, ProtonManager};
 use crate::saves::{SavesAuth, SavesError, SavesManager};
 use crate::secure_links::SecureLinksManager;
+use crate::{DownloadStageEvent, SaveFiles};
 
 /// The single entry point to this crate. Every operation — auth, catalog
 /// browsing, downloading — is a method on `GogDl`; the managers it holds
@@ -462,5 +462,12 @@ impl GogDl {
         build_name: &str,
     ) -> Result<SavesAuth, SavesError> {
         self.saves.get_saves_auth(game_id, build_name).await
+    }
+    pub async fn get_save_files(
+        &self,
+        game_id: i32,
+        build_name: &str,
+    ) -> Result<SaveFiles, SavesError> {
+        self.saves.get_save_files(game_id, build_name).await
     }
 }

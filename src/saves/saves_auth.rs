@@ -48,29 +48,16 @@ impl SavesAuth {
     ) -> Result<Self, SavesError> {
         {
             let inner = saves_manager.inner.lock().await;
-            if let Some(auth) = inner.cache.get(&(game_id, build_name.to_string())) {
+            if let Some(auth) = inner.auth_cache.get(&(game_id, build_name.to_string())) {
                 if auth.is_valid() {
                     return Ok(auth.clone());
                 }
             }
         }
-        let game_builds = {
-            let inner = saves_manager.inner.lock().await;
-            inner.games.get_game_builds(game_id).await?
-        };
-        let build = game_builds
-            .items
-            .iter()
-            .find(|b| b.version_name == build_name)
-            .ok_or(SavesError::BuildNotFound)?;
+        let game_ids = saves_manager.get_game_save_ids(game_id, build_name).await?;
 
-        let build_metadata = {
-            let inner = saves_manager.inner.lock().await;
-            inner.depot.get_build_metadata(&build.link).await?
-        };
-        let client_id = build_metadata.client_id;
-        let client_secret = build_metadata.client_secret;
-
+        let client_id = game_ids.client_id;
+        let client_secret = game_ids.client_secret;
         let refresh_token = saves_manager.client.get_refresh_token().await?;
         let url = format!(
             "https://auth.gog.com/token?client_id={client_id}&client_secret={client_secret}&grant_type=refresh_token&refresh_token={refresh_token}"
@@ -85,7 +72,7 @@ impl SavesAuth {
         {
             let mut inner = saves_manager.inner.lock().await;
             inner
-                .cache
+                .auth_cache
                 .insert((game_id, build_name.to_string()), saves_auth.clone());
         }
         Ok(saves_auth)
