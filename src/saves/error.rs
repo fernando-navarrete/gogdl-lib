@@ -2,18 +2,18 @@ use thiserror::Error;
 
 use crate::{ClientError, DepotError, GamesError};
 
-/// Errors from the cloud saves operations,
-/// [`GogDl::get_saves_auth`](crate::GogDl::get_saves_auth) and
+/// Errors from the cloud saves operation,
 /// [`GogDl::get_save_files`](crate::GogDl::get_save_files).
 #[derive(Debug, Error)]
 pub enum SavesError {
-    /// Reading the session's refresh token or the token exchange with
-    /// `auth.gog.com` failed — see [`ClientError`]. Notably wraps
+    /// Reading the session's refresh token, the token exchange with
+    /// `auth.gog.com`, or the listing request to `cloudstorage.gog.com`
+    /// failed — see [`ClientError`]. Notably wraps
     /// [`AuthError::NotAuthenticated`](crate::AuthError::NotAuthenticated) or
     /// [`AuthError::TokenExpired`](crate::AuthError::TokenExpired) if there is
     /// no usable session, or an
-    /// [`HttpError`](crate::ClientError::HttpError) if GOG rejects the
-    /// exchange.
+    /// [`HttpError`](crate::ClientError::HttpError) if GOG rejects either
+    /// request. Neither request is retried.
     #[error("Client error: {0}")]
     ClientError(#[from] ClientError),
 

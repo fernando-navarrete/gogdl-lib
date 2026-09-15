@@ -427,22 +427,47 @@ impl GogDl {
     /// Fetches the current user's cloud save file listing for a game from
     /// `cloudstorage.gog.com`.
     ///
-    /// Authenticates exactly like [`get_saves_auth`](Self::get_saves_auth)
-    /// (reusing its cached grant while still valid) and addresses the
-    /// game's storage by the `client_id` from the build metadata of
-    /// `build_name`, matched exactly against
-    /// [`GameBuild::version_name`](crate::GameBuild::version_name). The
+    /// Cloud saves are authenticated per game: the user's current refresh
+    /// token is exchanged at `auth.gog.com/token` using the `client_id` and
+    /// `client_secret` from the build metadata of `build_name`, yielding a
+    /// game-scoped access token that is used as the bearer token for the
+    /// listing. The session's own [`crate::Auth`] is left untouched, and no
+    /// [`TokenObserver`] is notified. The game's storage is addressed by that
+    /// same `client_id`.
+    ///
+    /// `build_name` is matched exactly against
+    /// [`GameBuild::version_name`](crate::GameBuild::version_name) among the
+    /// builds returned by [`get_game_builds`](Self::get_game_builds) (cached
+    /// per `game_id`). The game's client credentials and the game-scoped
+    /// grant are cached in memory per `(game_id, build_name)` for the
+    /// lifetime of this `GogDl`; the grant is reused until it is about to
+    /// expire and then exchanged again. Neither cache is persisted, and the
     /// listing itself is never cached.
     ///
-    /// The response is returned unparsed as [`SaveFile`].
+    /// Returns one [`SaveFile`] per stored file, in the order GOG lists them;
+    /// an empty `Vec` if the game has no cloud saves.
+    ///
+    /// **Requires a still-valid session access token**, even though only the
+    /// refresh token is sent: unlike other authenticated calls, this does not
+    /// refresh an expired session first. Neither the token exchange nor the
+    /// storage request is retried, including on network errors.
     ///
     /// # Errors
-    /// Everything [`get_saves_auth`](Self::get_saves_auth) can return, plus
-    /// [`SavesError::ClientError`] if the storage request fails: an
-    /// [`HttpError`](crate::ClientError::HttpError) for a non-success status
-    /// other than 401, [`MaxRetriesReached`](crate::ClientError::MaxRetriesReached)
-    /// if it keeps answering 401 (the game-scoped token is not refreshed
-    /// between attempts), or a network/decode error.
+    /// - [`SavesError::BuildNotFound`] if no build of `game_id` has a
+    ///   `version_name` equal to `build_name`.
+    /// - [`SavesError::GamesError`] if listing the game's builds fails.
+    /// - [`SavesError::DepotError`] if fetching the build metadata fails.
+    /// - [`SavesError::ClientError`] wrapping
+    ///   [`crate::AuthError::NotAuthenticated`] if no session is logged in,
+    ///   or [`crate::AuthError::TokenExpired`] if the session's access token
+    ///   has expired.
+    /// - [`SavesError::ClientError`] wrapping
+    ///   [`crate::ClientError::HttpError`] if GOG rejects the token exchange
+    ///   (e.g. a revoked refresh token) or the storage request returns any
+    ///   non-success status, including 401;
+    ///   [`crate::ClientError::NetworkError`] if either request fails in
+    ///   transit; or [`crate::ClientError::DeserializationError`] if a
+    ///   response doesn't match the expected shape.
     pub async fn get_save_files(
         &self,
         game_id: i32,

@@ -5,7 +5,6 @@ use crate::{SavesError, saves::SavesManager};
 /// crate's session client.
 ///
 /// Crate-internal: resolved and cached by `SavesManager` on behalf of
-/// [`GogDl::get_saves_auth`](crate::GogDl::get_saves_auth) and
 /// [`GogDl::get_save_files`](crate::GogDl::get_save_files).
 #[derive(Clone)]
 pub struct GameSaveIds {
@@ -13,7 +12,7 @@ pub struct GameSaveIds {
     /// under `cloudstorage.gog.com`.
     pub client_id: String,
     /// The game's OAuth client secret, used to exchange the session's
-    /// refresh token for a game-scoped [`SavesAuth`](super::SavesAuth).
+    /// refresh token for a game-scoped `SavesAuth`.
     pub client_secret: String,
 }
 

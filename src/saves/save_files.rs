@@ -3,17 +3,25 @@ use serde::Deserialize;
 
 use crate::{SavesError, saves::SavesManager};
 
-/// The raw listing of a game's cloud save files for the current user,
-/// returned by [`GogDl::get_save_files`](crate::GogDl::get_save_files).
+/// One entry in a game's cloud save listing for the current user, as
+/// returned (in a `Vec`) by
+/// [`GogDl::get_save_files`](crate::GogDl::get_save_files).
 ///
-/// Wraps the response body from `cloudstorage.gog.com` unparsed. The inner
-/// value is private and there are no accessors yet.
+/// Deserialized directly from the JSON array served by
+/// `cloudstorage.gog.com`; field names match the response keys. Describes
+/// the stored object only — the file contents are not downloaded.
 #[derive(Clone, Deserialize)]
 pub struct SaveFile {
+    /// Size of the stored file in bytes.
     pub bytes: u64,
+    /// When the file was last uploaded to cloud storage, in UTC.
     pub last_modified: DateTime<Utc>,
+    /// Content hash of the stored file, as reported by GOG, for comparing
+    /// against a local copy.
     pub hash: String,
+    /// The file's path within the game's cloud storage area, `/`-separated.
     pub name: String,
+    /// MIME type the file was stored with.
     pub content_type: String,
 }
 
@@ -26,7 +34,8 @@ impl SaveFile {
     /// Obtains (or reuses a cached) `SavesAuth` and the game's
     /// `GameSaveIds`, then fetches
     /// `cloudstorage.gog.com/v1/{user_id}/{client_id}` with the game-scoped
-    /// access token as a bearer token.
+    /// access token as a bearer token, deserializing the JSON array into
+    /// [`SaveFile`]s. The request is made once, without retries.
     pub async fn get_save_files(
         saves_manager: &SavesManager,
         game_id: i32,

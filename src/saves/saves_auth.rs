@@ -2,16 +2,16 @@ use serde::Deserialize;
 
 use crate::saves::{error::SavesError, saves_manager::SavesManager};
 
-/// A game-scoped GOG auth grant for the cloud saves service, returned by
-/// [`GogDl::get_saves_auth`](crate::GogDl::get_saves_auth).
+/// A game-scoped GOG auth grant for the cloud saves service.
+///
+/// Crate-internal: obtained through `SavesManager::get_saves_auth` on
+/// behalf of [`GogDl::get_save_files`](crate::GogDl::get_save_files).
 ///
 /// Same shape as [`Auth`](crate::Auth), but issued to a specific game's
 /// client rather than this crate's session. It is cached in memory and
 /// reused while [`is_valid`](Self::is_valid) holds, but never refreshed,
 /// persisted, or reported to a [`TokenObserver`](crate::TokenObserver).
-/// Once `access_token` expires, call
-/// [`GogDl::get_saves_auth`](crate::GogDl::get_saves_auth) again for a new
-/// one.
+/// Once `access_token` expires, the next call performs a fresh exchange.
 #[derive(Deserialize, Clone)]
 pub struct SavesAuth {
     /// Short-lived bearer token sent on every authenticated request.
@@ -37,9 +37,9 @@ pub struct SavesAuth {
 
 impl SavesAuth {
     /// Not reachable from outside the crate — `SavesManager` is not
-    /// exported. Call
-    /// [`GogDl::get_saves_auth`](crate::GogDl::get_saves_auth) instead,
-    /// which delegates here internally and documents the full contract.
+    /// exported. Called through `SavesManager::get_saves_auth`; the
+    /// public-facing contract is documented on
+    /// [`GogDl::get_save_files`](crate::GogDl::get_save_files).
     ///
     /// Returns the cached grant for `(game_id, build_name)` if it is still
     /// [valid](Self::is_valid); otherwise resolves the game's credentials via
