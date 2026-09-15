@@ -1,12 +1,42 @@
 use crate::{SavesError, saves::SavesManager};
 
+/// A game's own OAuth client credentials, taken from the build metadata of
+/// one of its builds. Cloud saves are scoped to these rather than to this
+/// crate's session client.
+///
+/// Crate-internal: resolved and cached by `SavesManager` on behalf of
+/// [`GogDl::get_saves_auth`](crate::GogDl::get_saves_auth) and
+/// [`GogDl::get_save_files`](crate::GogDl::get_save_files).
 #[derive(Clone)]
 pub struct GameSaveIds {
+    /// The game's OAuth client ID. Also identifies the game's storage area
+    /// under `cloudstorage.gog.com`.
     pub client_id: String,
+    /// The game's OAuth client secret, used to exchange the session's
+    /// refresh token for a game-scoped [`SavesAuth`](super::SavesAuth).
     pub client_secret: String,
 }
 
 impl GameSaveIds {
+    /// Not reachable from outside the crate — `SavesManager` is not
+    /// exported. Called through `SavesManager::get_game_save_ids`.
+    ///
+    /// Returns the credentials for `(game_id, build_name)` from the
+    /// manager's `ids_cache` if present; otherwise finds the build whose
+    /// [`version_name`](crate::GameBuild::version_name) equals `build_name`,
+    /// reads `client_id`/`client_secret` from its build metadata, and caches
+    /// them. Cache entries never expire.
+    ///
+    /// Holds the manager's `inner` lock for the cache lookup, while listing
+    /// builds, while fetching build metadata, and for the cache insert — but
+    /// releases it in between, so concurrent calls for an uncached key may
+    /// each fetch the metadata.
+    ///
+    /// # Errors
+    /// - [`SavesError::BuildNotFound`] if no build of `game_id` has a
+    ///   matching `version_name`.
+    /// - [`SavesError::GamesError`] if listing the game's builds fails.
+    /// - [`SavesError::DepotError`] if fetching the build metadata fails.
     pub async fn get_game_save_ids(
         saves_manager: &SavesManager,
         game_id: i32,

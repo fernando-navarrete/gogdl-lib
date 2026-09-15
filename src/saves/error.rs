@@ -2,8 +2,9 @@ use thiserror::Error;
 
 use crate::{ClientError, DepotError, GamesError};
 
-/// Errors from obtaining a cloud saves auth grant via
-/// [`GogDl::get_saves_auth`](crate::GogDl::get_saves_auth).
+/// Errors from the cloud saves operations,
+/// [`GogDl::get_saves_auth`](crate::GogDl::get_saves_auth) and
+/// [`GogDl::get_save_files`](crate::GogDl::get_save_files).
 #[derive(Debug, Error)]
 pub enum SavesError {
     /// Reading the session's refresh token or the token exchange with

@@ -6,10 +6,12 @@ use crate::saves::{error::SavesError, saves_manager::SavesManager};
 /// [`GogDl::get_saves_auth`](crate::GogDl::get_saves_auth).
 ///
 /// Same shape as [`Auth`](crate::Auth), but issued to a specific game's
-/// client rather than this crate's session, and **not managed by the
-/// crate**: it is never refreshed, stored, or reported to a
-/// [`TokenObserver`](crate::TokenObserver). Once `access_token` expires,
-/// call [`GogDl::get_saves_auth`](crate::GogDl::get_saves_auth) again.
+/// client rather than this crate's session. It is cached in memory and
+/// reused while [`is_valid`](Self::is_valid) holds, but never refreshed,
+/// persisted, or reported to a [`TokenObserver`](crate::TokenObserver).
+/// Once `access_token` expires, call
+/// [`GogDl::get_saves_auth`](crate::GogDl::get_saves_auth) again for a new
+/// one.
 #[derive(Deserialize, Clone)]
 pub struct SavesAuth {
     /// Short-lived bearer token sent on every authenticated request.
@@ -27,9 +29,9 @@ pub struct SavesAuth {
     pub scope: Option<String>,
     /// The authenticated account's GOG user ID.
     pub user_id: String,
-    /// Not populated. GOG's token response has no such field and nothing
-    /// computes it after deserialization — always `None`. Derive the expiry
-    /// from `expires_in` and the time the call returned instead.
+    /// Unix timestamp (seconds) at which `access_token` expires, computed
+    /// from `expires_in` when the grant is issued. GOG's response has no
+    /// such field, so it is `None` only for a value deserialized elsewhere.
     pub valid_until: Option<i64>,
 }
 
@@ -39,8 +41,11 @@ impl SavesAuth {
     /// [`GogDl::get_saves_auth`](crate::GogDl::get_saves_auth) instead,
     /// which delegates here internally and documents the full contract.
     ///
-    /// Holds the manager's `inner` lock only while resolving the build list
-    /// and the build metadata, not across the token exchange.
+    /// Returns the cached grant for `(game_id, build_name)` if it is still
+    /// [valid](Self::is_valid); otherwise resolves the game's credentials via
+    /// `SavesManager::get_game_save_ids`, performs the exchange, and caches
+    /// the result. Holds the manager's `inner` lock only for the cache lookup
+    /// and insert, not across the token exchange.
     pub async fn get_saves_auth(
         saves_manager: &SavesManager,
         game_id: i32,

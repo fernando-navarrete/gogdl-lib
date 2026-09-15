@@ -437,9 +437,11 @@ impl GogDl {
     /// `build_name` is matched exactly against
     /// [`GameBuild::version_name`](crate::GameBuild::version_name) among the
     /// builds returned by [`get_game_builds`](Self::get_game_builds) (cached
-    /// per `game_id`). The build metadata and the token exchange are fetched
-    /// fresh on every call — nothing here is cached, so persist the returned
-    /// [`SavesAuth`] yourself if you need it again before it expires.
+    /// per `game_id`). The game's client credentials are cached per
+    /// `(game_id, build_name)` for the lifetime of this `GogDl`, and the
+    /// resulting [`SavesAuth`] is cached too and returned again while
+    /// [`SavesAuth::is_valid`] holds; once it expires, the next call performs
+    /// a fresh exchange. Neither cache is persisted.
     ///
     /// **Requires a still-valid session access token**, even though only the
     /// refresh token is sent: unlike other authenticated calls, this does not
@@ -463,6 +465,26 @@ impl GogDl {
     ) -> Result<SavesAuth, SavesError> {
         self.saves.get_saves_auth(game_id, build_name).await
     }
+
+    /// Fetches the current user's cloud save file listing for a game from
+    /// `cloudstorage.gog.com`.
+    ///
+    /// Authenticates exactly like [`get_saves_auth`](Self::get_saves_auth)
+    /// (reusing its cached grant while still valid) and addresses the
+    /// game's storage by the `client_id` from the build metadata of
+    /// `build_name`, matched exactly against
+    /// [`GameBuild::version_name`](crate::GameBuild::version_name). The
+    /// listing itself is never cached.
+    ///
+    /// The response is returned unparsed as [`SaveFiles`].
+    ///
+    /// # Errors
+    /// Everything [`get_saves_auth`](Self::get_saves_auth) can return, plus
+    /// [`SavesError::ClientError`] if the storage request fails: an
+    /// [`HttpError`](crate::ClientError::HttpError) for a non-success status
+    /// other than 401, [`MaxRetriesReached`](crate::ClientError::MaxRetriesReached)
+    /// if it keeps answering 401 (the game-scoped token is not refreshed
+    /// between attempts), or a network/decode error.
     pub async fn get_save_files(
         &self,
         game_id: i32,
