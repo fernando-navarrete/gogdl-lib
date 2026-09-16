@@ -32,7 +32,7 @@ impl RemoteConfig {
     /// Resolves the game's client credentials for `build_name` via
     /// `SavesManager::get_game_save_ids` (cached on the manager), then
     /// fetches
-    /// `remote-config.gog.com/components/galaxy_client/clients/{client_secret}`,
+    /// `remote-config.gog.com/components/galaxy_client/clients/{client_id}`,
     /// pinned to `component_version=2.0.43`, and deserializes the JSON
     /// document into a [`RemoteConfig`]. Unlike the rest of the saves API
     /// this request carries no authorization header; it is made once,
@@ -43,9 +43,9 @@ impl RemoteConfig {
         build_name: &str,
     ) -> Result<Self, SavesError> {
         let game_ids = saves_manager.get_game_save_ids(game_id, build_name).await?;
-        let client_secret = game_ids.client_secret;
+        let client_id = game_ids.client_id;
         let url = format!(
-            "https://remote-config.gog.com/components/galaxy_client/clients/{client_secret}?component_version=2.0.43",
+            "https://remote-config.gog.com/components/galaxy_client/clients/{client_id}?component_version=2.0.43",
         );
 
         let remote_config: RemoteConfig = saves_manager
@@ -87,7 +87,7 @@ impl RemoteConfig {
     /// # Errors
     /// - [`SavesError::CloudStorageNotSupported`] if the document has no
     ///   Windows section, or that section declares no `cloudStorage` block.
-    pub async fn get_locations(&self) -> Result<Vec<CloudStorageLocation>, SavesError> {
+    pub fn get_locations(&self) -> Result<Vec<CloudStorageLocation>, SavesError> {
         let windows = match &self.content.windows {
             Some(windows) => windows,
             None => return Err(SavesError::CloudStorageNotSupported),
