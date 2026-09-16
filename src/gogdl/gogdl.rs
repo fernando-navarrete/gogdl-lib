@@ -475,6 +475,48 @@ impl GogDl {
     ) -> Result<Vec<SaveFile>, SavesError> {
         self.saves.get_save_files(game_id, build_name).await
     }
+    /// Fetches a game's Galaxy client remote configuration from
+    /// `remote-config.gog.com`.
+    ///
+    /// The returned [`RemoteConfig`] is the metadata needed to map the
+    /// listing from [`get_save_files`](Self::get_save_files) onto a local
+    /// install: whether the game supports cloud saves at all
+    /// ([`is_supported`](RemoteConfig::is_supported)), and which directories
+    /// it reads and writes them in
+    /// ([`get_locations`](RemoteConfig::get_locations)). Both answer for the
+    /// game's Windows client only. The document is requested for Galaxy
+    /// client component version `2.0.43`.
+    ///
+    /// `build_name` is matched exactly against
+    /// [`GameBuild::version_name`](crate::GameBuild::version_name) among the
+    /// builds returned by [`get_game_builds`](Self::get_game_builds) (cached
+    /// per `game_id`), and serves only to resolve the game's own client
+    /// credentials, which are cached in memory per `(game_id, build_name)`
+    /// for the lifetime of this `GogDl` and shared with
+    /// [`get_save_files`](Self::get_save_files). The remote config request
+    /// itself is unauthenticated and is neither cached nor retried,
+    /// including on network errors.
+    ///
+    /// **Requires a logged-in session** even so, because resolving those
+    /// credentials lists the game's builds and fetches build metadata; both
+    /// are authenticated calls, and unlike
+    /// [`get_save_files`](Self::get_save_files) they do refresh an expired
+    /// session access token first.
+    ///
+    /// # Errors
+    /// - [`SavesError::BuildNotFound`] if no build of `game_id` has a
+    ///   `version_name` equal to `build_name`.
+    /// - [`SavesError::GamesError`] if listing the game's builds fails.
+    /// - [`SavesError::DepotError`] if fetching the build metadata fails.
+    /// - [`SavesError::ClientError`] wrapping
+    ///   [`crate::ClientError::HttpError`] if GOG publishes no remote config
+    ///   for the game or otherwise rejects the request,
+    ///   [`crate::ClientError::NetworkError`] if it fails in transit, or
+    ///   [`crate::ClientError::DeserializationError`] if the document
+    ///   doesn't match the expected shape.
+    ///
+    /// [`SavesError::CloudStorageNotSupported`] is never returned here — it
+    /// comes from [`RemoteConfig::get_locations`] on the returned value.
     pub async fn get_remote_config(
         &self,
         game_id: i32,

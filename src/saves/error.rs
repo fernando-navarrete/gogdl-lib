@@ -2,8 +2,9 @@ use thiserror::Error;
 
 use crate::{ClientError, DepotError, GamesError};
 
-/// Errors from the cloud saves operation,
-/// [`GogDl::get_save_files`](crate::GogDl::get_save_files).
+/// Errors from the cloud saves operations,
+/// [`GogDl::get_save_files`](crate::GogDl::get_save_files) and
+/// [`GogDl::get_remote_config`](crate::GogDl::get_remote_config).
 #[derive(Debug, Error)]
 pub enum SavesError {
     /// Reading the session's refresh token, the token exchange with
@@ -32,6 +33,11 @@ pub enum SavesError {
     #[error("Build not found")]
     BuildNotFound,
 
+    /// The game's [`RemoteConfig`](crate::RemoteConfig) declares no cloud
+    /// storage for Windows — it has either no Windows section at all, or
+    /// one with no `cloudStorage` block. Only ever returned by
+    /// [`RemoteConfig::get_locations`](crate::RemoteConfig::get_locations),
+    /// never by a request.
     #[error("Cloud storage not supported")]
     CloudStorageNotSupported,
 }

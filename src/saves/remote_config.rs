@@ -2,13 +2,41 @@ use serde::Deserialize;
 
 use crate::{SavesError, saves::SavesManager};
 
+/// A game's Galaxy client remote configuration, as served by
+/// `remote-config.gog.com` and returned by
+/// [`GogDl::get_remote_config`](crate::GogDl::get_remote_config).
+///
+/// GOG publishes one of these per game client. It declares, per operating
+/// system, what the Galaxy client enables for the game — of which this crate
+/// reads the cloud saves part: whether the game supports them
+/// ([`is_supported`](Self::is_supported)) and which directories they live in
+/// ([`get_locations`](Self::get_locations)).
+///
+/// Deserialized from the JSON document GOG serves; only the keys used here
+/// are modelled, the rest of the document is ignored.
 #[derive(Deserialize)]
 pub struct RemoteConfig {
+    /// Version of the configuration document itself, as reported by GOG.
     version: String,
+    /// The document's body: one section per operating system.
     content: OsConfig,
 }
 
 impl RemoteConfig {
+    /// Not reachable from outside the crate — `SavesManager` is not
+    /// exported. Call
+    /// [`GogDl::get_remote_config`](crate::GogDl::get_remote_config)
+    /// instead, which delegates here internally and documents the full
+    /// contract.
+    ///
+    /// Resolves the game's client credentials for `build_name` via
+    /// `SavesManager::get_game_save_ids` (cached on the manager), then
+    /// fetches
+    /// `remote-config.gog.com/components/galaxy_client/clients/{client_secret}`,
+    /// pinned to `component_version=2.0.43`, and deserializes the JSON
+    /// document into a [`RemoteConfig`]. Unlike the rest of the saves API
+    /// this request carries no authorization header; it is made once,
+    /// without retries, and the result is not cached.
     pub async fn get_remote_config(
         saves_manager: &SavesManager,
         game_id: i32,
@@ -26,6 +54,12 @@ impl RemoteConfig {
             .await?;
         Ok(remote_config)
     }
+    /// Whether the game declares working cloud save support.
+    ///
+    /// Reads the Windows section only: `true` when the document has one and
+    /// its `cloudStorage` block is present and enabled, `false` otherwise —
+    /// including when the game declares cloud storage for another operating
+    /// system but not for Windows.
     pub fn is_supported(&self) -> bool {
         let windows = match &self.content.windows {
             Some(windows) => windows,
@@ -37,6 +71,22 @@ impl RemoteConfig {
             false
         }
     }
+    /// The cloud save locations the game declares, in the order GOG lists
+    /// them.
+    ///
+    /// Reads the Windows section only, like
+    /// [`is_supported`](Self::is_supported). `async` only for symmetry with
+    /// the rest of the saves API — it awaits nothing and never performs a
+    /// request, so it reflects the document fetched when this
+    /// `RemoteConfig` was obtained.
+    ///
+    /// A section whose `cloudStorage` block is present but *disabled* still
+    /// returns its locations; check
+    /// [`is_supported`](Self::is_supported) first if that matters.
+    ///
+    /// # Errors
+    /// - [`SavesError::CloudStorageNotSupported`] if the document has no
+    ///   Windows section, or that section declares no `cloudStorage` block.
     pub async fn get_locations(&self) -> Result<Vec<CloudStorageLocation>, SavesError> {
         let windows = match &self.content.windows {
             Some(windows) => windows,
@@ -50,34 +100,67 @@ impl RemoteConfig {
     }
 }
 
+/// The body of a [`RemoteConfig`]: one section per operating system, keyed
+/// by GOG's own OS names. A system GOG publishes no section for
+/// deserializes as `None`.
 #[derive(Deserialize)]
 struct OsConfig {
+    /// The game's Windows client settings. The only section this crate
+    /// reads.
     #[serde(alias = "Windows")]
     pub windows: Option<OsConfigDetails>,
+    /// The game's macOS client settings. Deserialized for completeness;
+    /// unused.
     #[serde(alias = "MacOS")]
     pub macos: Option<OsConfigDetails>,
 }
 
+/// What the Galaxy client enables for a game on one operating system.
 #[derive(Deserialize)]
 struct OsConfigDetails {
+    /// The Galaxy in-game overlay settings, if the game declares any.
+    /// Deserialized for completeness; unused.
     pub overlay: Option<OverlayDetail>,
+    /// The game's cloud save settings, if it declares any. Absent for games
+    /// that never shipped cloud saves on this system.
     #[serde(alias = "cloudStorage")]
     pub cloud_storage: Option<CloudStorageDetail>,
 }
 
+/// The Galaxy in-game overlay settings for one operating system.
 #[derive(Deserialize)]
 struct OverlayDetail {
+    /// Whether the game supports the overlay.
     pub supported: bool,
 }
 
+/// A game's cloud save settings for one operating system.
 #[derive(Deserialize)]
 struct CloudStorageDetail {
+    /// Whether cloud saves are turned on for the game. Backs
+    /// [`RemoteConfig::is_supported`].
     pub enabled: bool,
+    /// The directories the game's saves are read from and written to. Backs
+    /// [`RemoteConfig::get_locations`], and may be non-empty even when
+    /// `enabled` is `false`.
     pub locations: Vec<CloudStorageLocation>,
 }
 
+/// One named cloud save location declared by a game, as returned (in a
+/// `Vec`) by [`RemoteConfig::get_locations`].
+///
+/// Describes where on the local machine one set of cloud saves lives. GOG
+/// writes the path with Galaxy's own variable syntax rather than as a
+/// concrete path, and this crate passes it through verbatim — expanding it
+/// against an actual install is left to the caller.
 #[derive(Deserialize, Clone)]
 pub struct CloudStorageLocation {
+    /// The location's alias, typically `__default` for games with a single
+    /// save directory. GOG also uses it to scope the game's stored files,
+    /// so it shows up as the leading path segment of
+    /// [`SaveFile::name`](crate::SaveFile::name).
     pub name: String,
+    /// The directory the saves live in, as a Galaxy path expression (e.g.
+    /// `<?p=SAVED_GAMES?>/GameName`) — not an expanded filesystem path.
     pub location: String,
 }

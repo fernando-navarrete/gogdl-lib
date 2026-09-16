@@ -82,6 +82,10 @@ impl SavesManager {
         SaveFile::get_save_files(self, game_id, build_name).await
     }
 
+    /// Fetches the game's Galaxy client remote configuration, which
+    /// declares whether it supports cloud saves and where they live. See
+    /// [`GogDl::get_remote_config`](crate::GogDl::get_remote_config) for the
+    /// public-facing contract.
     pub async fn get_remote_config(
         &self,
         game_id: i32,
