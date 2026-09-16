@@ -13,7 +13,7 @@ use crate::gogdl::error::GogDlError;
 use crate::proton::{ProtonDownloadEvent, ProtonGeRelease, ProtonGeReleasesPage, ProtonManager};
 use crate::saves::{SavesError, SavesManager};
 use crate::secure_links::SecureLinksManager;
-use crate::{DownloadStageEvent, SaveFile};
+use crate::{DownloadStageEvent, RemoteConfig, SaveFile};
 
 /// The single entry point to this crate. Every operation — auth, catalog
 /// browsing, downloading — is a method on `GogDl`; the managers it holds
@@ -474,5 +474,12 @@ impl GogDl {
         build_name: &str,
     ) -> Result<Vec<SaveFile>, SavesError> {
         self.saves.get_save_files(game_id, build_name).await
+    }
+    pub async fn get_remote_config(
+        &self,
+        game_id: i32,
+        build_name: &str,
+    ) -> Result<RemoteConfig, SavesError> {
+        self.saves.get_remote_config(game_id, build_name).await
     }
 }

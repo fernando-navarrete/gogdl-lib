@@ -31,4 +31,7 @@ pub enum SavesError {
     /// `build_name`.
     #[error("Build not found")]
     BuildNotFound,
+
+    #[error("Cloud storage not supported")]
+    CloudStorageNotSupported,
 }

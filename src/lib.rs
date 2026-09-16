@@ -89,5 +89,7 @@ pub use games::GamesError;
 pub use proton::ProtonError;
 pub use secure_links::SecureLinksError;
 
+pub use saves::CloudStorageLocation;
+pub use saves::RemoteConfig;
 pub use saves::SaveFile;
 pub use saves::SavesError;

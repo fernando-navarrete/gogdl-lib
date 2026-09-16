@@ -6,7 +6,10 @@ use crate::{
     client::HttpClient,
     depot::DepotManager,
     games::GamesManager,
-    saves::{GameSaveIds, SaveFile, error::SavesError, saves_auth::SavesAuth},
+    saves::{
+        GameSaveIds, SaveFile, error::SavesError, remote_config::RemoteConfig,
+        saves_auth::SavesAuth,
+    },
 };
 
 /// Crate-internal manager backing
@@ -77,5 +80,13 @@ impl SavesManager {
         build_name: &str,
     ) -> Result<Vec<SaveFile>, SavesError> {
         SaveFile::get_save_files(self, game_id, build_name).await
+    }
+
+    pub async fn get_remote_config(
+        &self,
+        game_id: i32,
+        build_name: &str,
+    ) -> Result<RemoteConfig, SavesError> {
+        RemoteConfig::get_remote_config(self, game_id, build_name).await
     }
 }
