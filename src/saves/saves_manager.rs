@@ -110,8 +110,17 @@ impl SavesManager {
         let game_ids = self.get_game_save_ids(game_id, build_name).await?;
         let files = self.get_save_files(game_id, build_name).await?;
 
+        // Only used to tell a location segment from a real directory in the
+        // cloud names. Without it every name still maps to a distinct path
+        // (just keeping a location segment, if it has one), so a game whose
+        // config is missing or unreadable is downloaded regardless.
+        let locations = match self.get_remote_config(game_id, build_name).await {
+            Ok(remote_config) => remote_config.get_locations().unwrap_or_default(),
+            Err(_) => Vec::new(),
+        };
+
         SavesDownloader::new(self.client.clone(), auth, game_ids.client_id)
-            .download_files(&files, path, tx)
+            .download_files(&files, &locations, path, tx)
             .await
     }
 

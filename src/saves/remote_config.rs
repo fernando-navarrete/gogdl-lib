@@ -155,10 +155,12 @@ struct CloudStorageDetail {
 /// against an actual install is left to the caller.
 #[derive(Deserialize, Clone)]
 pub struct CloudStorageLocation {
-    /// The location's alias, typically `__default` for games with a single
-    /// save directory. GOG also uses it to scope the game's stored files,
-    /// so it shows up as the leading path segment of
-    /// [`SaveFile::name`](crate::SaveFile::name).
+    /// The location's alias, e.g. `__default` or `saves` (Cyberpunk 2077
+    /// declares a single location called `saves`). GOG also uses it to scope
+    /// the game's stored files, so it shows up as the leading path segment of
+    /// [`SaveFile::name`](crate::SaveFile::name), which
+    /// [`SaveFile::relative_path_in`](crate::SaveFile::relative_path_in)
+    /// strips off again.
     pub name: String,
     /// The directory the saves live in, as a Galaxy path expression (e.g.
     /// `<?p=SAVED_GAMES?>/GameName`) — not an expanded filesystem path.

@@ -87,7 +87,7 @@ impl SavesAuth {
     }
     /// The `cloudstorage.gog.com` URL of the object called `name` in this
     /// user's storage area for the game `client_id`. `name` is the full
-    /// cloud-side name, e.g. `saves/__default/slot1.sav`; each `/`-separated
+    /// cloud-side name, e.g. `saves/AutoSave-0/sav.dat`; each `/`-separated
     /// segment is percent-encoded, so names with spaces or `#` are safe.
     pub fn object_url(&self, client_id: &str, name: &str) -> Result<reqwest::Url, SavesError> {
         let mut url = reqwest::Url::parse("https://cloudstorage.gog.com/v1/")

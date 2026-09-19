@@ -73,8 +73,10 @@ pub enum SavesError {
     #[error("Invalid header: {0}")]
     InvalidHeader(String),
 
-    /// A file name in the cloud listing is not of the form
-    /// `saves/<location>/<path>`, so no local path can be derived from it.
+    /// A file name in the cloud listing has no path left once its `saves/`
+    /// prefix and location segment are removed (e.g. `saves/` or
+    /// `saves/__default/`), or a local file's path is not valid UTF-8, so no
+    /// cloud or local path can be derived from it.
     #[error("Invalid save file name: {0}")]
     InvalidSaveFileName(String),
 }

@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
-use crate::{SavesError, saves::SavesManager};
+use crate::{CloudStorageLocation, SavesError, saves::SavesManager};
 
 /// One entry in a game's cloud save listing for the current user, as
 /// returned (in a `Vec`) by
@@ -27,12 +27,21 @@ pub struct SaveFile {
 
 impl SaveFile {
     /// The file's path relative to the directory the caller keeps this
-    /// game's saves in: [`name`](Self::name) without its `saves/` prefix
-    /// (tolerated if absent) and without the leading location segment.
+    /// game's saves in, assuming [`name`](Self::name) is laid out as
+    /// `saves/<location>/<path>`: the `saves/` prefix (tolerated if absent)
+    /// and the segment after it are always dropped.
     ///
-    /// `saves/__default/profile/slot1.sav` becomes `profile/slot1.sav`. The
-    /// result is still untrusted text — it is resolved against the caller's
-    /// directory by `PathResolver`, which rejects anything that escapes it.
+    /// `saves/__default/profile/slot1.sav` becomes `profile/slot1.sav`. That
+    /// assumption does not hold for every game. A game whose location is
+    /// itself named `saves`, like Cyberpunk 2077, stores
+    /// `saves/AutoSave-0/sav.dat`, and this method drops `AutoSave-0` along
+    /// with the prefix, so every slot collapses onto `sav.dat`. Prefer
+    /// [`relative_path_in`](Self::relative_path_in), which only drops a
+    /// segment that is a declared location.
+    ///
+    /// The result is still untrusted text — it is resolved against the
+    /// caller's directory by `PathResolver`, which rejects anything that
+    /// escapes it.
     ///
     /// # Errors
     /// [`SavesError::InvalidSaveFileName`] if nothing is left after the
@@ -42,6 +51,58 @@ impl SaveFile {
         match name.split_once('/') {
             Some((_location, relative)) if !relative.is_empty() => Ok(relative),
             _ => Err(SavesError::InvalidSaveFileName(self.name.clone())),
+        }
+    }
+
+    /// The file's path relative to the directory the caller keeps this
+    /// game's saves in, dropping a leading segment of [`name`](Self::name)
+    /// only when it really is one of the game's declared `locations`
+    /// (from [`RemoteConfig::get_locations`](crate::RemoteConfig::get_locations)).
+    ///
+    /// GOG names objects `<location>/<path>`, where `<location>` is the
+    /// [`CloudStorageLocation::name`] the game declares. Some games
+    /// (`__default`) are listed as `saves/__default/profile/slot1.sav`, others
+    /// declare a location called `saves` and are listed as
+    /// `saves/AutoSave-0/sav.dat`. The name is resolved as follows:
+    ///
+    /// 1. If its first segment is a declared location, that segment is
+    ///    dropped.
+    /// 2. Otherwise a leading `saves/` is dropped, and then one more segment
+    ///    if it is a declared location.
+    /// 3. Otherwise the name is kept whole.
+    ///
+    /// So with `["saves"]`, `saves/AutoSave-0/sav.dat` becomes
+    /// `AutoSave-0/sav.dat` and `saves/user.gls` becomes `user.gls`; with
+    /// `["__default"]`, `saves/__default/profile/slot1.sav` becomes
+    /// `profile/slot1.sav`. With no locations only `saves/` is dropped, so an
+    /// empty slice is a safe fallback when the game's remote config cannot be
+    /// read.
+    ///
+    /// The result is still untrusted text — it is resolved against the
+    /// caller's directory by `PathResolver`, which rejects anything that
+    /// escapes it.
+    ///
+    /// # Errors
+    /// [`SavesError::InvalidSaveFileName`] if nothing is left once the
+    /// prefix and location segment are dropped, e.g. `saves/` or
+    /// `saves/__default/`.
+    pub fn relative_path_in(
+        &self,
+        locations: &[CloudStorageLocation],
+    ) -> Result<&str, SavesError> {
+        let name = self.name.as_str();
+        let relative = if let Some(rest) = strip_location(name, locations) {
+            rest
+        } else if let Some(rest) = name.strip_prefix("saves/") {
+            strip_location(rest, locations).unwrap_or(rest)
+        } else {
+            name
+        };
+
+        if relative.is_empty() {
+            Err(SavesError::InvalidSaveFileName(self.name.clone()))
+        } else {
+            Ok(relative)
         }
     }
 
@@ -85,9 +146,31 @@ impl SaveFile {
     }
 }
 
+/// What follows `s`'s first `/`-separated segment (empty if there is none),
+/// if that segment is one of `locations`; `None` if it is not.
+fn strip_location<'a>(s: &'a str, locations: &[CloudStorageLocation]) -> Option<&'a str> {
+    let (first, rest) = s.split_once('/').unwrap_or((s, ""));
+    locations
+        .iter()
+        .any(|location| location.name == first)
+        .then_some(rest)
+}
+
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use super::*;
+
+    fn locations(names: &[&str]) -> Vec<CloudStorageLocation> {
+        names
+            .iter()
+            .map(|name| CloudStorageLocation {
+                name: name.to_string(),
+                location: String::new(),
+            })
+            .collect()
+    }
 
     fn save_file(name: &str) -> SaveFile {
         SaveFile {
@@ -125,5 +208,106 @@ mod tests {
                 Err(SavesError::InvalidSaveFileName(_))
             ));
         }
+    }
+
+    #[test]
+    fn relative_path_in_keeps_every_slot_of_a_game_whose_location_is_saves() {
+        let mut names = Vec::new();
+        for slot in (0..20)
+            .map(|n| format!("AutoSave-{n}"))
+            .chain((25..=30).map(|n| format!("ManualSave-{n}")))
+            .chain(["EndGameSave-0".to_string()])
+        {
+            for file in ["sav.dat", "metadata.9.json", "screenshot.png"] {
+                names.push(format!("saves/{slot}/{file}"));
+            }
+        }
+        names.push("saves/user.gls".to_string());
+
+        let locations = locations(&["saves"]);
+        let paths: HashSet<String> = names
+            .iter()
+            .map(|name| {
+                save_file(name)
+                    .relative_path_in(&locations)
+                    .unwrap()
+                    .to_string()
+            })
+            .collect();
+
+        assert_eq!(paths.len(), names.len());
+        assert!(paths.contains("AutoSave-0/sav.dat"));
+        assert!(paths.contains("ManualSave-30/sav.dat"));
+        assert!(paths.contains("user.gls"));
+    }
+
+    #[test]
+    fn relative_path_in_strips_a_declared_location_after_saves() {
+        let file = save_file("saves/__default/profile/slot1.sav");
+        assert_eq!(
+            file.relative_path_in(&locations(&["__default"])).unwrap(),
+            "profile/slot1.sav"
+        );
+    }
+
+    #[test]
+    fn relative_path_in_strips_a_declared_location_without_saves_prefix() {
+        let file = save_file("__default/config.ini");
+        assert_eq!(
+            file.relative_path_in(&locations(&["__default"])).unwrap(),
+            "config.ini"
+        );
+    }
+
+    #[test]
+    fn relative_path_in_does_not_strip_a_segment_that_is_not_a_location() {
+        let file = save_file("saves/AutoSave-0/sav.dat");
+        assert_eq!(
+            file.relative_path_in(&locations(&["__default"])).unwrap(),
+            "AutoSave-0/sav.dat"
+        );
+    }
+
+    #[test]
+    fn relative_path_in_without_locations_only_strips_saves() {
+        assert_eq!(
+            save_file("saves/user.gls").relative_path_in(&[]).unwrap(),
+            "user.gls"
+        );
+        assert_eq!(
+            save_file("saves/AutoSave-0/sav.dat")
+                .relative_path_in(&[])
+                .unwrap(),
+            "AutoSave-0/sav.dat"
+        );
+    }
+
+    #[test]
+    fn relative_path_in_tells_apart_files_that_differ_only_in_directory() {
+        let locations = locations(&["saves"]);
+        let a = save_file("saves/a/x");
+        let b = save_file("saves/b/x");
+        assert_ne!(
+            a.relative_path_in(&locations).unwrap(),
+            b.relative_path_in(&locations).unwrap()
+        );
+    }
+
+    #[test]
+    fn relative_path_in_rejects_name_with_nothing_left() {
+        let declared = locations(&["__default"]);
+        for name in ["saves/__default", "saves/__default/", "saves/", "__default"] {
+            assert!(
+                matches!(
+                    save_file(name).relative_path_in(&declared),
+                    Err(SavesError::InvalidSaveFileName(_))
+                ),
+                "{name}"
+            );
+        }
+        assert!(matches!(
+            save_file("saves/").relative_path_in(&[]),
+            Err(SavesError::InvalidSaveFileName(_))
+        ));
     }
 }

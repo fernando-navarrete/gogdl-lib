@@ -119,10 +119,14 @@ impl SavesUploader {
 
 /// The cloud-side name for the local file at `relative` (a `/`-separated
 /// path under the save directory) in the location `location_name`:
-/// `saves/<location>/<relative>`. The inverse of
-/// [`SaveFile::relative_path`](crate::SaveFile::relative_path).
+/// `<location>/<relative>`. The inverse of
+/// [`SaveFile::relative_path_in`](crate::SaveFile::relative_path_in).
+///
+/// There is no fixed `saves/` namespace above the location: a `saves/` at the
+/// start of a name is the location itself, for a game that calls its location
+/// `saves` (Cyberpunk 2077 stores `saves/AutoSave-0/sav.dat`).
 fn remote_name(location_name: &str, relative: &str) -> String {
-    format!("saves/{location_name}/{relative}")
+    format!("{location_name}/{relative}")
 }
 
 /// Every regular file under `base`, as `(absolute path, relative path)`
@@ -166,20 +170,39 @@ async fn list_files(base: &Path) -> Result<Vec<(PathBuf, String)>, SavesError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::SaveFile;
+    use crate::{CloudStorageLocation, SaveFile};
 
-    #[test]
-    fn remote_name_round_trips_with_relative_path() {
-        let name = remote_name("__default", "profile/slot1.sav");
-        assert_eq!(name, "saves/__default/profile/slot1.sav");
-
+    fn round_trip(location_name: &str, relative: &str) -> (String, String) {
+        let name = remote_name(location_name, relative);
         let file = SaveFile {
             bytes: 0,
             last_modified: DateTime::<Utc>::UNIX_EPOCH,
             hash: String::new(),
-            name,
+            name: name.clone(),
             content_type: String::new(),
         };
-        assert_eq!(file.relative_path().unwrap(), "profile/slot1.sav");
+        let locations = [CloudStorageLocation {
+            name: location_name.to_string(),
+            location: String::new(),
+        }];
+        (name, file.relative_path_in(&locations).unwrap().to_string())
+    }
+
+    #[test]
+    fn remote_name_round_trips_with_relative_path_in() {
+        let (name, relative) = round_trip("__default", "profile/slot1.sav");
+        assert_eq!(name, "__default/profile/slot1.sav");
+        assert_eq!(relative, "profile/slot1.sav");
+    }
+
+    #[test]
+    fn remote_name_reproduces_the_names_of_a_game_whose_location_is_saves() {
+        let (name, relative) = round_trip("saves", "AutoSave-0/sav.dat");
+        assert_eq!(name, "saves/AutoSave-0/sav.dat");
+        assert_eq!(relative, "AutoSave-0/sav.dat");
+
+        let (name, relative) = round_trip("saves", "user.gls");
+        assert_eq!(name, "saves/user.gls");
+        assert_eq!(relative, "user.gls");
     }
 }

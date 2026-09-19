@@ -535,15 +535,24 @@ impl GogDl {
     /// missing.
     ///
     /// Every file in the [`get_save_files`](Self::get_save_files) listing is
-    /// downloaded. Each is written at [`SaveFile::relative_path`] beneath
-    /// `path` — its cloud name without the `saves/` prefix and the location
-    /// segment — so `saves/__default/profile/slot1.sav` lands at
-    /// `<path>/profile/slot1.sav`. The names come from GOG and are treated as
+    /// downloaded. Each is written at [`SaveFile::relative_path_in`] beneath
+    /// `path` — its cloud name with the game's location segment removed, but
+    /// only when that leading segment is one of the locations in the game's
+    /// [`get_remote_config`](Self::get_remote_config). A game whose location
+    /// is named `saves` has `saves/AutoSave-0/sav.dat` land at
+    /// `<path>/AutoSave-0/sav.dat`; one whose location is `__default` has
+    /// `saves/__default/profile/slot1.sav` land at
+    /// `<path>/profile/slot1.sav`. Any other directory in the name is kept,
+    /// so files that differ only in their directory stay apart. If the remote
+    /// config cannot be fetched, or declares no cloud storage, no segment is
+    /// treated as a location and only a leading `saves/` is removed; the
+    /// download still proceeds. The names come from GOG and are treated as
     /// untrusted: separators are normalized, `..` components are dropped, and
     /// nothing is ever written outside `path`. Existing files are
     /// overwritten. A game with several cloud save locations shares one
-    /// directory here, so call this once per directory only if their file
-    /// names cannot collide.
+    /// directory here, with each location's segment removed, so files from
+    /// different locations that have the same path beneath it overwrite one
+    /// another.
     ///
     /// Each file is received in full, verified against the `ETag` GOG sends
     /// with it (an MD5 of the stored bytes; a response without one is
@@ -566,7 +575,7 @@ impl GogDl {
     /// # Errors
     /// - Everything [`get_save_files`](Self::get_save_files) can return.
     /// - [`SavesError::InvalidSaveFileName`] if a listed name has no path
-    ///   beneath its location segment.
+    ///   left once its `saves/` prefix and location segment are removed.
     /// - [`SavesError::FileSystemError`] if `path`, or a directory for one
     ///   of the files, cannot be created or resolved.
     /// - [`SavesError::ClientError`] wrapping
@@ -596,10 +605,12 @@ impl GogDl {
     ///
     /// `path` is walked recursively and every regular file in it is uploaded;
     /// symlinks are skipped. A file at `<path>/profile/slot1.sav` is stored
-    /// as `saves/<location>/profile/slot1.sav`, where `<location>` is the
+    /// as `<location>/profile/slot1.sav`, where `<location>` is the
     /// [`name`](crate::CloudStorageLocation::name) of the **first** location
-    /// in the game's [`get_remote_config`](Self::get_remote_config), usually
-    /// `__default`. Games with several save locations are not supported yet.
+    /// in the game's [`get_remote_config`](Self::get_remote_config) — for a
+    /// game whose location is named `saves`, `<path>/AutoSave-0/sav.dat` is
+    /// stored as `saves/AutoSave-0/sav.dat`, replacing the object the game
+    /// already has. Games with several save locations are not supported yet.
     /// Files already in the cloud are overwritten; files that exist only in
     /// the cloud are left alone — nothing is ever deleted, and nothing is
     /// compared, so unchanged files are uploaded again.

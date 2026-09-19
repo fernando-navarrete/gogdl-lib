@@ -5,7 +5,7 @@ use flate2::read::GzDecoder;
 use tokio::{io::AsyncWriteExt, sync::mpsc};
 
 use crate::{
-    SavesError,
+    CloudStorageLocation, SavesError,
     client::HttpClient,
     fs::PathResolver,
     saves::{
@@ -30,8 +30,9 @@ impl SavesDownloader {
     }
 
     /// Downloads `files` one after another into `path`, each at
-    /// [`SaveFile::relative_path`] beneath it. `path` is created if missing,
-    /// and `PathResolver` guarantees nothing is written outside it.
+    /// [`SaveFile::relative_path_in`] (given `locations`) beneath it. `path`
+    /// is created if missing, and `PathResolver` guarantees nothing is
+    /// written outside it.
     ///
     /// Each file is received whole, checked against the `ETag` GOG sends for
     /// it, gunzipped, written, and given the modification time GOG stored
@@ -40,6 +41,7 @@ impl SavesDownloader {
     pub async fn download_files(
         &self,
         files: &[SaveFile],
+        locations: &[CloudStorageLocation],
         path: &Path,
         tx: mpsc::UnboundedSender<SavesDownloadEvent>,
     ) -> Result<(), SavesError> {
@@ -52,7 +54,7 @@ impl SavesDownloader {
         .ok();
 
         for file in files {
-            self.download_file(file, &resolver, &tx).await?;
+            self.download_file(file, locations, &resolver, &tx).await?;
         }
         Ok(())
     }
@@ -60,10 +62,13 @@ impl SavesDownloader {
     async fn download_file(
         &self,
         file: &SaveFile,
+        locations: &[CloudStorageLocation],
         resolver: &PathResolver,
         tx: &mpsc::UnboundedSender<SavesDownloadEvent>,
     ) -> Result<(), SavesError> {
-        let destination = resolver.resolve_path(file.relative_path()?).await?;
+        let destination = resolver
+            .resolve_path(file.relative_path_in(locations)?)
+            .await?;
         let url = self.auth.object_url(&self.client_id, &file.name)?;
         let bearer = format!("Bearer {}", self.auth.access_token);
 
