@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use thiserror::Error;
 
 use crate::fs::FileSystemError;
@@ -72,6 +74,30 @@ pub enum SavesError {
     /// `X-Object-Meta-LocalLastModified` was not an RFC 3339 timestamp.
     #[error("Invalid header: {0}")]
     InvalidHeader(String),
+
+    /// No user directory could be identified under `drive_c/users` in the
+    /// Wine prefix passed to
+    /// [`GogDl::download_save_files`](crate::GogDl::download_save_files) or
+    /// [`GogDl::upload_save_files`](crate::GogDl::upload_save_files): there is
+    /// no `steamuser` or host-named directory, and not exactly one other
+    /// directory besides `Public`. Carries the prefix. Only returned when a
+    /// location actually needs the user directory (anything but
+    /// `<?INSTALL?>`).
+    #[error("No Wine user directory found in prefix {0}")]
+    WineUserDirNotFound(PathBuf),
+
+    /// A game's cloud save location uses a Galaxy path variable this crate
+    /// has no Wine equivalent for, e.g. the macOS-only
+    /// `<?APPLICATION_SUPPORT?>`. Carries the variable's name. Returned
+    /// instead of guessing a directory.
+    #[error("Unknown save location variable: {0}")]
+    UnknownSaveLocationVariable(String),
+
+    /// A game's cloud save location is not a `<?VARIABLE?>` followed by an
+    /// optional path — it does not start with a variable, the variable is
+    /// malformed, or a second variable follows. Carries the expression.
+    #[error("Invalid save location: {0}")]
+    InvalidSaveLocation(String),
 
     /// A file name in the cloud listing has no path left once its `saves/`
     /// prefix and location segment are removed (e.g. `saves/` or

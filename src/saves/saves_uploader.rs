@@ -10,7 +10,10 @@ use tokio::sync::mpsc;
 use crate::{
     SavesError,
     client::HttpClient,
-    saves::{checksum::md5_hex, saves_auth::SavesAuth, saves_upload_event::SavesUploadEvent},
+    saves::{
+        checksum::md5_hex, save_location::ResolvedSaveLocation, saves_auth::SavesAuth,
+        saves_upload_event::SavesUploadEvent,
+    },
 };
 
 /// What GOG Galaxy's own client identifies itself as when syncing saves.
@@ -31,28 +34,38 @@ impl SavesUploader {
         }
     }
 
-    /// Uploads every file found under `path` (recursively; symlinks are
-    /// skipped) to the cloud location called `location_name`, at the name
-    /// [`remote_name`] gives it.
+    /// Uploads every file found under the directory of each of `locations`
+    /// (recursively; symlinks are skipped), each to its own cloud location at
+    /// the name [`remote_name`] gives it. A location whose directory does not
+    /// exist has nothing to upload and is skipped.
     ///
-    /// Files go up one after another, gzip-compressed, each carrying its
-    /// local modification time. Not retried: the first failure aborts the
-    /// call, leaving the files before it uploaded.
+    /// Files go up one after another in the order of `locations`, gzip-compressed,
+    /// each carrying its local modification time. Not retried: the first
+    /// failure aborts the call, leaving the files before it uploaded.
     pub async fn upload_files(
         &self,
-        path: &Path,
-        location_name: &str,
+        locations: &[ResolvedSaveLocation],
         tx: mpsc::UnboundedSender<SavesUploadEvent>,
     ) -> Result<(), SavesError> {
-        let files = list_files(path).await?;
+        let mut uploads = Vec::new();
+        for location in locations {
+            if !tokio::fs::metadata(&location.path)
+                .await
+                .is_ok_and(|metadata| metadata.is_dir())
+            {
+                continue;
+            }
+            for (source, relative) in list_files(&location.path).await? {
+                uploads.push((source, remote_name(&location.name, &relative)));
+            }
+        }
 
         tx.send(SavesUploadEvent::Preparing {
-            total_files: files.len(),
+            total_files: uploads.len(),
         })
         .ok();
 
-        for (source, relative) in files {
-            let name = remote_name(location_name, &relative);
+        for (source, name) in uploads {
             self.upload_file(&source, &name, &tx).await?;
         }
         Ok(())
@@ -204,5 +217,33 @@ mod tests {
         let (name, relative) = round_trip("saves", "user.gls");
         assert_eq!(name, "saves/user.gls");
         assert_eq!(relative, "user.gls");
+    }
+
+    #[test]
+    fn remote_name_round_trips_to_the_right_one_of_several_locations() {
+        let locations = [
+            CloudStorageLocation {
+                name: "saves".to_string(),
+                location: String::new(),
+            },
+            CloudStorageLocation {
+                name: "config".to_string(),
+                location: String::new(),
+            },
+        ];
+        for (index, location) in locations.iter().enumerate() {
+            let file = SaveFile {
+                bytes: 0,
+                last_modified: DateTime::<Utc>::UNIX_EPOCH,
+                hash: String::new(),
+                name: remote_name(&location.name, "slot/data.sav"),
+                content_type: String::new(),
+            };
+            let (matched, relative) = file
+                .split_location(&locations, |l| l.name.as_str())
+                .unwrap();
+            assert_eq!(matched.unwrap().name, locations[index].name);
+            assert_eq!(relative, "slot/data.sav");
+        }
     }
 }

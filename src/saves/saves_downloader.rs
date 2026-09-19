@@ -1,18 +1,39 @@
-use std::{io::Read, path::Path, time::SystemTime};
+use std::{io::Read, path::PathBuf, time::SystemTime};
 
 use chrono::DateTime;
 use flate2::read::GzDecoder;
-use tokio::{io::AsyncWriteExt, sync::mpsc};
+use tokio::{
+    io::AsyncWriteExt,
+    sync::{OnceCell, mpsc},
+};
 
 use crate::{
-    CloudStorageLocation, SavesError,
+    SavesError,
     client::HttpClient,
     fs::PathResolver,
     saves::{
-        SaveFile, checksum::md5_hex, saves_auth::SavesAuth,
+        SaveFile, checksum::md5_hex, save_location::ResolvedSaveLocation, saves_auth::SavesAuth,
         saves_download_event::SavesDownloadEvent,
     },
 };
+
+/// A save location's directory, ready to receive files.
+struct Target {
+    name: String,
+    path: PathBuf,
+    /// Created on first use, so a location none of the files belong to is
+    /// not created on disk.
+    resolver: OnceCell<PathResolver>,
+}
+
+impl Target {
+    async fn resolver(&self) -> Result<&PathResolver, SavesError> {
+        Ok(self
+            .resolver
+            .get_or_try_init(|| PathResolver::new(self.path.clone()))
+            .await?)
+    }
+}
 
 pub struct SavesDownloader {
     pub client: HttpClient,
@@ -29,23 +50,37 @@ impl SavesDownloader {
         }
     }
 
-    /// Downloads `files` one after another into `path`, each at
-    /// [`SaveFile::relative_path_in`] (given `locations`) beneath it. `path`
-    /// is created if missing, and `PathResolver` guarantees nothing is
-    /// written outside it.
+    /// Downloads `files` one after another, each into the directory of the
+    /// one of `locations` it belongs to, at [`SaveFile::relative_path_in`]
+    /// beneath it. A file that belongs to none of them goes into the first
+    /// location. A location's directory is created when the first file for it
+    /// arrives, and `PathResolver` guarantees nothing is written outside it.
     ///
     /// Each file is received whole, checked against the `ETag` GOG sends for
     /// it, gunzipped, written, and given the modification time GOG stored
     /// with it. Not retried: the first failure aborts the call, leaving the
     /// files before it in place.
+    ///
+    /// # Errors
+    /// [`SavesError::CloudStorageNotSupported`] if `locations` is empty, plus
+    /// what downloading a file can fail with.
     pub async fn download_files(
         &self,
         files: &[SaveFile],
-        locations: &[CloudStorageLocation],
-        path: &Path,
+        locations: &[ResolvedSaveLocation],
         tx: mpsc::UnboundedSender<SavesDownloadEvent>,
     ) -> Result<(), SavesError> {
-        let resolver = PathResolver::new(path.to_path_buf()).await?;
+        let targets: Vec<Target> = locations
+            .iter()
+            .map(|location| Target {
+                name: location.name.clone(),
+                path: location.path.clone(),
+                resolver: OnceCell::new(),
+            })
+            .collect();
+        if targets.is_empty() {
+            return Err(SavesError::CloudStorageNotSupported);
+        }
 
         tx.send(SavesDownloadEvent::Preparing {
             total_files: files.len(),
@@ -54,7 +89,7 @@ impl SavesDownloader {
         .ok();
 
         for file in files {
-            self.download_file(file, locations, &resolver, &tx).await?;
+            self.download_file(file, &targets, &tx).await?;
         }
         Ok(())
     }
@@ -62,13 +97,12 @@ impl SavesDownloader {
     async fn download_file(
         &self,
         file: &SaveFile,
-        locations: &[CloudStorageLocation],
-        resolver: &PathResolver,
+        targets: &[Target],
         tx: &mpsc::UnboundedSender<SavesDownloadEvent>,
     ) -> Result<(), SavesError> {
-        let destination = resolver
-            .resolve_path(file.relative_path_in(locations)?)
-            .await?;
+        let (target, relative) = file.split_location(targets, |target| target.name.as_str())?;
+        let target = target.unwrap_or(&targets[0]);
+        let destination = target.resolver().await?.resolve_path(relative).await?;
         let url = self.auth.object_url(&self.client_id, &file.name)?;
         let bearer = format!("Bearer {}", self.auth.access_token);
 

@@ -151,8 +151,10 @@ struct CloudStorageDetail {
 ///
 /// Describes where on the local machine one set of cloud saves lives. GOG
 /// writes the path with Galaxy's own variable syntax rather than as a
-/// concrete path, and this crate passes it through verbatim — expanding it
-/// against an actual install is left to the caller.
+/// concrete path, and this crate passes it through verbatim.
+/// [`GogDl::download_save_files`](crate::GogDl::download_save_files) and
+/// [`GogDl::upload_save_files`](crate::GogDl::upload_save_files) expand it
+/// against a Wine prefix themselves.
 #[derive(Deserialize, Clone)]
 pub struct CloudStorageLocation {
     /// The location's alias, e.g. `__default` or `saves` (Cyberpunk 2077
@@ -163,6 +165,6 @@ pub struct CloudStorageLocation {
     /// strips off again.
     pub name: String,
     /// The directory the saves live in, as a Galaxy path expression (e.g.
-    /// `<?p=SAVED_GAMES?>/GameName`) — not an expanded filesystem path.
+    /// `<?SAVED_GAMES?>/GameName`) — not an expanded filesystem path.
     pub location: String,
 }

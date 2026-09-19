@@ -86,23 +86,36 @@ impl SaveFile {
     /// [`SavesError::InvalidSaveFileName`] if nothing is left once the
     /// prefix and location segment are dropped, e.g. `saves/` or
     /// `saves/__default/`.
-    pub fn relative_path_in(
-        &self,
-        locations: &[CloudStorageLocation],
-    ) -> Result<&str, SavesError> {
+    pub fn relative_path_in(&self, locations: &[CloudStorageLocation]) -> Result<&str, SavesError> {
+        self.split_location(locations, |location| location.name.as_str())
+            .map(|(_, relative)| relative)
+    }
+
+    /// [`relative_path_in`](Self::relative_path_in), but also returning which
+    /// of `locations` the name belongs to — `None` when no declared location
+    /// matched (only a leading `saves/` was dropped). `name_of` reads a
+    /// location's alias from whatever type the caller keeps them in.
+    pub(crate) fn split_location<'a, 'l, T>(
+        &'a self,
+        locations: &'l [T],
+        name_of: impl Fn(&T) -> &str,
+    ) -> Result<(Option<&'l T>, &'a str), SavesError> {
         let name = self.name.as_str();
-        let relative = if let Some(rest) = strip_location(name, locations) {
-            rest
+        let (location, relative) = if let Some(found) = strip_location(name, locations, &name_of) {
+            (Some(found.0), found.1)
         } else if let Some(rest) = name.strip_prefix("saves/") {
-            strip_location(rest, locations).unwrap_or(rest)
+            match strip_location(rest, locations, &name_of) {
+                Some((location, relative)) => (Some(location), relative),
+                None => (None, rest),
+            }
         } else {
-            name
+            (None, name)
         };
 
         if relative.is_empty() {
             Err(SavesError::InvalidSaveFileName(self.name.clone()))
         } else {
-            Ok(relative)
+            Ok((location, relative))
         }
     }
 
@@ -146,14 +159,19 @@ impl SaveFile {
     }
 }
 
-/// What follows `s`'s first `/`-separated segment (empty if there is none),
-/// if that segment is one of `locations`; `None` if it is not.
-fn strip_location<'a>(s: &'a str, locations: &[CloudStorageLocation]) -> Option<&'a str> {
+/// The one of `locations` that `s`'s first `/`-separated segment names, and
+/// what follows that segment (empty if there is nothing); `None` if the
+/// segment names none of them.
+fn strip_location<'a, 'l, T>(
+    s: &'a str,
+    locations: &'l [T],
+    name_of: &impl Fn(&T) -> &str,
+) -> Option<(&'l T, &'a str)> {
     let (first, rest) = s.split_once('/').unwrap_or((s, ""));
     locations
         .iter()
-        .any(|location| location.name == first)
-        .then_some(rest)
+        .find(|location| name_of(location) == first)
+        .map(|location| (location, rest))
 }
 
 #[cfg(test)]
@@ -309,5 +327,36 @@ mod tests {
             save_file("saves/").relative_path_in(&[]),
             Err(SavesError::InvalidSaveFileName(_))
         ));
+    }
+
+    #[test]
+    fn split_location_names_the_location_the_file_belongs_to() {
+        let declared = locations(&["__default", "config"]);
+        let by_name = |location: &CloudStorageLocation| location.name.clone();
+
+        let file = save_file("saves/__default/profile/slot1.sav");
+        let (location, relative) = file.split_location(&declared, |l| l.name.as_str()).unwrap();
+        assert_eq!(location.map(by_name).as_deref(), Some("__default"));
+        assert_eq!(relative, "profile/slot1.sav");
+
+        let file = save_file("config/video.ini");
+        let (location, relative) = file.split_location(&declared, |l| l.name.as_str()).unwrap();
+        assert_eq!(location.map(by_name).as_deref(), Some("config"));
+        assert_eq!(relative, "video.ini");
+
+        let file = save_file("saves/AutoSave-0/sav.dat");
+        let saves = locations(&["saves"]);
+        let (location, relative) = file.split_location(&saves, |l| l.name.as_str()).unwrap();
+        assert_eq!(location.map(by_name).as_deref(), Some("saves"));
+        assert_eq!(relative, "AutoSave-0/sav.dat");
+    }
+
+    #[test]
+    fn split_location_is_none_when_no_location_matches() {
+        let declared = locations(&["__default"]);
+        let file = save_file("saves/AutoSave-0/sav.dat");
+        let (location, relative) = file.split_location(&declared, |l| l.name.as_str()).unwrap();
+        assert!(location.is_none());
+        assert_eq!(relative, "AutoSave-0/sav.dat");
     }
 }

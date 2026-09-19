@@ -524,35 +524,51 @@ impl GogDl {
     ) -> Result<RemoteConfig, SavesError> {
         self.saves.get_remote_config(game_id, build_name).await
     }
-    /// Downloads a game's cloud saves into `path`, reporting progress one
-    /// file at a time through `tx`.
+    /// Downloads a game's cloud saves into the Wine prefix `prefix`,
+    /// reporting progress one file at a time through `tx`.
     ///
-    /// `path` is the directory the game keeps its saves in — for a game run
-    /// under Wine, the expansion of the
-    /// [`CloudStorageLocation::location`](crate::CloudStorageLocation::location)
-    /// inside the prefix. This crate does not expand Galaxy path expressions,
-    /// so choosing the directory is the caller's job. It is created if
-    /// missing.
+    /// `prefix` is the root of the Wine (or Proton `compatdata`) prefix the
+    /// game runs in, the directory holding `drive_c`. Each of the game's
+    /// [`CloudStorageLocation`](crate::CloudStorageLocation)s from
+    /// [`get_remote_config`](Self::get_remote_config) is expanded to a
+    /// directory: GOG writes a location as `<?VARIABLE?>/path`, and the
+    /// variable stands for a directory of the Windows profile, which lives at
+    /// `<prefix>/drive_c/users/<user>`:
+    ///
+    /// | Variable                     | Directory                 |
+    /// |------------------------------|---------------------------|
+    /// | `SAVED_GAMES`                | `<user>/Saved Games`      |
+    /// | `DOCUMENTS`                  | `<user>/Documents`        |
+    /// | `APPLICATION_DATA_ROAMING`   | `<user>/AppData/Roaming`  |
+    /// | `APPLICATION_DATA_LOCAL`     | `<user>/AppData/Local`    |
+    /// | `APPLICATION_DATA_LOCAL_LOW` | `<user>/AppData/LocalLow` |
+    /// | `INSTALL`                    | `install_path`            |
+    ///
+    /// `install_path` is the game's install directory. Only `<?INSTALL?>`
+    /// locations use it, so it may be any path for a game that has none.
+    ///
+    /// `<user>` is found by looking in `<prefix>/drive_c/users`; the first
+    /// that exists wins: `steamuser` (Proton), then the host's `$USER` or
+    /// `$USERNAME` (plain Wine), then the only directory there that is not
+    /// `Public`. It is only looked up when a location needs it. The text
+    /// after the variable comes from GOG and is treated as untrusted:
+    /// separators are normalized and `..` components are dropped, so a
+    /// location cannot leave its variable's directory.
     ///
     /// Every file in the [`get_save_files`](Self::get_save_files) listing is
-    /// downloaded. Each is written at [`SaveFile::relative_path_in`] beneath
-    /// `path` — its cloud name with the game's location segment removed, but
-    /// only when that leading segment is one of the locations in the game's
-    /// [`get_remote_config`](Self::get_remote_config). A game whose location
-    /// is named `saves` has `saves/AutoSave-0/sav.dat` land at
-    /// `<path>/AutoSave-0/sav.dat`; one whose location is `__default` has
-    /// `saves/__default/profile/slot1.sav` land at
-    /// `<path>/profile/slot1.sav`. Any other directory in the name is kept,
-    /// so files that differ only in their directory stay apart. If the remote
-    /// config cannot be fetched, or declares no cloud storage, no segment is
-    /// treated as a location and only a leading `saves/` is removed; the
-    /// download still proceeds. The names come from GOG and are treated as
-    /// untrusted: separators are normalized, `..` components are dropped, and
-    /// nothing is ever written outside `path`. Existing files are
-    /// overwritten. A game with several cloud save locations shares one
-    /// directory here, with each location's segment removed, so files from
-    /// different locations that have the same path beneath it overwrite one
-    /// another.
+    /// downloaded into the directory of the location it belongs to, at
+    /// [`SaveFile::relative_path_in`] beneath it — its cloud name with the
+    /// location's segment removed. A game whose location is named `saves`
+    /// has `saves/AutoSave-0/sav.dat` land at
+    /// `<directory>/AutoSave-0/sav.dat`; one whose location is `__default`
+    /// has `saves/__default/profile/slot1.sav` land at
+    /// `<directory>/profile/slot1.sav`. A game with several locations gets
+    /// each in its own directory. A file whose name matches none of the
+    /// locations goes into the first one, with only a leading `saves/`
+    /// removed. Any other directory in the name is kept, so files that differ
+    /// only in their directory stay apart. A location's directory is created
+    /// when the first file for it arrives; nothing is ever written outside
+    /// it. Existing files are overwritten.
     ///
     /// Each file is received in full, verified against the `ETag` GOG sends
     /// with it (an MD5 of the stored bytes; a response without one is
@@ -573,11 +589,22 @@ impl GogDl {
     /// token are as for [`get_save_files`](Self::get_save_files).
     ///
     /// # Errors
-    /// - Everything [`get_save_files`](Self::get_save_files) can return.
+    /// - Everything [`get_remote_config`](Self::get_remote_config) and
+    ///   [`get_save_files`](Self::get_save_files) can return. The remote
+    ///   config is required: without the game's locations there is no
+    ///   directory to download into.
+    /// - [`SavesError::CloudStorageNotSupported`] if the game declares no
+    ///   cloud save location.
+    /// - [`SavesError::InvalidSaveLocation`] or
+    ///   [`SavesError::UnknownSaveLocationVariable`] if a location is not a
+    ///   `<?VARIABLE?>` this crate knows, e.g. the macOS-only
+    ///   `<?APPLICATION_SUPPORT?>`.
+    /// - [`SavesError::WineUserDirNotFound`] if a location needs the user
+    ///   directory and none can be found in `prefix`.
     /// - [`SavesError::InvalidSaveFileName`] if a listed name has no path
     ///   left once its `saves/` prefix and location segment are removed.
-    /// - [`SavesError::FileSystemError`] if `path`, or a directory for one
-    ///   of the files, cannot be created or resolved.
+    /// - [`SavesError::FileSystemError`] if a location's directory, or a
+    ///   directory for one of the files, cannot be created or resolved.
     /// - [`SavesError::ClientError`] wrapping
     ///   [`crate::ClientError::HttpError`] if GOG rejects a download (e.g. an
     ///   expired token), or [`crate::ClientError::NetworkError`] if one fails
@@ -591,26 +618,31 @@ impl GogDl {
         &self,
         game_id: i32,
         build_name: &str,
-        path: &Path,
+        prefix: &Path,
+        install_path: &Path,
         tx: mpsc::UnboundedSender<SavesDownloadEvent>,
     ) -> Result<(), SavesError> {
         self.saves
-            .download_save_files(game_id, build_name, path, tx)
+            .download_save_files(game_id, build_name, prefix, install_path, tx)
             .await
     }
-    /// Uploads the files under `path` to a game's cloud saves, reporting
-    /// progress one file at a time through `tx`. The counterpart of
-    /// [`download_save_files`](Self::download_save_files), and `path` means
-    /// the same thing: the directory the game keeps its saves in.
+    /// Uploads a game's saves from the Wine prefix `prefix` to its cloud
+    /// saves, reporting progress one file at a time through `tx`. The
+    /// counterpart of [`download_save_files`](Self::download_save_files), and
+    /// `prefix` and `install_path` mean the same thing: the game's save
+    /// locations are expanded to directories in the same way, as documented
+    /// there.
     ///
-    /// `path` is walked recursively and every regular file in it is uploaded;
-    /// symlinks are skipped. A file at `<path>/profile/slot1.sav` is stored
-    /// as `<location>/profile/slot1.sav`, where `<location>` is the
-    /// [`name`](crate::CloudStorageLocation::name) of the **first** location
-    /// in the game's [`get_remote_config`](Self::get_remote_config) — for a
-    /// game whose location is named `saves`, `<path>/AutoSave-0/sav.dat` is
-    /// stored as `saves/AutoSave-0/sav.dat`, replacing the object the game
-    /// already has. Games with several save locations are not supported yet.
+    /// The directory of each location is walked recursively and every
+    /// regular file in it is uploaded; symlinks are skipped. A location whose
+    /// directory does not exist has nothing to upload and is skipped. A file
+    /// at `<directory>/profile/slot1.sav` is stored as
+    /// `<location>/profile/slot1.sav`, where `<location>` is the
+    /// [`name`](crate::CloudStorageLocation::name) of the location the
+    /// directory belongs to — for a game whose location is named `saves`,
+    /// `<directory>/AutoSave-0/sav.dat` is stored as
+    /// `saves/AutoSave-0/sav.dat`, replacing the object the game already has.
+    /// A game with several locations has each uploaded under its own name.
     /// Files already in the cloud are overwritten; files that exist only in
     /// the cloud are left alone — nothing is ever deleted, and nothing is
     /// compared, so unchanged files are uploaded again.
@@ -637,8 +669,14 @@ impl GogDl {
     /// - Everything [`get_remote_config`](Self::get_remote_config) can
     ///   return, plus [`SavesError::CloudStorageNotSupported`] if the game
     ///   declares no cloud save location.
-    /// - [`SavesError::Io`] if `path` cannot be walked or a file cannot be
-    ///   read or compressed.
+    /// - [`SavesError::InvalidSaveLocation`] or
+    ///   [`SavesError::UnknownSaveLocationVariable`] if a location is not a
+    ///   `<?VARIABLE?>` this crate knows, e.g. the macOS-only
+    ///   `<?APPLICATION_SUPPORT?>`.
+    /// - [`SavesError::WineUserDirNotFound`] if a location needs the user
+    ///   directory and none can be found in `prefix`.
+    /// - [`SavesError::Io`] if a location's directory cannot be walked or a
+    ///   file cannot be read or compressed.
     /// - [`SavesError::InvalidSaveFileName`] if a file's path is not valid
     ///   UTF-8.
     /// - [`SavesError::ClientError`] wrapping
@@ -648,11 +686,12 @@ impl GogDl {
         &self,
         game_id: i32,
         build_name: &str,
-        path: &Path,
+        prefix: &Path,
+        install_path: &Path,
         tx: mpsc::UnboundedSender<SavesUploadEvent>,
     ) -> Result<(), SavesError> {
         self.saves
-            .upload_save_files(game_id, build_name, path, tx)
+            .upload_save_files(game_id, build_name, prefix, install_path, tx)
             .await
     }
 }

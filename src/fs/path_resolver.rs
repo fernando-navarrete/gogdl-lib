@@ -247,7 +247,7 @@ fn normalize_separators(input: &str) -> std::borrow::Cow<'_, str> {
     }
 }
 
-fn sanitize_relative_path(input: &str) -> PathBuf {
+pub(crate) fn sanitize_relative_path(input: &str) -> PathBuf {
     let normalized = normalize_separators(input);
     let path = Path::new(normalized.as_ref());
     let mut safe = PathBuf::new();

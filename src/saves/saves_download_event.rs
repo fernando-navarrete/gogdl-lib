@@ -25,7 +25,8 @@ pub enum SavesDownloadEvent {
         /// The file's name in cloud storage, as in
         /// [`SaveFile::name`](crate::SaveFile::name).
         name: String,
-        /// Where the file will be written: inside the directory passed to
+        /// Where the file will be written: inside the directory its save
+        /// location expands to in the Wine prefix passed to
         /// [`GogDl::download_save_files`](crate::GogDl::download_save_files).
         destination: PathBuf,
         /// The file's size as stored in the cloud, in bytes — the

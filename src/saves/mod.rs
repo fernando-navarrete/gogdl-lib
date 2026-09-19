@@ -3,6 +3,7 @@ mod error;
 mod game_save_ids;
 mod remote_config;
 mod save_files;
+mod save_location;
 mod saves_auth;
 mod saves_download_event;
 mod saves_downloader;
