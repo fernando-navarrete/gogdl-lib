@@ -1,0 +1,185 @@
+use std::{
+    io::Write,
+    path::{Path, PathBuf},
+};
+
+use chrono::{DateTime, SecondsFormat, Utc};
+use flate2::{Compression, write::GzEncoder};
+use tokio::sync::mpsc;
+
+use crate::{
+    SavesError,
+    client::HttpClient,
+    saves::{checksum::md5_hex, saves_auth::SavesAuth, saves_upload_event::SavesUploadEvent},
+};
+
+/// What GOG Galaxy's own client identifies itself as when syncing saves.
+const GALAXY_USER_AGENT: &str = "GOGGalaxyCommunicationService/2.0.4.164 (Windows_32bit)";
+
+pub struct SavesUploader {
+    pub client: HttpClient,
+    pub auth: SavesAuth,
+    pub client_id: String,
+}
+
+impl SavesUploader {
+    pub fn new(client: HttpClient, auth: SavesAuth, client_id: String) -> Self {
+        Self {
+            client,
+            auth,
+            client_id,
+        }
+    }
+
+    /// Uploads every file found under `path` (recursively; symlinks are
+    /// skipped) to the cloud location called `location_name`, at the name
+    /// [`remote_name`] gives it.
+    ///
+    /// Files go up one after another, gzip-compressed, each carrying its
+    /// local modification time. Not retried: the first failure aborts the
+    /// call, leaving the files before it uploaded.
+    pub async fn upload_files(
+        &self,
+        path: &Path,
+        location_name: &str,
+        tx: mpsc::UnboundedSender<SavesUploadEvent>,
+    ) -> Result<(), SavesError> {
+        let files = list_files(path).await?;
+
+        tx.send(SavesUploadEvent::Preparing {
+            total_files: files.len(),
+        })
+        .ok();
+
+        for (source, relative) in files {
+            let name = remote_name(location_name, &relative);
+            self.upload_file(&source, &name, &tx).await?;
+        }
+        Ok(())
+    }
+
+    async fn upload_file(
+        &self,
+        source: &Path,
+        name: &str,
+        tx: &mpsc::UnboundedSender<SavesUploadEvent>,
+    ) -> Result<(), SavesError> {
+        let contents = tokio::fs::read(source).await?;
+        let modified: DateTime<Utc> = tokio::fs::metadata(source).await?.modified()?.into();
+        let modified = modified.to_rfc3339_opts(SecondsFormat::Secs, true);
+
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::new(6));
+        encoder.write_all(&contents)?;
+        let compressed = encoder.finish()?;
+        let etag = md5_hex(&compressed);
+
+        let mut url = self.auth.object_url(&self.client_id, name)?;
+        url.query_pairs_mut().append_pair(
+            "_gog_request_id",
+            &format!("{:032x}", rand::random::<u128>()),
+        );
+        let bearer = format!("Bearer {}", self.auth.access_token);
+
+        tx.send(SavesUploadEvent::FileStarted {
+            name: name.to_string(),
+            source: source.to_path_buf(),
+            total_bytes: compressed.len() as u64,
+        })
+        .ok();
+
+        let progress_tx = tx.clone();
+        self.client
+            .put_stream(
+                url.as_str(),
+                Some(&[
+                    ("Authorization", &bearer),
+                    ("X-Object-Meta-LocalLastModified", &modified),
+                    ("Etag", &etag),
+                    ("Content-Encoding", "gzip"),
+                    ("Content-Type", "application/octet-stream"),
+                    ("Accept", "*/*"),
+                    ("Expect", "100-continue"),
+                    ("User-Agent", GALAXY_USER_AGENT),
+                    ("X-Object-Meta-User-Agent", GALAXY_USER_AGENT),
+                ]),
+                compressed,
+                move |sent| {
+                    progress_tx.send(SavesUploadEvent::Progress(sent)).ok();
+                },
+            )
+            .await?;
+
+        tx.send(SavesUploadEvent::FileFinished {
+            name: name.to_string(),
+        })
+        .ok();
+        Ok(())
+    }
+}
+
+/// The cloud-side name for the local file at `relative` (a `/`-separated
+/// path under the save directory) in the location `location_name`:
+/// `saves/<location>/<relative>`. The inverse of
+/// [`SaveFile::relative_path`](crate::SaveFile::relative_path).
+fn remote_name(location_name: &str, relative: &str) -> String {
+    format!("saves/{location_name}/{relative}")
+}
+
+/// Every regular file under `base`, as `(absolute path, relative path)`
+/// pairs, with relative paths `/`-separated and the list sorted by them so
+/// uploads happen in a stable order. Symlinks are skipped, so nothing
+/// outside `base` can be reached through the walk.
+async fn list_files(base: &Path) -> Result<Vec<(PathBuf, String)>, SavesError> {
+    let mut files = Vec::new();
+    let mut pending = vec![base.to_path_buf()];
+
+    while let Some(dir) = pending.pop() {
+        let mut entries = tokio::fs::read_dir(&dir).await?;
+        while let Some(entry) = entries.next_entry().await? {
+            let file_type = entry.file_type().await?;
+            let path = entry.path();
+            if file_type.is_dir() {
+                pending.push(path);
+            } else if file_type.is_file() {
+                let relative = path
+                    .strip_prefix(base)
+                    .ok()
+                    .and_then(|relative| {
+                        relative
+                            .components()
+                            .map(|part| part.as_os_str().to_str())
+                            .collect::<Option<Vec<_>>>()
+                    })
+                    .map(|parts| parts.join("/"))
+                    .ok_or_else(|| {
+                        SavesError::InvalidSaveFileName(path.to_string_lossy().into_owned())
+                    })?;
+                files.push((path, relative));
+            }
+        }
+    }
+
+    files.sort_by(|a, b| a.1.cmp(&b.1));
+    Ok(files)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::SaveFile;
+
+    #[test]
+    fn remote_name_round_trips_with_relative_path() {
+        let name = remote_name("__default", "profile/slot1.sav");
+        assert_eq!(name, "saves/__default/profile/slot1.sav");
+
+        let file = SaveFile {
+            bytes: 0,
+            last_modified: DateTime::<Utc>::UNIX_EPOCH,
+            hash: String::new(),
+            name,
+            content_type: String::new(),
+        };
+        assert_eq!(file.relative_path().unwrap(), "profile/slot1.sav");
+    }
+}

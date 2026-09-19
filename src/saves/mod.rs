@@ -1,13 +1,20 @@
+mod checksum;
 mod error;
 mod game_save_ids;
 mod remote_config;
 mod save_files;
 mod saves_auth;
+mod saves_download_event;
+mod saves_downloader;
 mod saves_manager;
+mod saves_upload_event;
+mod saves_uploader;
 
 pub use error::SavesError;
 pub use game_save_ids::GameSaveIds;
 pub use remote_config::CloudStorageLocation;
 pub use remote_config::RemoteConfig;
 pub use save_files::SaveFile;
+pub use saves_download_event::SavesDownloadEvent;
 pub use saves_manager::SavesManager;
+pub use saves_upload_event::SavesUploadEvent;

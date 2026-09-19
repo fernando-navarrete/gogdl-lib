@@ -1,6 +1,6 @@
 //! Rust client for GOG's Galaxy backend: authentication, catalog browsing,
-//! downloading/repairing/verifying game installs, and listing Proton-GE
-//! releases.
+//! downloading/repairing/verifying game installs, syncing cloud saves, and
+//! listing Proton-GE releases.
 //!
 //! [`GogDl`] is the only entry point — construct one with
 //! [`GogDl::new_from_client`] and call its methods; every other type in this
@@ -92,4 +92,6 @@ pub use secure_links::SecureLinksError;
 pub use saves::CloudStorageLocation;
 pub use saves::RemoteConfig;
 pub use saves::SaveFile;
+pub use saves::SavesDownloadEvent;
 pub use saves::SavesError;
+pub use saves::SavesUploadEvent;

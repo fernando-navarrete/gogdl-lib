@@ -26,6 +26,25 @@ pub struct SaveFile {
 }
 
 impl SaveFile {
+    /// The file's path relative to the directory the caller keeps this
+    /// game's saves in: [`name`](Self::name) without its `saves/` prefix
+    /// (tolerated if absent) and without the leading location segment.
+    ///
+    /// `saves/__default/profile/slot1.sav` becomes `profile/slot1.sav`. The
+    /// result is still untrusted text — it is resolved against the caller's
+    /// directory by `PathResolver`, which rejects anything that escapes it.
+    ///
+    /// # Errors
+    /// [`SavesError::InvalidSaveFileName`] if nothing is left after the
+    /// location segment.
+    pub fn relative_path(&self) -> Result<&str, SavesError> {
+        let name = self.name.strip_prefix("saves/").unwrap_or(&self.name);
+        match name.split_once('/') {
+            Some((_location, relative)) if !relative.is_empty() => Ok(relative),
+            _ => Err(SavesError::InvalidSaveFileName(self.name.clone())),
+        }
+    }
+
     /// Not reachable from outside the crate — `SavesManager` is not
     /// exported. Call
     /// [`GogDl::get_save_files`](crate::GogDl::get_save_files) instead,
@@ -63,5 +82,48 @@ impl SaveFile {
             .await?;
 
         Ok(response)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn save_file(name: &str) -> SaveFile {
+        SaveFile {
+            bytes: 0,
+            last_modified: DateTime::<Utc>::UNIX_EPOCH,
+            hash: String::new(),
+            name: name.to_string(),
+            content_type: String::new(),
+        }
+    }
+
+    #[test]
+    fn relative_path_strips_prefix_and_location() {
+        let file = save_file("saves/__default/profile/slot1.sav");
+        assert_eq!(file.relative_path().unwrap(), "profile/slot1.sav");
+    }
+
+    #[test]
+    fn relative_path_handles_file_directly_under_location() {
+        let file = save_file("saves/__default/config.ini");
+        assert_eq!(file.relative_path().unwrap(), "config.ini");
+    }
+
+    #[test]
+    fn relative_path_tolerates_missing_saves_prefix() {
+        let file = save_file("__default/config.ini");
+        assert_eq!(file.relative_path().unwrap(), "config.ini");
+    }
+
+    #[test]
+    fn relative_path_rejects_name_with_nothing_after_location() {
+        for name in ["saves/__default", "saves/__default/", "config.ini"] {
+            assert!(matches!(
+                save_file(name).relative_path(),
+                Err(SavesError::InvalidSaveFileName(_))
+            ));
+        }
     }
 }

@@ -1,6 +1,9 @@
 use serde::Deserialize;
 
-use crate::saves::{error::SavesError, saves_manager::SavesManager};
+use crate::{
+    ClientError,
+    saves::{error::SavesError, saves_manager::SavesManager},
+};
 
 /// A game-scoped GOG auth grant for the cloud saves service.
 ///
@@ -82,11 +85,70 @@ impl SavesAuth {
         }
         Ok(saves_auth)
     }
+    /// The `cloudstorage.gog.com` URL of the object called `name` in this
+    /// user's storage area for the game `client_id`. `name` is the full
+    /// cloud-side name, e.g. `saves/__default/slot1.sav`; each `/`-separated
+    /// segment is percent-encoded, so names with spaces or `#` are safe.
+    pub fn object_url(&self, client_id: &str, name: &str) -> Result<reqwest::Url, SavesError> {
+        let mut url = reqwest::Url::parse("https://cloudstorage.gog.com/v1/")
+            .map_err(ClientError::UrlParseError)?;
+        url.path_segments_mut()
+            .map_err(|_| {
+                ClientError::UrlParseError(url::ParseError::RelativeUrlWithCannotBeABaseBase)
+            })?
+            .pop_if_empty()
+            .push(&self.user_id)
+            .push(client_id)
+            .extend(name.split('/'));
+        Ok(url)
+    }
     /// Whether the access token is still usable, with a 60-second margin
     /// subtracted from `valid_until` to absorb clock skew and in-flight
     /// requests. `false` if `valid_until` was never set.
     pub fn is_valid(&self) -> bool {
         self.valid_until
             .map_or(false, |t| t > chrono::Utc::now().timestamp() - 60)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn auth() -> SavesAuth {
+        SavesAuth {
+            access_token: String::new(),
+            refresh_token: String::new(),
+            expires_in: 0,
+            token_type: String::new(),
+            session_id: String::new(),
+            scope: None,
+            user_id: "42".to_string(),
+            valid_until: None,
+        }
+    }
+
+    #[test]
+    fn object_url_addresses_the_object_in_the_users_storage_area() {
+        let url = auth()
+            .object_url("client", "saves/__default/profile/slot1.sav")
+            .unwrap();
+        assert_eq!(
+            url.as_str(),
+            "https://cloudstorage.gog.com/v1/42/client/saves/__default/profile/slot1.sav"
+        );
+    }
+
+    #[test]
+    fn object_url_escapes_characters_that_would_end_the_path() {
+        let url = auth()
+            .object_url("client", "saves/__default/my save #1?.sav")
+            .unwrap();
+        assert_eq!(
+            url.path(),
+            "/v1/42/client/saves/__default/my%20save%20%231%3F.sav"
+        );
+        assert_eq!(url.query(), None);
+        assert_eq!(url.fragment(), None);
     }
 }

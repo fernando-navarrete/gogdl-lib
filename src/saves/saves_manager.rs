@@ -1,14 +1,15 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, path::Path, sync::Arc};
 
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, mpsc};
 
 use crate::{
     client::HttpClient,
     depot::DepotManager,
     games::GamesManager,
     saves::{
-        GameSaveIds, SaveFile, error::SavesError, remote_config::RemoteConfig,
-        saves_auth::SavesAuth,
+        GameSaveIds, SaveFile, SavesDownloadEvent, SavesUploadEvent, error::SavesError,
+        remote_config::RemoteConfig, saves_auth::SavesAuth, saves_downloader::SavesDownloader,
+        saves_uploader::SavesUploader,
     },
 };
 
@@ -92,5 +93,49 @@ impl SavesManager {
         build_name: &str,
     ) -> Result<RemoteConfig, SavesError> {
         RemoteConfig::get_remote_config(self, game_id, build_name).await
+    }
+
+    /// Downloads every file in the game's cloud save listing into `path`.
+    /// See
+    /// [`GogDl::download_save_files`](crate::GogDl::download_save_files) for
+    /// the public-facing contract.
+    pub async fn download_save_files(
+        &self,
+        game_id: i32,
+        build_name: &str,
+        path: &Path,
+        tx: mpsc::UnboundedSender<SavesDownloadEvent>,
+    ) -> Result<(), SavesError> {
+        let auth = self.get_saves_auth(game_id, build_name).await?;
+        let game_ids = self.get_game_save_ids(game_id, build_name).await?;
+        let files = self.get_save_files(game_id, build_name).await?;
+
+        SavesDownloader::new(self.client.clone(), auth, game_ids.client_id)
+            .download_files(&files, path, tx)
+            .await
+    }
+
+    /// Uploads every file under `path` to the game's cloud saves. See
+    /// [`GogDl::upload_save_files`](crate::GogDl::upload_save_files) for the
+    /// public-facing contract.
+    pub async fn upload_save_files(
+        &self,
+        game_id: i32,
+        build_name: &str,
+        path: &Path,
+        tx: mpsc::UnboundedSender<SavesUploadEvent>,
+    ) -> Result<(), SavesError> {
+        let remote_config = self.get_remote_config(game_id, build_name).await?;
+        let location = remote_config
+            .get_locations()?
+            .into_iter()
+            .next()
+            .ok_or(SavesError::CloudStorageNotSupported)?;
+        let auth = self.get_saves_auth(game_id, build_name).await?;
+        let game_ids = self.get_game_save_ids(game_id, build_name).await?;
+
+        SavesUploader::new(self.client.clone(), auth, game_ids.client_id)
+            .upload_files(path, &location.name, tx)
+            .await
     }
 }

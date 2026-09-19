@@ -4,6 +4,7 @@ use bytes::Bytes;
 use flate2::read::ZlibDecoder;
 use futures_util::{StreamExt, future::BoxFuture};
 use reqwest::Client;
+use reqwest::header::HeaderMap;
 use serde::de::DeserializeOwned;
 
 use crate::{
@@ -104,6 +105,93 @@ impl HttpClient {
             if let Err(e) = f(chunk).await {
                 return Err(ClientError::ChunkStreamCallbackError(e));
             }
+        }
+        Ok(())
+    }
+    /// Like [`stream_chunk`](Self::stream_chunk), but sends `headers` with the
+    /// request and hands back the response headers once the body has been
+    /// fully streamed. Not retried.
+    pub async fn stream_chunk_with_headers<'a>(
+        &'a self,
+        url: &str,
+        headers: Option<&[(&str, &str)]>,
+        mut f: impl FnMut(Bytes) -> BoxFuture<'a, std::io::Result<()>>,
+    ) -> Result<HeaderMap, ClientError> {
+        let url = reqwest::Url::parse(url)?;
+        let mut request = self.client.get(url);
+        if let Some(headers) = headers {
+            for (key, value) in headers {
+                request = request.header(*key, *value);
+            }
+        }
+
+        let response = request.send().await?;
+
+        if !response.status().is_success() {
+            let response_status = response.status();
+            let response_text = response.text().await?;
+            return Err(ClientError::HttpError {
+                status: response_status,
+                body: response_text,
+            });
+        }
+
+        let response_headers = response.headers().clone();
+        let mut stream = response.bytes_stream();
+
+        while let Some(chunk) = stream.next().await {
+            let chunk = match chunk {
+                Ok(chunk) => chunk,
+                Err(e) => return Err(ClientError::NetworkError(e)),
+            };
+            if let Err(e) = f(chunk).await {
+                return Err(ClientError::ChunkStreamCallbackError(e));
+            }
+        }
+        Ok(response_headers)
+    }
+    /// Sends `body` as a PUT request, in 16 KiB chunks, calling `on_progress`
+    /// with each chunk's length as it is handed to the transport (not when
+    /// the server acknowledges it). Not retried.
+    pub async fn put_stream(
+        &self,
+        url: &str,
+        headers: Option<&[(&str, &str)]>,
+        body: Vec<u8>,
+        mut on_progress: impl FnMut(usize) + Send + 'static,
+    ) -> Result<(), ClientError> {
+        const CHUNK_SIZE: usize = 16 * 1024;
+
+        let url = reqwest::Url::parse(url)?;
+        let mut request = self.client.put(url).header("Content-Length", body.len());
+        if let Some(headers) = headers {
+            for (key, value) in headers {
+                request = request.header(*key, *value);
+            }
+        }
+
+        let mut remaining = Bytes::from(body);
+        let chunks = futures_util::stream::iter(std::iter::from_fn(move || {
+            if remaining.is_empty() {
+                return None;
+            }
+            let chunk = remaining.split_to(remaining.len().min(CHUNK_SIZE));
+            on_progress(chunk.len());
+            Some(Ok::<_, std::io::Error>(chunk))
+        }));
+
+        let response = request
+            .body(reqwest::Body::wrap_stream(chunks))
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let response_status = response.status();
+            let response_text = response.text().await?;
+            return Err(ClientError::HttpError {
+                status: response_status,
+                body: response_text,
+            });
         }
         Ok(())
     }

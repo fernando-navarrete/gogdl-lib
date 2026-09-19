@@ -13,7 +13,7 @@ use crate::gogdl::error::GogDlError;
 use crate::proton::{ProtonDownloadEvent, ProtonGeRelease, ProtonGeReleasesPage, ProtonManager};
 use crate::saves::{SavesError, SavesManager};
 use crate::secure_links::SecureLinksManager;
-use crate::{DownloadStageEvent, RemoteConfig, SaveFile};
+use crate::{DownloadStageEvent, RemoteConfig, SaveFile, SavesDownloadEvent, SavesUploadEvent};
 
 /// The single entry point to this crate. Every operation — auth, catalog
 /// browsing, downloading — is a method on `GogDl`; the managers it holds
@@ -523,5 +523,125 @@ impl GogDl {
         build_name: &str,
     ) -> Result<RemoteConfig, SavesError> {
         self.saves.get_remote_config(game_id, build_name).await
+    }
+    /// Downloads a game's cloud saves into `path`, reporting progress one
+    /// file at a time through `tx`.
+    ///
+    /// `path` is the directory the game keeps its saves in — for a game run
+    /// under Wine, the expansion of the
+    /// [`CloudStorageLocation::location`](crate::CloudStorageLocation::location)
+    /// inside the prefix. This crate does not expand Galaxy path expressions,
+    /// so choosing the directory is the caller's job. It is created if
+    /// missing.
+    ///
+    /// Every file in the [`get_save_files`](Self::get_save_files) listing is
+    /// downloaded. Each is written at [`SaveFile::relative_path`] beneath
+    /// `path` — its cloud name without the `saves/` prefix and the location
+    /// segment — so `saves/__default/profile/slot1.sav` lands at
+    /// `<path>/profile/slot1.sav`. The names come from GOG and are treated as
+    /// untrusted: separators are normalized, `..` components are dropped, and
+    /// nothing is ever written outside `path`. Existing files are
+    /// overwritten. A game with several cloud save locations shares one
+    /// directory here, so call this once per directory only if their file
+    /// names cannot collide.
+    ///
+    /// Each file is received in full, verified against the `ETag` GOG sends
+    /// with it (an MD5 of the stored bytes; a response without one is
+    /// accepted unchecked), decompressed, written, and given the modification
+    /// time GOG recorded when the file was uploaded.
+    ///
+    /// # Progress
+    ///
+    /// Reported as [`SavesDownloadEvent`]s: one `Preparing`, then for each
+    /// file `FileStarted`, some `Progress` deltas, and `FileFinished`. Files
+    /// are downloaded one at a time, so `Progress` always belongs to the most
+    /// recent `FileStarted`. The future resolves only when the whole job is
+    /// done; drain the receiver on another task meanwhile.
+    ///
+    /// **Nothing is retried**, including on network errors. The first
+    /// failure aborts the call, and files downloaded before it stay on disk.
+    /// Authentication, caching and the need for a still-valid session access
+    /// token are as for [`get_save_files`](Self::get_save_files).
+    ///
+    /// # Errors
+    /// - Everything [`get_save_files`](Self::get_save_files) can return.
+    /// - [`SavesError::InvalidSaveFileName`] if a listed name has no path
+    ///   beneath its location segment.
+    /// - [`SavesError::FileSystemError`] if `path`, or a directory for one
+    ///   of the files, cannot be created or resolved.
+    /// - [`SavesError::ClientError`] wrapping
+    ///   [`crate::ClientError::HttpError`] if GOG rejects a download (e.g. an
+    ///   expired token), or [`crate::ClientError::NetworkError`] if one fails
+    ///   in transit.
+    /// - [`SavesError::HashMismatch`] if a file's bytes do not match its
+    ///   `ETag`; that file is not written.
+    /// - [`SavesError::InvalidHeader`] if a file's modification time header
+    ///   cannot be parsed; that file is not written.
+    /// - [`SavesError::Io`] if decompressing or writing a file fails.
+    pub async fn download_save_files(
+        &self,
+        game_id: i32,
+        build_name: &str,
+        path: &Path,
+        tx: mpsc::UnboundedSender<SavesDownloadEvent>,
+    ) -> Result<(), SavesError> {
+        self.saves
+            .download_save_files(game_id, build_name, path, tx)
+            .await
+    }
+    /// Uploads the files under `path` to a game's cloud saves, reporting
+    /// progress one file at a time through `tx`. The counterpart of
+    /// [`download_save_files`](Self::download_save_files), and `path` means
+    /// the same thing: the directory the game keeps its saves in.
+    ///
+    /// `path` is walked recursively and every regular file in it is uploaded;
+    /// symlinks are skipped. A file at `<path>/profile/slot1.sav` is stored
+    /// as `saves/<location>/profile/slot1.sav`, where `<location>` is the
+    /// [`name`](crate::CloudStorageLocation::name) of the **first** location
+    /// in the game's [`get_remote_config`](Self::get_remote_config), usually
+    /// `__default`. Games with several save locations are not supported yet.
+    /// Files already in the cloud are overwritten; files that exist only in
+    /// the cloud are left alone — nothing is ever deleted, and nothing is
+    /// compared, so unchanged files are uploaded again.
+    ///
+    /// Each file is gzip-compressed at level 6 and sent with its local
+    /// modification time and the MD5 of the compressed bytes. The whole
+    /// compressed file is held in memory while it is sent.
+    ///
+    /// # Progress
+    ///
+    /// Reported as [`SavesUploadEvent`]s: one `Preparing`, then for each file
+    /// `FileStarted`, some `Progress` deltas, and `FileFinished`. Files are
+    /// uploaded one at a time, so `Progress` always belongs to the most
+    /// recent `FileStarted`. Deltas count compressed bytes as they are
+    /// queued for sending, not as GOG acknowledges them. Drain the receiver
+    /// on another task while the future runs.
+    ///
+    /// **Nothing is retried**, including on network errors. The first
+    /// failure aborts the call, and files uploaded before it stay uploaded.
+    /// Authentication, caching and the need for a still-valid session access
+    /// token are as for [`get_save_files`](Self::get_save_files).
+    ///
+    /// # Errors
+    /// - Everything [`get_remote_config`](Self::get_remote_config) can
+    ///   return, plus [`SavesError::CloudStorageNotSupported`] if the game
+    ///   declares no cloud save location.
+    /// - [`SavesError::Io`] if `path` cannot be walked or a file cannot be
+    ///   read or compressed.
+    /// - [`SavesError::InvalidSaveFileName`] if a file's path is not valid
+    ///   UTF-8.
+    /// - [`SavesError::ClientError`] wrapping
+    ///   [`crate::ClientError::HttpError`] if GOG rejects an upload, or
+    ///   [`crate::ClientError::NetworkError`] if one fails in transit.
+    pub async fn upload_save_files(
+        &self,
+        game_id: i32,
+        build_name: &str,
+        path: &Path,
+        tx: mpsc::UnboundedSender<SavesUploadEvent>,
+    ) -> Result<(), SavesError> {
+        self.saves
+            .upload_save_files(game_id, build_name, path, tx)
+            .await
     }
 }
