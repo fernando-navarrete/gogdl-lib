@@ -7,7 +7,8 @@ use crate::client::{HttpClient, TokenObserver};
 use crate::depot::{DepotManager, ProductDetails};
 use crate::downloader::{DownloadManager, DownloadableProduct, ProductBundle, VerificationEvent};
 use crate::games::{
-    GameBuilds, GameDetails, GameLinks, GameScreenshots, GameSummary, GamesManager, OwnedProducts,
+    GameBuilds, GameDetails, GameLinks, GameScreenshots, GameSummary, GamesManager, OwnedGames,
+    OwnedProducts,
 };
 use crate::gogdl::error::GogDlError;
 use crate::proton::{ProtonDownloadEvent, ProtonGeRelease, ProtonGeReleasesPage, ProtonManager};
@@ -211,15 +212,8 @@ impl GogDl {
         let auth_string = self.client.login_with_code(code).await?;
         Ok(auth_string)
     }
-    /// The IDs of every product the authenticated account owns. Cached
-    /// in-process for the lifetime of this `GogDl` after the first
-    /// successful call — the network is not re-checked on later calls.
-    ///
-    /// # Errors
-    /// [`GogDlError::GameError`] wrapping [`crate::GamesError::ClientError`] on
-    /// auth or transport failure.
-    pub async fn get_owned_products(&self) -> Result<OwnedProducts, GogDlError> {
-        let owned_games = self.games.get_owned_products().await?;
+    pub async fn get_owned_games(&self) -> Result<OwnedGames, GogDlError> {
+        let owned_games = self.games.get_owned_games().await?;
         Ok(owned_games)
     }
     /// Details for a single game. Cached per `game_id` after the first call.

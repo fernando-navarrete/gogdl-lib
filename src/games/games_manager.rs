@@ -4,6 +4,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::client::HttpClient;
+use crate::games::OwnedGames;
 use crate::games::error::GamesError;
 use crate::games::game_build::GameBuilds;
 use crate::games::game_details::GameDetails;
@@ -61,5 +62,8 @@ impl GamesManager {
         game_id: ProductId,
     ) -> Result<GameScreenshots, GamesError> {
         GameScreenshots::get_game_screenshots(self, game_id).await
+    }
+    pub async fn get_owned_games(&self) -> Result<OwnedGames, GamesError> {
+        OwnedGames::get_owned_games(self).await
     }
 }
