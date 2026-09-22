@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use crate::{CloudStorageLocation, SavesError, fs::sanitize_relative_path};
 
 /// One of a game's cloud save locations, expanded to a directory.
-pub(crate) struct ResolvedSaveLocation {
+pub struct ResolvedSaveLocation {
     /// The location's alias from the remote config (`__default`, `saves`, …),
     /// which is also the leading segment of its files' cloud names.
     pub name: String,
@@ -49,7 +49,7 @@ enum Base {
 ///   table, such as the macOS-only `APPLICATION_SUPPORT`.
 /// - [`SavesError::WineUserDirNotFound`] if a location needs the user
 ///   directory and none can be identified.
-pub(crate) async fn resolve_locations(
+pub async fn resolve_locations(
     locations: &[CloudStorageLocation],
     prefix: &Path,
     install_path: &Path,

@@ -95,7 +95,7 @@ impl SaveFile {
     /// of `locations` the name belongs to — `None` when no declared location
     /// matched (only a leading `saves/` was dropped). `name_of` reads a
     /// location's alias from whatever type the caller keeps them in.
-    pub(crate) fn split_location<'a, 'l, T>(
+    pub fn split_location<'a, 'l, T>(
         &'a self,
         locations: &'l [T],
         name_of: impl Fn(&T) -> &str,
