@@ -263,7 +263,7 @@ pub(crate) fn sanitize_relative_path(input: &str) -> PathBuf {
     safe
 }
 
-fn sanitize_filename(name: &str) -> String {
+pub(crate) fn sanitize_filename(name: &str) -> String {
     let mut result: String = name
         .chars()
         .map(|c| match c {

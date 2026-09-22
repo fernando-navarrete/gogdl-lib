@@ -389,11 +389,6 @@ redefinition warnings gone. See the [clippy](#low--style--clippy) section.
   "safe" comment), right after taking the `Vec` by value. For `DepotFile` each clone copies a
   `Vec<Chunk>`. `.into_iter().flatten().collect()` does the filter, the unwrap and zero clones.
 
-- [ ] **`download_proton_release` guesses the extracted directory from the asset filename.**
-  It returns `dest.join(asset.name.strip_suffix(".tar.gz"))` (`proton_downloader.rs:149`) without
-  checking that the archive's top-level entry has that name. It does today for GE-Proton, but the
-  returned `PathBuf` is unverified. The first `Extracted` entry's leading component is right there.
-
 - [ ] **`HttpClient::stream_chunk` is now a generic "GET a URL and stream it" and misnamed.**
   `004e68e` removed everything chunk-specific (`client.rs:78`), and `410000f` uses it for a
   multi-hundred-MB tarball. Rename, e.g. `stream_url`.

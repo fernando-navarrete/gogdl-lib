@@ -130,9 +130,17 @@ impl GogDl {
     /// network response is decompressed and extracted directly as it
     /// arrives, bounded by a fixed-size in-memory buffer regardless of the
     /// tarball's size. `path` is the *parent* directory the release's own
-    /// top-level directory is extracted into (e.g. `GE-Proton11-6/`) and is
-    /// created (and canonicalized) if missing; the returned [`PathBuf`] is
-    /// that extracted directory.
+    /// top-level directory is extracted into and is created (and
+    /// canonicalized) if missing.
+    ///
+    /// Once extraction finishes, the extracted directory is renamed to
+    /// `release.tag_name` (sanitized for the filesystem) regardless of what
+    /// it was named inside the tarball — some Proton-GE releases ship
+    /// theirs with an architecture suffix, e.g. `GE-Proton10-4-x86_64` for
+    /// tag `GE-Proton10-4`, which breaks frontends expecting the directory
+    /// to match the release tag. The returned [`PathBuf`] is
+    /// `path/<tag_name>`; if a directory with that name already exists
+    /// there, it's replaced.
     ///
     /// The transfer is gated on the destination disk having at least the
     /// tarball's compressed size free before a single byte is read — a
@@ -142,8 +150,10 @@ impl GogDl {
     /// Reports progress on `tx` as [`ProtonDownloadEvent`]: one `Downloading`
     /// with the compressed total size, then a `Progress` delta per network
     /// read, interleaved with an `Extracted` event per file/directory/symlink
-    /// written to disk. Resolves only once the whole operation finishes or
-    /// fails — drain `tx`'s paired receiver concurrently on another task.
+    /// written to disk. `Extracted` paths reflect the archive's own layout,
+    /// i.e. *before* the tag-directory rename above. Resolves only once the
+    /// whole operation finishes or fails — drain `tx`'s paired receiver
+    /// concurrently on another task.
     ///
     /// **Not resumable** — there is no retry loop here, unlike
     /// [`download_game`](Self::download_game). A failure partway through
@@ -155,8 +165,11 @@ impl GogDl {
     /// [`crate::ProtonError::NoSuitableAsset`] if `release` has no Linux
     /// x86_64 tarball, [`crate::ProtonError::NotEnoughFreeSpace`] or
     /// [`crate::ProtonError::CouldNotResolveFreeSpace`] if the pre-flight
-    /// space check fails, or [`crate::ProtonError::Io`] for a network, disk,
-    /// or extraction failure.
+    /// space check fails, [`crate::ProtonError::ExtractionError`] if the
+    /// archive has no single top-level directory to rename or
+    /// `release.tag_name` sanitizes to an empty name, or
+    /// [`crate::ProtonError::Io`] for a network, disk, or extraction
+    /// failure.
     pub async fn download_proton_release(
         &self,
         release: &ProtonGeRelease,
