@@ -1,428 +1,550 @@
 # GAPS.md
 
-Open findings for `gogdl-lib`. Current tree: HEAD **`e4596b6`** ("Refine cloud save authentication
-and listing") on `feature/saves`, tagged **`v1.0.4`**. The `restart` branch has since been merged
-into `main`, which sits at `8682797` (`v1.0.1`); `feature/saves` is nine commits ahead of it (the
-cloud saves work plus the `v1.0.2`–`v1.0.4` bumps). **`lumen-cli` (sibling repo) is pinned to
-`v1.0.4`** (`Cargo.toml:12`, `Cargo.lock` source `tag=v1.0.4#e4596b6`), a tag reachable only from
-`feature/saves` (and `origin/feature/saves`), not from `main`. Merge before retiring that branch.
-This pass did not rebuild `lumen-cli` against this tree.
+Open findings for `gogdl-lib`. Current tree: HEAD **`6b4b7f3`** ("Abort download batches on terminal
+chunk failures") on **`main`**, `Cargo.toml` at `1.0.9`. `feature/saves` has been merged into `main`,
+so every `v1.0.x` tag is now reachable from `main`. The newest tag, **`v1.0.9`** (`95c7d21`), is
+three commits behind HEAD. Those three commits (`26ea6c4` Proton rename, `a813975` visibility changes,
+`6b4b7f3` batch abort) are unreleased. **`lumen-cli` (sibling repo) is pinned to `v1.0.8`**
+(`Cargo.toml:12`, `Cargo.lock` source `tag=v1.0.8#a458a6b`), which is one tag behind and doesn't have
+the Wine-prefix save-location resolution from `abfdda3`. This pass did not rebuild `lumen-cli`
+against this tree.
 
-**What changed since the last pass of this document (`66105ed`, on top of `v0.0.13-restart`),
-39 commits in all:**
+**What changed since the last full pass of this document (`e4596b6`, `v1.0.4`), 13 commits in all:**
 
-1. **Proton-GE support** (`7d73422`, `ea961bb`, `767f4ff`, `410000f`, `34a2c52`, `51cb054`,
-   `b9a3e88`, `2f9bbe1`, `121b906`, `8682797`). New `src/proton/` module:
-   `GogDl::get_proton_releases`, `get_proton_release_by_tag` and `download_proton_release`, which
-   streams a GitHub release tarball straight through gzip and `tar` into place. New `tar` and
-   `tokio-util` dependencies.
-2. **Cloud saves, listing only** (`2ad6a74` → `e4596b6`). New `src/saves/` module:
-   `GogDl::get_save_files` exchanges the session refresh token for a game-scoped grant using the
-   build metadata's `client_id`/`client_secret`, then lists `cloudstorage.gog.com`. Grants and
-   credentials are cached per `(game_id, build_name)`. No download or upload yet.
-3. **Downloader plumbing.** `004e68e` moved secure-link resolution out of `HttpClient::stream_chunk`
-   and into `download_files`'s retry loop, deleting `ClientError::SecureLinksError { inner: String }`
-   in favor of the structured `DownloadError::SecureLinksError`. `c8170e2` gave
-   `ChunkHashMismatch` its detail. `f4d7388` wraps the zlib decoder in a `Mutex` behind a
-   `BoxFuture` callback so `stream_chunk` can be shared with the Proton downloader. `cb2d6a1`
-   changed the verify/allocate helpers to take owned `Vec`s and `Arc<PathResolver>`. `fs/` moved
-   from `downloader::fs` to the crate root.
-4. **Client.** `7a57534` added a `headers: Option<&[(&str, &str)]>` parameter to
-   `fetch`/`fetch_no_retry` (every existing call site passes `None`). `2ad6a74` added
-   `HttpClient::get_refresh_token`.
-5. **Misc.** `7d480d5` changed the language filter to `["en-US", "en"]`. `e0353db` removed an
-   unused languages module. `92030cf` → `172f92b` moved the crate to `1.0.x` versioning.
+1. **Cloud saves are no longer list-only** (`c52ac1a` → `abfdda3`). New public surface:
+   - `GogDl::get_remote_config` returns a `RemoteConfig` (`remote-config.gog.com`, pinned to
+     `component_version=2.0.43`) with `is_supported`/`get_locations`.
+   - `GogDl::download_save_files` and `upload_save_files` take a Wine `prefix` plus an
+     `install_path`. They expand each `<?VARIABLE?>/path` location inside the prefix
+     (`src/saves/save_location.rs`), then transfer files one at a time, gzip'd and ETag/MD5-checked,
+     reporting `SavesDownloadEvent`/`SavesUploadEvent`.
+   - `SaveFile::relative_path_in`/`split_location` map cloud names to local paths.
+   - New `SavesError` variants: `CloudStorageNotSupported`, `Io`, `FileSystemError`, `HashMismatch`,
+     `InvalidHeader`, `WineUserDirNotFound`, `UnknownSaveLocationVariable`, `InvalidSaveLocation`,
+     `InvalidSaveFileName`.
+   - New client primitives `HttpClient::stream_chunk_with_headers` and `put_stream`.
+2. **Proton extraction renames its root** (`26ea6c4`). `download_proton_release` now tracks the
+   tarball's single top-level directory and renames it to the sanitized `tag_name`. If a directory
+   with that name already exists, it is removed first.
+3. **Download batches short-circuit** (`6b4b7f3`). `try_for_each_concurrent` replaces
+   `buffer_unordered(..).collect()`, and a `ProgressGuard` (`src/downloader/util/progress_guard.rs`)
+   emits `ProgressRegression` on drop. Detail is under [Closed](#closed).
+4. **First unit tests** (`2457bad` onward). 39 `#[test]`/`#[tokio::test]`s, all passing
+   (`cargo test --lib`), in `saves/{checksum,save_files,save_location,saves_auth,saves_uploader}.rs`
+   and `proton/proton_downloader.rs`. See [missing coverage](#medium--missing-coverage) for what they
+   don't reach.
 
-Line references below were re-derived against `e4596b6`. Fixed items are collapsed to one line
+Line references below were re-derived against `6b4b7f3`. Fixed items are collapsed to one line
 each in [Closed](#closed) at the bottom; the detail lives in the referenced commits.
 
 **Two standing facts that apply to almost every item here:**
 
-- **No automated tests exist anywhere** (`grep -rn '#\[test\]\|#\[tokio::test\]' src/` is empty, and
-  there is no `tests/`). Treat every fix in this doc as unverified. This is still the direct reason
-  the "a failed chunk is reported as success" bug shipped four times on the old `restart` line. The
-  two new modules (Proton, saves) arrived with none either, and `004e68e` restructured the retry
-  loop with two new sentinel sites and nothing to pin them.
+- **Nothing on the download, auth or client paths is tested.** The 39 tests are pure-logic tests of
+  save path mapping, save-location expansion, object URLs, MD5 hex and Proton root detection. No
+  test touches `download_files`, `HttpClient`, `AuthManager` or any network response, and there is
+  no `tests/` directory. Treat every downloader/auth fix in this doc as unverified. That gap is still
+  why the "a failed chunk is reported as success" bug shipped four times on the old `restart` line,
+  and `6b4b7f3` restructured the batch driver with nothing to pin it.
 - **`v0.0.12-restart` still carries the retry off-by-one** fixed in `2469b13`. Nothing current
-  resolves it (`lumen-cli` is on `v1.0.4`), but the tag still exists.
+  resolves to it (`lumen-cli` is on `v1.0.8`), but the tag still exists.
 
-`cargo build --lib` is **no longer free of rustc warnings**. There is one: `field inner is never
-read` on `ProtonManager` (`src/proton/proton_manager.rs:20`), see [Low](#low--style--clippy).
-`cargo clippy --lib -- -W clippy::all` reports **43 clippy warnings** (44 with that `dead_code`),
-the same count as the previous pass but a different mix: two new `unnecessary_cast`s from the new
-secure-link retry sites, three new warnings in `saves/`, and three `redundant_field_names`/
-redefinition warnings gone. See the [clippy](#low--style--clippy) section.
-
-**Numbers re-derived for this pass, on top of `a813975`:** `cargo build --lib` now shows five
-`dead_code` warnings, not the one above — `a813975`'s `saves/remote_config.rs` added four unrelated
-to this pass. `cargo clippy --lib -- -W clippy::all` reports **42 clippy warnings** (47 with the
-five `dead_code` fields): one lower than the `43` above, this pass's `try_for_each_concurrent`
-rewrite of `download_files` having removed the redundant `path_resolver` redefinition. The rest of
-the paragraph above and the clippy list below were not re-audited against `a813975`; their line
-numbers may be stale.
+`cargo build --lib` shows **five `dead_code` warnings**: `ProtonManager.inner`
+(`src/proton/proton_manager.rs:20`) and four unused `RemoteConfig` fields (`version`, `macos`,
+`overlay`, `supported` at `src/saves/remote_config.rs:20,115,123,134`). See
+[Low](#low--style--clippy). `cargo clippy --lib -- -W clippy::all` reports **42 clippy warnings**
+(47 with those five), 36 auto-fixable. The mix and locations are listed in the
+[clippy](#low--style--clippy) section.
 
 ---
 
-## Medium — credentials, saves & Proton
+## Medium — cloud saves
+
+- [ ] **`download_save_files` truncates a good local save before it has the new one on disk.**
+  `SavesDownloader::download_file` verifies and gunzips in memory, then calls
+  `tokio::fs::File::create(&destination)` and `write_all`s over the existing file
+  (`src/saves/saves_downloader.rs:162-166`). A failure between truncate and flush leaves a
+  truncated or empty save where a working one used to be: disk full, `EIO`, a crash, or the caller
+  dropping the future mid-write. Nothing is retried, so the call just returns `Io`. For save games
+  that is the worst failure mode available. Write to a sibling temp file, `set_modified`, `fsync`,
+  then `rename` over the destination.
+
+- [ ] **Upload names may not round-trip with the names download accepts.** Depending on which side
+  matches GOG, the result could be duplicate cloud objects that collide on one local file.
+  - The download side and `SaveFile`'s docs say games using `__default` are listed as
+    `saves/__default/profile/slot1.sav` (`src/saves/save_files.rs:62-66`, pinned by
+    `relative_path_in_strips_a_declared_location_after_saves`). `split_location` then maps both
+    `saves/__default/x` and `__default/x` onto the same `<dir>/x` (`:98-120`).
+  - The upload side always writes `<location>/<relative>` with no `saves/` (`remote_name`,
+    `src/saves/saves_uploader.rs:141-143`, pinned by `remote_name_round_trips_with_relative_path_in`
+    as `__default/profile/slot1.sav`).
+
+  If GOG really lists `__default` games with the `saves/` prefix, a download→play→upload cycle
+  creates a second object, `__default/…`, next to the original `saves/__default/…`. The next
+  download writes both to the same local path in listing order, and the older one can win. More
+  generally, `download_files` never checks that two listed names resolve to distinct destinations
+  (`saves_downloader.rs:91-93`), so any such collision is a silent overwrite. The two test modules
+  each pass under a different assumption about GOG's naming, and neither was checked against a live
+  listing. Capture a real `__default` listing and pin both sides to it.
+
+- [ ] **Save "sync" is a blind copy in each direction, with no way to select files.** `lib.rs:2`
+  calls it "syncing cloud saves".
+  - `download_save_files` downloads *every* listed file over whatever is on disk
+    (`saves_downloader.rs:91-93`).
+  - `upload_save_files` uploads *every* local file and overwrites whatever is in the cloud
+    (`saves_uploader.rs:51-70`).
+  - Neither looks at `SaveFile::last_modified`/`hash` or local mtimes, and neither propagates a
+    deletion.
+
+  Both are documented (`gogdl.rs:594`, `:669-671`). The gap is that neither method takes a file
+  subset, so a consumer that runs its own comparison through `get_save_files` still can't act on it
+  except all-or-nothing. A newer save from another machine is one wrong button away from being
+  overwritten. Accept a `&[SaveFile]`/path filter, or return a plan the caller confirms.
+
+- [ ] **Download and upload ignore `cloudStorage.enabled`.** `resolve_save_locations` calls
+  `get_locations()` and only rejects an *empty* list (`src/saves/saves_manager.rs:159-164`).
+  `get_locations` deliberately returns the locations of a *disabled* block
+  (`remote_config.rs:83-85`), so a game whose remote config turns cloud storage off still gets read
+  from and written to its storage area. Check `is_supported()` there, or document that the caller
+  must.
 
 - [ ] **Refresh tokens are sent in URL query strings, and `reqwest::Error`'s `Display` prints the
   URL, so a network failure puts the token in an error string.** `reqwest` 0.13.4's `Error`
   formats as `... for url (<full url>)` (`reqwest-0.13.4/src/error.rs:280`) unless
   `.without_url()` is called, and nothing in this crate calls it. Two paths put a live refresh token
   in that URL:
-  - `AuthManager::refresh_auth` builds `{REFRESH_URL}&refresh_token={refresh_token}` and stringifies
-    any non-auth failure into `AuthError::ClientError { inner: e.to_string() }`
-    (`src/client/auth/auth_manager.rs:99-107`). A `NetworkError` there carries the refresh token
-    into a `pub` string field. This predates this pass but was never recorded.
-  - New with `2ad6a74`: `SavesAuth::get_saves_auth` builds
+  - `AuthManager::refresh_auth` builds `{REFRESH_URL}&refresh_token={refresh_token}`
+    (`src/client/auth/auth_manager.rs:97`). It stringifies any non-auth failure into
+    `AuthError::ClientError { inner: e.to_string() }` (`:99-107`), so a `NetworkError` there carries
+    the refresh token into a `pub` string field.
+  - `SavesAuth::get_saves_auth` builds
     `auth.gog.com/token?client_id=..&client_secret=..&grant_type=refresh_token&refresh_token=..`
-    (`src/saves/saves_auth.rs:66-73`) and propagates the `ClientError` as
-    `SavesError::ClientError`. Its `Display` includes the session refresh token *and* the game's
-    `client_secret`.
+    (`src/saves/saves_auth.rs:70-72`) and propagates the `ClientError` as `SavesError::ClientError`.
+    Its `Display` includes the session refresh token *and* the game's `client_secret`. Every
+    download and upload now goes through this exchange on a cold cache.
 
   A consumer that logs `GogDlError`/`SavesError` with `{}` writes the session's long-lived
-  credential to its log. The crate's own `client_secret` in `REFRESH_URL` is a
-  public constant, so only the refresh token matters there. Strip the URL (`err.without_url()`)
-  where a token-bearing request's error is converted, or POST the grant as a form body if GOG's
-  token endpoint accepts it. Neither query value is percent-encoded either, though GOG's token
-  alphabet doesn't currently need it.
+  credential to its log. The crate's own `client_secret` in `REFRESH_URL` is a public constant, so
+  only the refresh token matters there. Strip the URL (`err.without_url()`) where a token-bearing
+  request's error is converted, or POST the grant as a form body if GOG's token endpoint accepts
+  it. Neither query value is percent-encoded either, though GOG's token alphabet doesn't currently
+  need it.
 
 - [ ] **`SavesManager` holds its `inner` mutex across network round-trips, the same shape fixed for
   auth in `9a1f780`.** `GameSaveIds::get_game_save_ids` takes `saves_manager.inner.lock()` and
-  awaits `inner.games.get_game_builds(game_id)` while holding it (`src/saves/game_save_ids.rs:51-52`),
-  then does the same for `inner.depot.get_build_metadata(..)` (`:61-62`). `SavesAuth::get_saves_auth`'s
-  cache lookup (`saves_auth.rs`) and every other `get_save_files` call need that lock too, so one
-  game's cold build-list and metadata fetch stalls cloud-save calls for every other game. The
-  method's doc comment describes this lock-holding but doesn't flag the cost. It doesn't need the
-  lock at all: `DepotManager` and `GamesManager` are cheap `Clone` handles over their own
+  awaits `inner.games.get_game_builds(game_id)` while holding it
+  (`src/saves/game_save_ids.rs:50-53`). It does the same for `inner.depot.get_build_metadata(..)`
+  (`:60-63`). The method's doc comment now states this (`:29-32`) but not the cost.
+  `SavesAuth::get_saves_auth`'s cache lookup and every other saves call need that lock. Now that
+  includes `get_remote_config`, `download_save_files` and `upload_save_files`, so one game's cold
+  build-list and metadata fetch stalls cloud-save calls for every other game.
+
+  The lock isn't needed. `DepotManager` and `GamesManager` are cheap `Clone` handles over their own
   `Arc<Mutex<..>>`, so they can live on `SavesManager` directly, outside the mutex, leaving
-  `SavesManagerInner` holding only the two `HashMap`s. `SecureLinksManager::get_secure_links` has the
-  same pattern around `get_owned_games()` (`src/secure_links/links_manager.rs:61-65`). That one is
+  `SavesManagerInner` with only the two `HashMap`s. `SecureLinksManager::get_secure_links` has the
+  same pattern around `get_owned_games()` (`src/secure_links/links_manager.rs:62-63`). That one is
   older, but saves copied it.
 
-- [ ] **`get_save_files` requires a still-valid session access token and never refreshes it; a
-  revoked game grant stays cached until it expires.** `HttpClient::get_refresh_token`
-  (`src/client/client.rs:254`) goes through `AuthManager::get_auth`, which returns
-  `AuthError::TokenExpired` once the *access* token lapses. So an app that restores auth and calls
-  `get_save_files` first fails, even though the refresh token it actually needs is fine. Every
-  other authenticated `GogDl` method refreshes in that case via `fetch`. On the storage side, the
-  listing uses `fetch_no_retry` with a hand-built `Authorization` header
-  (`src/saves/save_files.rs:53-62`), so a 401 surfaces as a plain `HttpError` without evicting the
-  cached `SavesAuth`. Every call returns the same 401 until `valid_until` passes. Both behaviors are
-  stated in `GogDl::get_save_files`'s rustdoc, so this is documented, not fixed.
+- [ ] **The saves API requires a still-valid session access token and never refreshes it, and a
+  revoked game grant stays cached until it expires.**
+  - `HttpClient::get_refresh_token` (`src/client/client.rs:342`) goes through
+    `AuthManager::get_auth`, which returns `AuthError::TokenExpired` once the *access* token lapses.
+    So an app that restores auth and then calls any saves method first fails, even though the
+    refresh token it actually needs is fine. Every other authenticated `GogDl` method refreshes in
+    that case via `fetch`.
+  - On the storage side, listing, download and upload all send a hand-built `Authorization` header
+    through non-retrying calls (`save_files.rs:145-156`, `saves_downloader.rs:117-124`,
+    `saves_uploader.rs:104-123`). A 401 surfaces as a plain `HttpError` and never evicts the cached
+    `SavesAuth`, so every call returns the same 401 until `valid_until` passes.
 
-- [ ] **`get_save_files` returns `SavesError`, not `GogDlError`, contradicting the crate docs.**
-  `src/lib.rs:27` says "Every fallible [`GogDl`] method returns [`GogDlError`]", and `GogDlError`
-  gained a `ProtonError` variant for exactly this reason (`src/gogdl/error.rs`), but
-  `GogDl::get_save_files` (`src/gogdl/gogdl.rs:471`) returns `Result<Vec<SaveFile>, SavesError>`, and
-  `GogDlError` has no saves variant. A consumer with one `GogDlError` error path can't `?` it. Add
-  `GogDlError::SavesError(#[from] SavesError)` and return that, or amend the crate docs.
+  Both behaviors are stated in the rustdoc, so this is documented, not fixed. The grant is also
+  fetched once per call and reused across the whole sequential batch, so combined with the
+  wrong-sign margin under [Low](#low--style--clippy), a batch can start on an already-expired grant.
+
+- [ ] **The four saves methods return `SavesError`, not `GogDlError`, contradicting the crate
+  docs.** `src/lib.rs:30` says "Every fallible [`GogDl`] method returns [`GogDlError`]", and its
+  list of wrapped enums (`:31-33`) omits `SavesError`. But `get_save_files`, `get_remote_config`,
+  `download_save_files` and `upload_save_files` (`src/gogdl/gogdl.rs:494,543,640,708`) all return
+  `Result<_, SavesError>`, and `GogDlError` has no saves variant (`src/gogdl/error.rs`). This was
+  one method last pass; it is four now. A consumer with one `GogDlError` error path can't `?` them.
+  Add `GogDlError::SavesError(#[from] SavesError)`, or amend the crate docs.
+
+## Medium — Proton
+
+- [ ] **Re-downloading a Proton release whose tarball root already matches its tag extracts over the
+  old tree instead of replacing it.** `download_proton_release` removes an existing `path/<tag>`
+  only when it has to rename a differently-named root onto it (`if source != target`,
+  `src/proton/proton_downloader.rs:208-213`). When the archive's root already *is*
+  `GE-Proton10-4`, the usual case, extraction unpacks straight into the existing directory
+  (`:154`). Files the new release dropped survive next to the new ones. The rustdoc promises the
+  opposite: "a re-download always leaves a single, clean tree behind" (`:83-85`, repeated on
+  `GogDl::download_proton_release`). A leftover `<root>` from an earlier failed attempt is overlaid
+  the same way when names differ. Extract into a fresh staging directory under `path`, then remove
+  and rename.
 
 - [ ] **Proton tarballs are extracted without any integrity check.** Every Proton-GE release ships a
   detached `.sha512sum` asset per tarball, and GitHub's asset object carries a `sha256:` `digest`,
-  but `GithubAsset` deserializes neither (its doc comment says so, `src/proton/github_asset.rs`). The
-  stream is extracted as it arrives (`proton_downloader.rs`), so a truncated or corrupted transfer
-  that still parses as gzip+tar lands on disk as a runnable Proton tree with no error. Hashing while
-  streaming (the same `HashingWriter` idea the chunk downloader uses) and comparing against the
-  `.sha512sum` asset before returning `Ok` would close it. Because extraction happens during the
-  transfer, a mismatch still needs the caller to clean up, which `download_proton_release`'s
-  "partial tree" docs already cover.
+  but `GithubAsset` deserializes neither (its doc comment says so, `src/proton/github_asset.rs:7`).
+  The stream is extracted as it arrives, so a truncated or corrupted transfer that still parses as
+  gzip+tar lands on disk as a runnable Proton tree with no error. Since `26ea6c4` it also *replaces*
+  a previous good install of the same tag when the names differ. Hashing while streaming (the same
+  `HashingWriter` idea the chunk downloader uses) and comparing against the `.sha512sum` asset
+  before the rename would close both.
 
 - [ ] **`HttpClient::fetch` spins on a 401 when `require_auth` is `false`: six immediate retries, no
-  backoff, then the status is discarded.** The `HttpError` arm (`src/client/client.rs:51-60`) only
-  refreshes when `require_auth` is true, and otherwise falls out of the `match` with no `continue`,
+  backoff, then the status is discarded.** The `HttpError` arm (`src/client/client.rs:52-61`) only
+  refreshes when `require_auth` is true. Otherwise it falls out of the `match` with no `continue`,
   no `backoff` and no `return`. The loop re-sends the identical request `MAX_ATTEMPTS` times back to
   back and then returns `ClientError::MaxRetriesReached`, losing both the 401 and its body. This
-  dates from `9cd8d0a`, but it is now reachable against a third-party API: both GitHub fetches go
-  through `fetch(.., false, false, ..)` (`proton_ge_release.rs`, `proton_ge_releases_page.rs`), and
-  `GogDl::get_proton_releases`' rustdoc (`gogdl.rs:86-89`) describes the fetch as one that "only
-  retries a 401 or a transport error", which reads as deliberate handling. On the unauthenticated
-  path, a 401 should return `HttpError` immediately like every other non-success status.
+  dates from `9cd8d0a`, but it is reachable against a third-party API: both GitHub fetches go
+  through `fetch(.., false, false, ..)` (`proton_ge_release.rs`, `proton_ge_releases_page.rs`).
+  `GogDl::get_proton_releases`' rustdoc describes the fetch as one that "only retries a 401 or a
+  transport error", which reads as deliberate handling. On the unauthenticated path, a 401 should
+  return `HttpError` immediately like every other non-success status.
 
-- [ ] **The Proton and crate-level docs describe a `User-Agent` requirement the code no longer has,
-  and the crate overview predates two of the three new features.** `7a57534` made both GitHub API
-  fetches send `("User-Agent", "gogdl")` per request (`proton_ge_release.rs:80`,
-  `proton_ge_releases_page.rs:42`). Yet `GogDl::get_proton_releases`/`get_proton_release_by_tag`
-  (`gogdl.rs:76-80,107-110`), `ProtonError::ClientError` (`proton/error.rs:17`) and the crate docs
-  (`lib.rs:38-42`) still tell consumers their `reqwest::Client` *must* set one or get a 403. `lib.rs`
-  also still calls `get_proton_releases` "the one method that doesn't talk to GOG" (`:37`), though
-  there are now three. Its first line (`:1-3`) and its error-type list don't mention cloud saves or
-  `SavesError`. `#![warn(missing_docs)]` only catches missing docs, not stale ones.
+- [ ] **The crate-level and Proton docs are stale: a `User-Agent` requirement the code no longer
+  has, and an overview that predates saves.**
+  - *User-Agent.* `7a57534` made both GitHub API fetches send `("User-Agent", "gogdl")` per request
+    (`proton_ge_release.rs:80`, `proton_ge_releases_page.rs:42`). Yet
+    `GogDl::get_proton_releases`/`get_proton_release_by_tag` (`gogdl.rs:76-80,107-110`),
+    `ProtonError::ClientError` (`proton/error.rs:17`) and the crate docs (`lib.rs:42-45`) still tell
+    consumers their `reqwest::Client` *must* set one or get a 403.
+  - *Crate overview.* `lib.rs:40` still calls `get_proton_releases` "the one method that doesn't
+    talk to GOG", though there are three. The first line (`:1-3`) now mentions cloud saves, but
+    "Long-running operations" (`:13-14`) omits `download_save_files`/`upload_save_files`, which take
+    the same unbounded-channel contract, and the error list omits `SavesError`.
+  - *Saves internals.* `SavesError::CloudStorageNotSupported` says it is "only ever returned by
+    `RemoteConfig::get_locations`, never by a request" (`src/saves/error.rs:41-45`), but
+    `resolve_save_locations` (`saves_manager.rs:162`) and `SavesDownloader::download_files`
+    (`saves_downloader.rs:81-83`) return it too, and `gogdl.rs:619` documents that.
+    `RemoteConfig::get_locations` says it is "`async` only for symmetry" (`remote_config.rs:77-81`),
+    but it is a plain `fn`. `SavesManager` (`saves_manager.rs:20-23`) and `SavesAuth`
+    (`saves_auth.rs:10-11`) still describe themselves as backing only `get_save_files`.
+
+  `#![warn(missing_docs)]` only catches missing docs, not stale ones.
 
 ## Medium — duplication & consistency
 
 - [ ] **`MAX_ATTEMPTS` is one constant, but the retry primitives are still split across two modules
-  and two import paths, and there are now more hand-written sentinels.** `src/constants/mod.rs:5`
-  holds `pub const MAX_ATTEMPTS: u32 = 6;`. `004e68e`'s two secure-link retry sites bring the count
-  to seven `attempt != MAX_ATTEMPTS - 1` sentinels (`downloader.rs:281,293,322,333,352,386`,
-  `client.rs:65`) plus the MD5 arm's `attempt < MAX_ATTEMPTS - 4` (`downloader.rs:371`). Three
+  and two import paths.** `src/constants/mod.rs:5` holds `pub const MAX_ATTEMPTS: u32 = 6;`. There
+  are seven `attempt != MAX_ATTEMPTS - 1` sentinels (`downloader.rs:282,294,319,329,345,376`,
+  `client.rs:66`), plus the MD5 arm's `attempt < MAX_ATTEMPTS - 4` (`downloader.rs:362`). Three
   residuals:
   - *The constant and the function that consumes it live in different modules.* `MAX_ATTEMPTS` is in
     `constants`, next to endpoint URLs it has nothing to do with. `backoff` is in `downloader::util`,
-    imported as `crate::downloader::backoff` by `client.rs:16` and as
-    `crate::downloader::util::backoff` by `downloader.rs:12`: two paths to one item, and the client
-    layer depends on the downloader for a generic retry primitive. (`004e68e` did drop the client's
-    other `downloader` import, `FileType`.) A `retry` module owning both, with a doc comment
-    stating the base, ceiling and jitter policy, would remove both oddities.
+    imported as `crate::downloader::backoff` by `client.rs:17` and as
+    `crate::downloader::util::backoff` by `downloader.rs`. That is two paths to one item, and the
+    client layer depends on the downloader for a generic retry primitive. A `retry` module owning
+    both, with a doc comment stating the base, ceiling and jitter policy, would remove both
+    oddities.
   - *A per-failure-class budget needs a per-failure-class constant.* `MAX_ATTEMPTS - 4` reads as
     "four fewer than the transport budget" and means "three attempts". `MAX_ATTEMPTS = 5` gives the
     MD5 arm 2, `4` gives it 1, and anything below 4 stops compiling. A named
     `MAX_HASH_ATTEMPTS: u32 = 3` with `if attempt + 1 < MAX_HASH_ATTEMPTS` states it where it's read.
     This is a legibility fix, not a correctness one.
-  - *`backoff`'s 20s ceiling still never binds.* `src/downloader/util/backoff.rs:4-6`; the largest
-    `attempt` it sees is 4, so the largest reachable ceiling is 8s. The de-facto per-chunk timeout
-    against a dead CDN (five backoffs, ~7.75s average, 15.5s worst case) is still recorded nowhere.
+  - *`backoff`'s 20s ceiling still never binds.* `src/downloader/util/backoff.rs:4-6`: the largest
+    `attempt` it sees is 4, so the largest reachable ceiling is 8s. Nothing records the de-facto
+    per-chunk timeout against a dead CDN (five backoffs, ~7.75s average, 15.5s worst case).
 
 - [ ] **The retry loops are hand-copied rather than shared, and `download_files` still carries a dead
-  arm, now more obviously dead.** `download_files`'s `Err(ClientError::AuthError(err))` arm
-  (`src/downloader/downloader.rs:319-327`) is unreachable. Since `004e68e`, `stream_chunk` takes a
-  bare, pre-signed URL (`client.rs:78`) and never touches `AuthManager`, and secure-link auth
-  failures now arrive earlier as `DownloadError::SecureLinksError` (`:277-287`). The arm still
-  invalidates, backs off and emits `ProgressRegression`, all on a path that cannot execute.
+  arm.** `download_files`' `Err(ClientError::AuthError(err))` arm
+  (`src/downloader/downloader.rs:317-324`) is unreachable. `stream_chunk` takes a bare, pre-signed
+  URL and never touches `AuthManager`, and secure-link auth failures arrive earlier as
+  `DownloadError::SecureLinksError` (`:278-288`). The arm still invalidates and backs off on a path
+  that cannot execute.
 
-  The `HttpError` arm still tests `status == UNAUTHORIZED` twice (`:330` to invalidate, `:334` to
-  skip the backoff), with `continue` written out in both branches (`:335`, `:338`). The
-  invalidate/back-off/`continue`-or-`return` recovery shape is now spelled out separately at
-  **eight** sites: the secure-link fetch (`:277-287`), the URL pick (`:289-299`), the three
-  retrying `stream_result` arms, the two verification arms, and `HttpClient::fetch`. There are
-  eight hand-pasted `ProgressRegression` sends besides (`:320,329,343,347,351,362,370,385`). A single
-  `retry_or_return(attempt, bound)` helper would make each site one line and put each sentinel in
-  exactly one place. The silent-success regression got in the last time a copy's *guard* was
-  touched.
+  The `HttpError` arm still tests `status == UNAUTHORIZED` twice (`:326` to invalidate, `:330` to
+  skip the backoff), with `continue` written out in both branches (`:331`, `:334`). The
+  invalidate/back-off/`continue`-or-`return` recovery shape is spelled out separately at **eight**
+  sites: the secure-link fetch, the URL pick, the three retrying `stream_result` arms, the two
+  verification arms, and `HttpClient::fetch`. (`6b4b7f3`'s `ProgressGuard` removed the eight
+  hand-pasted `ProgressRegression` sends that used to sit beside them, so that half is done.) A
+  single `retry_or_return(attempt, bound)` helper would make each site one line and put each
+  sentinel in exactly one place. The silent-success regression got in the last time a copy's
+  *guard* was touched.
 
-- [ ] **Deterministic secure-link failures are retried six times with backoff. They are now
-  structured, so this is fixable.** `SecureLinksManager::get_secure_links` can fail with
-  `IncorrectGameId` (unparseable ID) or `ProductNotOwned` (`links_manager.rs:67-74`). Neither will
-  change on retry, but `download_files`' secure-link arm (`downloader.rs:277-287`) invalidates,
-  backs off and retries all of them the same way, ~7.75s on average per chunk before failing, times
-  every in-flight chunk. Before `004e68e` this error was a `String` inside
-  `ClientError::SecureLinksError` and couldn't be told apart. It is now a real `SecureLinksError`,
-  so a `match` can return immediately on the two deterministic variants, as `7eb5d5e` did for local
-  I/O errors.
+- [ ] **Deterministic secure-link failures are retried six times with backoff, and since they are
+  structured, this is fixable.** `SecureLinksManager::get_secure_links` can fail with
+  `IncorrectGameId` (unparseable ID) or `ProductNotOwned` (`links_manager.rs:69,73`). Neither will
+  change on retry, but `download_files`' secure-link arm (`downloader.rs:278-288`) invalidates,
+  backs off and retries all of them the same way, ~7.75s on average per chunk before failing.
+  `6b4b7f3` limits the blast radius: the first unit to give up now cancels the batch instead of
+  every in-flight chunk paying the full budget. But the first failure still takes the whole
+  schedule. A `match` can return immediately on the two deterministic variants, as `7eb5d5e` did for
+  local I/O errors.
 
 - [ ] **`Downloader::repair` is a near-verbatim copy of `Downloader::download`.** `repair`
-  (`src/downloader/downloader.rs:45-141`) and `download` (`:142-221`) are the same function apart from
-  one inserted stage. Lines `51-105` of `repair` and `148-202` of `download` (path resolver, the
-  `depot_files` flat_map, size verification with its channel/`tokio::join!`/forwarding boilerplate,
-  the free-space check, allocation and the `FileAllocationError` abort) are identical. The only real
-  difference is `repair`'s `verify_download_units` stage (`:107-119`), whose `missing_units` it
-  passes to `download_files` where `download` passes every unit (`:207`). `cb2d6a1` touched both
-  copies identically, which shows the maintenance cost. `download` is expressible as `repair` with
-  verification skipped, or both as a shared helper taking a "which units" closure.
+  (`src/downloader/downloader.rs:45-141`) and `download` (`:142-221`) are the same function apart
+  from one inserted stage. Lines `51-105` of `repair` and `148-202` of `download` are identical:
+  path resolver, the `depot_files` flat_map, size verification with its
+  channel/`tokio::join!`/forwarding boilerplate, the free-space check, allocation and the
+  `FileAllocationError` abort. The only real difference is `repair`'s `verify_download_units` stage
+  (`:107-119`), whose `missing_units` it passes to `download_files` where `download` passes every
+  unit (`:207`). `download` is expressible as `repair` with verification skipped, or both as a
+  shared helper taking a "which units" closure.
 
 - [ ] **`download` re-downloads every chunk regardless of what's already correct on disk, so `repair`
   is the crate's only resume path.** `download` computes `missing_files`, then builds the transfer
-  list from `DownloadUnit::from_product_bundles(bundles)` (`src/downloader/downloader.rs:207`), which
-  covers every chunk of every file, including files that just verified as complete. Behavior
-  unchanged. The rustdoc on `GogDl::download_game`/`repair_game` says which one resumes.
+  list from `DownloadUnit::from_product_bundles(bundles)` (`src/downloader/downloader.rs:207`). That
+  list covers every chunk of every file, including files that just verified as complete. Behavior
+  is unchanged. The rustdoc on `GogDl::download_game`/`repair_game` says which one resumes.
 
 - [ ] **`repair` checksums the chunks of files it has just allocated.** Stage 2 allocates every file
-  that failed size verification (`set_len`, `src/fs/path_resolver.rs:81`), and stage 3 then MD5s
+  that failed size verification (`set_len`, `src/fs/path_resolver.rs:81`). Stage 3 then MD5s
   **every** unit of **every** file (`src/downloader/downloader.rs:107-119`), including all-zero
   ranges that cannot match. Filter `missing_files`' units out of verification and add them straight
   to the download list.
 
 - [ ] **Secure-link fetches aren't collapsed across concurrent chunk downloads.**
-  `SecureLinksManager::get_secure_links` (`src/secure_links/links_manager.rs:51-85`; cache at `:27`)
-  has no in-flight dedup. `download_files` runs up to `self.threads` units concurrently
-  (`downloader.rs:407`), and since `004e68e` each attempt of each unit calls `get_secure_links`
-  itself at `:277`.
+  `SecureLinksManager::get_secure_links` (`src/secure_links/links_manager.rs`, cache at `:27`) has
+  no in-flight dedup. `download_files` runs up to `self.threads` units concurrently
+  (`downloader.rs:258`), and each attempt of each unit calls `get_secure_links` itself (`:278`).
   - *Cold start:* the first `self.threads` tasks all miss the empty cache at once and each issues
     its own round-trip, plus its own `get_owned_games()` check, since cache check and fetch aren't
     one critical section. This happens per product bundle, on every download and repair.
   - *Expiry:* a cache hit checks `SecureLinks::is_valid` first, but N chunks racing past the same
-    deadline each miss independently. The two verification retries (`:372`, `:387`) and the CDN-401
-    arm (`:331`) also invalidate reactively, so a batch of chunks failing together produces the same
-    storm. `004e68e` added two more invalidate call sites (`:280`, `:292`), so a failed fetch
-    storm-invalidates too.
+    deadline each miss independently. Six sites invalidate reactively
+    (`:281,293,318,327,363,377`), so a batch of chunks failing together produces the same storm.
 
   An in-flight dedup (a per-`game_id` `OnceCell`/shared future, the shape `PathResolver::dir_cache`
   uses at `src/fs/path_resolver.rs:13,93`) fixes both halves.
 
 - [ ] **Types a consumer must be able to name are not exported: `DepotFile`, `Chunk`,
-  `DownloadUnit`, and now `FileSystemError`.** The exported `ProductBundle` declares
+  `DownloadUnit` and `FileSystemError`.** The exported `ProductBundle` declares
   `pub product_files: Vec<DepotFile>` (`src/downloader/product_bundle.rs:23`), and `DepotFile.chunks`
   is `Option<Vec<Chunk>>`. None of the three is re-exported from `src/lib.rs`. `FileSystemError` is
-  also crate-private (`mod fs` is private in `lib.rs`) but is the payload of two public variants:
-  `DownloadError::FileSystemError` (`downloader/error.rs:79`) and, new with `410000f`,
-  `ProtonError::FileSystemError` (`proton/error.rs:46`). A consumer can't match on *which* filesystem
-  failure (e.g. `NoDiskMatchingPath`) happened, only format it. Both variants' doc comments say so.
-  Re-export them, or narrow the public fields and payloads that leak them.
+  crate-private (`mod fs` is private in `lib.rs`) but is now the payload of **three** public
+  variants: `DownloadError::FileSystemError` (`downloader/error.rs:79`),
+  `ProtonError::FileSystemError` (`proton/error.rs:46`) and, new, `SavesError::FileSystemError`
+  (`saves/error.rs:58-59`). A consumer can't match on *which* filesystem failure happened (for
+  example, a save file name that would escape its directory), only format it. All three variants'
+  doc comments say so. Re-export them, or narrow the public fields and payloads that leak them.
 
 - [ ] **A dead refresh token and a routine expiry both surface as the same opaque, unstructured
   error.** `login_with_code` (`src/client/auth/auth_manager.rs:50-58`) and `refresh_auth`
   (`:99-107`) call `fetch_no_retry(&url, false, false, None)` and match
   `Err(ClientError::AuthError(e))` first. With `require_auth` hardcoded `false`, `inner_fetch` can
-  never produce that variant, so every real failure, including a 401 for a dead refresh token, falls
+  never produce that variant. So every real failure, including a 401 for a dead refresh token, falls
   to `AuthError::ClientError { inner: e.to_string() }`. That string also carries the refresh token
-  on a network error (see the credentials item above). `get_save_files` inherits the problem: a
-  revoked refresh token there is an undifferentiated `HttpError` from the grant exchange. This needs
-  a status-aware `AuthError` variant, or at minimum deleting the dead arm.
+  on a network error (see the credentials item above). The saves grant exchange inherits the
+  problem: a revoked refresh token there is an undifferentiated `HttpError`. This needs a
+  status-aware `AuthError` variant, or at minimum deleting the dead arm.
 
 - [ ] **Five dead variants per error enum.** `Http`/`UrlParseError`/`NetworkError`/`DecodeError`/
   `DeflateError` on `DepotError`, `GamesError` and `SecureLinksError`, and the first four on
-  `DownloadError`, are unconstructible. Every network call goes through `HttpClient` and arrives as
+  `DownloadError`, can't be constructed. Every network call goes through `HttpClient` and arrives as
   `XError::ClientError(..)`. `DownloadError::DeflateError` is the exception: `downloader.rs`
-  constructs it directly (`:272,363,391`). Because these enums are `pub`, `dead_code` never warns.
-  The two new enums, `ProtonError` and `SavesError`, have no dead variants.
+  constructs it directly (`:273,355,381`). Because these enums are `pub`, `dead_code` never warns.
+  `ProtonError` and `SavesError` have no dead variants.
 
 - [ ] **"Not a game" handling is inconsistent across near-identical fetchers.** Only
   `GameDetails::get_game_details` turns a cached `None` into `GamesError::ProductNotAGame`.
   `GameBuilds`, `GameLinks`, `GameSummary` and `OwnedGames` don't, so e.g. `get_game_builds` for a
-  DLC surfaces a raw decode error. `get_save_files` inherits this through its `get_game_builds` call.
+  DLC surfaces a raw decode error. Every saves method inherits this through its `get_game_builds`
+  call.
 
-- [ ] **Caching is inconsistent between depot data of similar shape.** `DepotManagerInner` caches
-  `ProductDetails` (`src/depot/depot_manager.rs:20`) but not `DepotInfo`, the per-depot manifest and
-  likely the largest payload. `BuildMetadata` isn't cached either. `SavesManager` works around that
-  by caching the two fields it needs (`ids_cache`), while every `get_product_bundles` call still
-  re-fetches it.
+- [ ] **Caching is inconsistent between depot and saves data of similar shape.**
+  - `DepotManagerInner` caches `ProductDetails` (`src/depot/depot_manager.rs:20`) but not
+    `DepotInfo`, the per-depot manifest and likely the largest payload.
+  - `BuildMetadata` isn't cached either. `SavesManager` works around that by caching the two fields
+    it needs (`ids_cache`), while every `get_product_bundles` call still re-fetches it.
+  - New: `RemoteConfig` is fetched fresh on every `get_remote_config`, `download_save_files` and
+    `upload_save_files` call (`remote_config.rs:36-39`), though it describes the game, not the
+    user.
 
-- [ ] **Language and OS are hardcoded with no selection surface.** Narrowed by `7d480d5`:
-  `BuildMetadata::filter_languages` now takes a slice and is called with `&["en-US", "en"]`
-  (`src/depot/build_metadata.rs:36`), so depots tagged `en` are no longer dropped. There is still no
-  way for a caller to choose. `GameBuilds::get_game_builds` always queries `os/windows/builds`
-  (`src/games/game_build.rs:54`), which is documented as a deliberate limitation (`game_build.rs:24`,
-  `gogdl.rs:223`). Cloud saves inherit it: `build_name` can only match a Windows build.
+- [ ] **Language and OS are hardcoded with no selection surface.** `BuildMetadata::filter_languages`
+  is called with `&["en-US", "en"]` (`src/depot/build_metadata.rs:36`), and there is still no way
+  for a caller to choose. `GameBuilds::get_game_builds` always queries `os/windows/builds`
+  (`src/games/game_build.rs:54`), documented as a deliberate limitation (`game_build.rs:24`). Cloud
+  saves inherit this twice over: `build_name` can only match a Windows build, and `RemoteConfig`
+  reads only the Windows section (`remote_config.rs:63-73,90-99`). The saves side is consistent with
+  the Wine-prefix design, but a native Linux build's saves are unreachable.
 
 - [ ] **`GameScreenshots::resolve_links` picks a magic formatter index.** `formatter.get(2)`
-  (`src/games/game_screenshots.rs:87`), with no explanation, silently dropping the screenshot if
-  fewer than 3 formatters exist.
+  (`src/games/game_screenshots.rs:87`), with no explanation, silently drops the screenshot if fewer
+  than 3 formatters exist.
 
 - [ ] **`DownloadEvent::Progress` reports compressed wire bytes while every sizing event reports
-  uncompressed bytes.** `download_files` sums raw zlib `Bytes` frame lengths into `Progress`
-  (`src/downloader/downloader.rs:310-312`), while `DownloadUnit.size` and every sizing event payload
-  are uncompressed. A percentage built from them never reaches 100%, and no compressed total is
-  exposed. Documented on the variant; behavior unchanged. `ProtonDownloadEvent` gets this right (both
-  sides compressed) and its doc comment points at the contrast.
+  uncompressed bytes.** `download_files` reports raw zlib `Bytes` frame lengths into `Progress`
+  (`progress.report(chunk.len())`, `src/downloader/downloader.rs:310`), while `DownloadUnit.size`
+  and every sizing event payload are uncompressed. A percentage built from them never reaches 100%,
+  and no compressed total is exposed. This is documented on the variant, and behavior is unchanged.
+  `ProtonDownloadEvent` and `SavesDownloadEvent` get this right (both sides compressed).
 
 - [ ] **`GameDetails.id` and `GameBuilds.game_title` are `#[serde(skip)]` and never assigned.**
-  They are always `0` (`src/games/game_details.rs:14-15`) and `""` (`src/games/game_build.rs:30-31`).
-  Documented, unchanged. Populate them or drop them.
+  They are always `0` (`src/games/game_details.rs:14`) and `""` (`src/games/game_build.rs:30`).
+  Documented and unchanged. Populate them or drop them.
 
 ## Medium — missing coverage
 
-- [ ] **No automated tests anywhere in the crate.** Highest-value first:
-  - **One `#[tokio::test]` driving `download_files` against a scripted chunk source.** Since
-    `004e68e`, `stream_chunk` takes a plain URL, so a local HTTP server fixture now drives the whole
-    loop with no secure-link mocking beyond the manager.
+- [ ] **Tests exist now, but only for pure path logic. Every network-facing path is still untested.**
+  Covered: save name ↔ local path mapping, save-location expansion and Wine user lookup
+  (including hostile `$USER` and `..`), `object_url` escaping, MD5 hex, and Proton root detection.
+  Highest-value additions, first to last:
+  - **One `#[tokio::test]` driving `download_files` against a scripted chunk source.**
+    `stream_chunk` takes a plain URL, so a local HTTP server fixture drives the whole loop with no
+    secure-link mocking beyond the manager.
     - *Fails transport on attempts 0–4, then serves wrong-MD5 bytes on attempt 5* → asserts `Err`.
-      This is the only thing that pins `attempt < MAX_ATTEMPTS - 4`. Write it first.
+      This is the only thing that would pin `attempt < MAX_ATTEMPTS - 4`. Write it first.
     - *Fails every attempt* → asserts `Err`.
-    - *Wrong-MD5 on the first attempt, good bytes on the second* → pins the MD5 retry and, via the
-      net reported byte total, `ProgressRegression`'s arithmetic.
+    - *Wrong-MD5 on the first attempt, good bytes on the second* → pins the MD5 retry and, through
+      the net reported byte total, `ProgressGuard`'s arithmetic.
+    - *One unit fails terminally while others are in flight* → pins `6b4b7f3`'s short-circuit and
+      that cancelled units' progress nets to zero.
     - *Secure-link fetch fails with `ProductNotOwned`* → pins whatever the fix for the retry item
       above decides.
+  - **Save download/upload against a local server.** A truncated write, an ETag mismatch, a missing
+    `X-Object-Meta-LocalLastModified`, and a listing with two names that resolve to one path (see
+    the round-trip item). Also a captured real listing for a `__default` game and a `saves` game, so
+    the naming assumption is pinned to GOG rather than to itself.
   - **`backoff`'s bounds.** The attempt → ceiling mapping is a plain table test.
   - **Auth logic, all testable without network:** `Auth::is_valid` and `SavesAuth::is_valid`
-    boundaries (both currently have the wrong-sign margin, see Low), the `to_string`/`from_string`
-    round-trip, `refresh_auth` persisting `valid_until`, concurrent refresh collapsing.
-  - **`SaveFile` and `ProtonGeRelease`/`ProtonGeReleasesPage` deserialization** against captured
-    responses, plus `ProtonGeRelease::get_suitable_asset` against a release with `aarch64` and
-    `.sha512sum` siblings. That selection logic has been rewritten three times (`34a2c52`, `51cb054`,
-    `8682797`, "Select Non-ARM Proton GE Assets") with nothing pinning it.
-  - **`download_proton_release`'s error attribution** (`is_pipe_closed_by_reader` preferring the
-    extraction error) against a truncated gzip stream.
-
-  `lumen-cli` still has a `#[cfg(test)] mod tests` for `apply_download_stage_event`, so the
-  consumer of these events is better covered than the producer.
+    boundaries (both have the wrong-sign margin, see Low), the `to_string`/`from_string` round-trip,
+    `refresh_auth` persisting `valid_until`, and concurrent refreshes collapsing.
+  - **Deserialization against captured responses:** `SaveFile`, `RemoteConfig`, and
+    `ProtonGeRelease`/`ProtonGeReleasesPage`. Also `ProtonGeRelease::get_suitable_asset` against a
+    release with `aarch64` and `.sha512sum` siblings. That selection logic has been rewritten three
+    times (`34a2c52`, `51cb054`, `8682797`) with nothing pinning it.
+  - **`download_proton_release` end to end:** error attribution (`is_pipe_closed_by_reader`
+    preferring the extraction error) against a truncated gzip stream, and the re-download overlay in
+    the Proton item above.
 
 - [ ] **No `CLAUDE.md`/`api.md` in this repo.** `master` had both as canonical specs for
-  `gogdl_flutter`. Rustdoc (enforced by `#![warn(missing_docs)]`) now covers per-item semantics, but
-  there's still no single tracker of which capabilities exist. That gap is widening: Proton and cloud
-  saves are both new public surface, and cloud saves is list-only so far.
+  `gogdl_flutter`, and `lumen-cli` has its own `CLAUDE.md`. Rustdoc (enforced by
+  `#![warn(missing_docs)]`) covers per-item semantics, but there's no single tracker of which
+  capabilities exist. That gap keeps widening: cloud saves went from list-only to a full
+  download/upload surface with its own path-mapping rules in one release cycle.
 
 ## Low — style / clippy
 
 - [ ] **`Auth::is_valid`'s 60s margin has the wrong sign, and `SavesAuth::is_valid` copied it.**
-  `valid_until.map_or(false, |t| t > now - 60)` (`src/client/auth/auth.rs:68-71`) treats a token as
-  usable for 60 seconds *past* expiry, the opposite of its doc comment. `2ad6a74` copied the
-  expression verbatim into `SavesAuth::is_valid` (`src/saves/saves_auth.rs:88-91`), whose doc
-  comment says the margin is "subtracted from `valid_until`", which the code does not do. So a
-  near-expiry game grant is reused past its deadline and fails with a 401 that, per the saves item
-  above, isn't evicted. `CdnUrlParams::is_valid` (`secure_links.rs:173-177`) is still the only one of
-  the three with the intended direction. Fix both together (`t - 60 > now`), ideally as one helper.
+  `valid_until.map_or(false, |t| t > now - 60)` (`src/client/auth/auth.rs:69-70`) treats a token as
+  usable for 60 seconds *past* expiry, the opposite of its doc comment. `SavesAuth::is_valid`
+  (`src/saves/saves_auth.rs:108-111`) has the same expression under a doc comment that says the
+  margin is "subtracted from `valid_until`", which the code does not do. So a near-expiry game grant
+  is handed to a download or upload batch past its deadline and fails with a 401 that isn't evicted
+  (see the saves-auth item above). `CdnUrlParams::is_valid` (`secure_links.rs:175`) is still the
+  only one of the three with the intended direction. Fix both together (`t - 60 > now`), ideally as
+  one helper.
 
-- [ ] **`ProtonManager.inner` is never read, and it is the crate's only rustc warning.**
-  `ProtonManagerInner {}` (`src/proton/proton_manager.rs:20,26`) is a documented placeholder for
-  caching that doesn't exist. Delete it until there's something to cache.
+- [ ] **Five fields are never read, and they are the crate's only rustc warnings.**
+  - `ProtonManagerInner {}` (`src/proton/proton_manager.rs:20,26`) is a documented placeholder for
+    caching that doesn't exist. Delete it until there's something to cache.
+  - `RemoteConfig.version`, `OsConfig.macos`, `OsConfigDetails.overlay` and `OverlayDetail.supported`
+    (`src/saves/remote_config.rs:20,115,123,134`) are deserialized "for completeness; unused".
+    Serde ignores unknown keys, so dropping them costs nothing. Otherwise mark them
+    `#[allow(dead_code)]` so real warnings stand out.
 
-- [ ] **The download hot path now allocates and locks once per network read.** To share
-  `stream_chunk` with the Proton downloader, `f4d7388` changed its callback from
-  `AsyncFnMut(Bytes)` to `FnMut(Bytes) -> BoxFuture`, which can't hold a `&mut` to the decoder across
-  the returned future. The decoder therefore lives in a `tokio::sync::Mutex`
-  (`downloader.rs:275,307-314`), and every read `Box::pin`s a future that awaits an always-uncontended
-  lock (`proton_downloader.rs:84-91` repeats it with the duplex writer). It's small next to zlib and
-  MD5, but it's paid thousands of times per second on the same path the High `Progress` item
-  describes. A generic `AsyncWrite` sink parameter on `stream_chunk`, instead of a callback, would
-  remove both the box and the lock.
+- [ ] **Save transfers do their (de)compression synchronously on the async runtime.** The downloader
+  runs `GzDecoder::read_to_end` (`src/saves/saves_downloader.rs:160`) and the uploader runs
+  `GzEncoder::write_all`/`finish` (`saves_uploader.rs:84-86`) inline in the task, over whole
+  files held in memory. That is harmless for typical save sizes, but it's the pattern `31809e9`
+  removed from the chunk downloader. `spawn_blocking`, or `async-compression` (already a
+  dependency), would match.
+
+- [ ] **A save response with no `ETag` is accepted unchecked, and `SaveFile.hash` can't serve as a
+  fallback as documented.** `saves_downloader.rs:126-141` skips verification when the header is
+  absent, although the listing's `hash` for the same object is in hand. `SaveFile.hash`'s doc says
+  it is "for comparing against a local copy" (`save_files.rs:19-20`). But it is the MD5 of the
+  stored *gzipped* bytes, as the downloader's ETag check shows, so it can't be compared to a local
+  file without reproducing GOG's exact gzip stream. Correct the doc, and verify against `hash` when
+  there's no ETag.
+
+- [ ] **`SaveFile::relative_path` is still public, although its own doc says it is wrong for some
+  games.** It collapses every Cyberpunk slot onto `sav.dat` (`save_files.rs:34-40`) and nothing in
+  the crate calls it. Mark it `#[deprecated]` in favor of `relative_path_in`, or remove it.
+
+- [ ] **`a813975` ("Expose Save Location APIs and path sanitizers") exposes nothing outside the
+  crate.** It made `PathResolver`, `sanitize_filename` and `sanitize_relative_path` `pub`
+  (`src/fs/mod.rs:5`) and loosened `save_location`/`save_files` items. But `mod fs` and
+  `mod save_location` are private and `lib.rs` re-exports none of them, so the change is crate-wide
+  visibility only. If a consumer (for example, `lumen-cli` sanitizing a Proton tag the same way) was
+  meant to use them, they still can't. Otherwise the commit title misdescribes it.
+
+- [ ] **The download hot path allocates and locks once per network read.** To share `stream_chunk`
+  with the Proton downloader, `f4d7388` changed its callback from `AsyncFnMut(Bytes)` to
+  `FnMut(Bytes) -> BoxFuture`, which can't hold a `&mut` to the decoder across the returned future.
+  The decoder therefore lives in a `tokio::sync::Mutex` (`downloader.rs:276,307-313`), and every read
+  `Box::pin`s a future that awaits an always-uncontended lock (`proton_downloader.rs:125-133`
+  repeats it with the duplex writer). The cost is small next to zlib and MD5, but it's paid
+  thousands of times per second. A generic `AsyncWrite` sink parameter on `stream_chunk`, instead of
+  a callback, would remove both the box and the lock.
 
 - [ ] **`.map(|unit| unit.clone().unwrap().clone())` clones every surviving item twice.**
-  `cb2d6a1` changed `.unwrap().clone()` to this at `downloader.rs:470,559,644` (two copies with a
-  "safe" comment), right after taking the `Vec` by value. For `DepotFile` each clone copies a
-  `Vec<Chunk>`. `.into_iter().flatten().collect()` does the filter, the unwrap and zero clones.
+  `downloader.rs:457,546,631`, right after taking the `Vec` by value. For `DepotFile` each clone
+  copies a `Vec<Chunk>`. `.into_iter().flatten().collect()` does the filter and the unwrap with
+  zero clones.
 
-- [ ] **`HttpClient::stream_chunk` is now a generic "GET a URL and stream it" and misnamed.**
-  `004e68e` removed everything chunk-specific (`client.rs:78`), and `410000f` uses it for a
-  multi-hundred-MB tarball. Rename, e.g. `stream_url`.
+- [ ] **`HttpClient::stream_chunk` is a misnamed generic "GET a URL and stream it", and
+  `2457bad` copied it instead of extending it.** `stream_chunk` (`client.rs:79-110`) has nothing
+  chunk-specific and also carries multi-hundred-MB Proton tarballs. `stream_chunk_with_headers`
+  (`:114-152`) is the same body plus a header loop and a `headers().clone()`. The three `get_json*`/
+  `get_and_decode` helpers (`:242-334`) likewise repeat one send/status-check/read block. One
+  `stream_url(url, headers) -> HeaderMap` would replace the first pair, and a shared
+  `send_checked(request)` would replace the status-check block in all six, including `put_stream`.
 
 - [ ] **The GitHub request headers are duplicated.** `Accept`/`User-Agent`/`X-GitHub-Api-Version`
   appear verbatim in `proton_ge_release.rs:77-81` and `proton_ge_releases_page.rs:39-43`. Make them a
   shared `const`.
 
-- [ ] **Vestigial `let _ = body;` in `HttpClient::fetch`.** `client.rs:52` discards a `body` that
-  `:58` then returns as `body: body`.
+- [ ] **Vestigial `let _ = body;` in `HttpClient::fetch`.** `client.rs:53` discards a `body` that
+  `:59` then returns as `body: body`.
 
-- [ ] **The free-space check discards its own error detail, now in three places.**
-  `Downloader::download` (`downloader.rs:175-178`), `repair` (`:78-81`), and, new with `410000f`,
-  `ProtonDownloader::download_proton_release` (`proton_downloader.rs:63-66`) each map
-  `get_free_space()`'s `Err(_)` to a unit `CouldNotResolveFreeSpace`, throwing away the
+- [ ] **The free-space check discards its own error detail, in three places.**
+  `Downloader::download` (`downloader.rs:177`), `repair` (`:80`) and
+  `ProtonDownloader::download_proton_release` (`proton_downloader.rs:106`) each map
+  `get_free_space()`'s `Err(_)` to a unit `CouldNotResolveFreeSpace`. That throws away the
   `FileSystemError::NoDiskMatchingPath(PathBuf)` that names the path (`src/fs/path_resolver.rs:54`).
 
-- [ ] **`rand` with default features is a heavy dependency for retry jitter.** `rand = "0.10.2"`
-  pulls `chacha20`/`cpufeatures`/`getrandom`, which is more than a sleep duration needs. `tar` (new)
-  brings `filetime` and `xattr` (with `rustix`/`linux-raw-sys`) by default. The crate never reads
-  xattrs, so `default-features = false` is worth checking there too.
+- [ ] **`rand` with default features is a heavy dependency for retry jitter and upload request
+  IDs.** `rand = "0.10.2"` pulls `chacha20`/`cpufeatures`/`getrandom`, which is more than a sleep
+  duration and `saves_uploader.rs:92`'s `_gog_request_id` need. `tar` brings `filetime` and `xattr`
+  (with `rustix`/`linux-raw-sys`) by default. The crate never reads xattrs, so
+  `default-features = false` is worth checking there too.
 
 - [ ] **`DownloadEvent::Preparing`/`Prepared` are emitted back-to-back with no work between them.**
   `downloader.rs:253-255`. Collapse them, or do real work in between.
 
-- [ ] **Release tags don't all match `Cargo.toml`, and the newest aren't on `main`.** Narrowed from
-  the previous "`0.1.1` collides with `master`" item (see Closed). `v1.0.1` (`8682797`) was tagged
-  with `version = "1.0.0"` still in `Cargo.toml`, so a `Cargo.lock` resolved from it records the
-  wrong version. `v1.0.2`–`v1.0.4` are correct but only reachable from `feature/saves`. The
-  `-restart` tags (through `v0.1.12-restart`) also remain alongside the `v1.0.x` ones.
+- [ ] **`v1.0.1`'s tag doesn't match its `Cargo.toml`, and `main` is ahead of the newest tag.**
+  `v1.0.1` (`8682797`) was tagged with `version = "1.0.0"` still in `Cargo.toml`, so a `Cargo.lock`
+  resolved from it records the wrong version. `v1.0.2`–`v1.0.9` match. HEAD is three commits past
+  `v1.0.9` with `Cargo.toml` still at `1.0.9`, so tagging it without a bump would repeat the `v1.0.1`
+  mistake. The `-restart` tags (through `v0.1.12-restart`, plus the two `-debug` tags) also remain
+  alongside the `v1.0.x` ones.
 
-**Clippy: 43 warnings** (plus the rustc `dead_code` above, 44 total). 36 are auto-fixable.
-Locations re-derived:
+**Clippy: 42 warnings** (plus the five rustc `dead_code` above, 47 total). 36 are auto-fixable.
+Locations re-derived against `6b4b7f3`:
 
-- [ ] **6 `unnecessary_cast`.** `backoff(attempt as u32)` on a `u32` at `client.rs:66` and
-  `downloader.rs:282,294,323,337,353`. `004e68e` added two of these and removed one. The two
-  verification arms (`:373`, `:388`) write bare `backoff(attempt)`.
-- [ ] 7 `let_and_return`: `download_manager.rs:70,85,100`, `downloader.rs:472,561,646`,
+- [ ] **6 `unnecessary_cast`.** `backoff(attempt as u32)` on a `u32` at `client.rs:67` and
+  `downloader.rs:283,295,320,333,346`. The two verification arms (`:364`, `:378`) write bare
+  `backoff(attempt)`.
+- [ ] 7 `let_and_return`: `download_manager.rs:70,85,100`, `downloader.rs:459,548,633`,
   `product_bundle.rs:64`.
 - [ ] 5 module inception: `client::auth::auth`, `client::client`, `downloader::downloader`,
   `gogdl::gogdl`, `secure_links::secure_links`.
-- [ ] 4 `needless_return`: `client.rs:148,151`, `downloader.rs:634`, `fs/path_resolver.rs:54`.
+- [ ] 4 `needless_return`: `client.rs:236,239`, `downloader.rs:621`, `fs/path_resolver.rs:54`.
 - [ ] 3 `len_zero`: `downloader.rs:101,121,198`.
-- [ ] 2 `redundant_field_names`: `client.rs:58` (`body: body`), `depot_info.rs:58`.
-- [ ] 2 `needless_borrow` on `refresh_auth(&self)`: `client.rs:55,62`.
+- [ ] 2 `redundant_field_names`: `client.rs:59` (`body: body`), `depot_info.rs:58`.
+- [ ] 2 `needless_borrow` on `refresh_auth(&self)`: `client.rs:56,63`.
 - [ ] 2 `manual_map`: `auth_manager.rs:113`, `depot_info.rs:39`.
 - [ ] 2 `or_insert_with(Vec::new)` → `or_default()`: `downloadable_product.rs:62`,
   `product_bundle.rs:59`.
-- [ ] 2 `map_or(false, ..)` → `is_some_and(..)`: `client/auth/auth.rs:69`, and its copy at
-  `saves/saves_auth.rs:89` (new).
-- [ ] 2 redundant `&` in `format!`: `depot/depot_info.rs:80`, `saves/save_files.rs:59` (new).
-- [ ] 1 `collapsible_if`: `saves/saves_auth.rs:56` (new), the cache lookup's nested
-  `if let .. { if auth.is_valid() }`. `links_manager.rs:54-56` already uses the let-chain form.
+- [ ] 2 `map_or(false, ..)` → `is_some_and(..)`: `client/auth/auth.rs:69` and its copy at
+  `saves/saves_auth.rs:109`.
+- [ ] 2 redundant `&` in `format!`: `depot/depot_info.rs:80`, `saves/save_files.rs:152`.
+- [ ] 1 `collapsible_if`: `saves/saves_auth.rs:59`, the cache lookup's nested
+  `if let .. { if auth.is_valid() }`. `links_manager.rs` already uses the let-chain form.
 - [ ] `OwnedGames::default()` shadows `std::default::Default` (`games/owned_games.rs:19`).
 - [ ] Useless `format!` on a constant URL (`games/owned_games.rs:34`).
 - [ ] One-offs: explicit closure for cloning (`depot/build_metadata.rs:40`), `io_other_error`
   (`downloader/util/hash.rs:44`).
 
-**Clippy still catches none of this crate's real defects.** Of the new findings above (tokens in
-error strings, a mutex held across network I/O, a 401 loop with no `continue`, an inverted expiry
-margin copied into a second type), clippy flags only the inverted margin's `map_or` spelling, not
-its direction.
+The ~1,500 lines of new saves code added no clippy warnings beyond the three carried over from
+`e4596b6`.
+
+**Clippy still catches none of this crate's real defects.** Of the findings above (a
+truncate-before-write on save files, tokens in error strings, a mutex held across network I/O, a
+401 loop with no `continue`, an inverted expiry margin copied into a second type), clippy flags only
+the inverted margin's `map_or` spelling, not its direction.
 
 ---
 
@@ -430,9 +552,36 @@ its direction.
 
 One line per fixed item, newest first within each group. Detail is in the referenced commits.
 
+### Cloud saves, Proton & coverage
+
+*From this pass, between `e4596b6` and `6b4b7f3`.*
+
+- [x] **Cloud saves were list-only: no download or upload** — `2457bad`, `a458a6b`, `abfdda3`.
+  `download_save_files`/`upload_save_files` now exist, with save-location expansion inside a Wine
+  prefix. The new gaps they bring are open under [Medium — cloud saves](#medium--cloud-saves).
+- [x] **A game whose location is named `saves` had every slot collapse onto one file** — `a458a6b`.
+  `SaveFile::relative_path_in` drops a segment only when it is a declared location. It is pinned by
+  `relative_path_in_keeps_every_slot_of_a_game_whose_location_is_saves`. The old
+  `relative_path` is still public (open under Low).
+- [x] **A cloud save name or location expression could write outside its directory** — `2457bad`,
+  `abfdda3`. File names go through `PathResolver`. Location suffixes go through
+  `sanitize_relative_path`, which drops `..` components, and a hostile `$USER` is rejected. Pinned by
+  `parent_components_cannot_escape_the_variable_directory` and
+  `a_hostile_host_user_name_cannot_leave_drive_c_users`.
+- [x] **Frontends couldn't find an extracted Proton tree whose root carried an architecture
+  suffix** — `26ea6c4`. The root is renamed to the sanitized tag and the path returned. Pinned by
+  `architecture_suffixed_root_is_still_detected`. The same-name overlay it left behind is open under
+  [Medium — Proton](#medium--proton).
+- [x] **No automated tests at all** — narrowed, not closed. `2457bad` onward added the crate's first
+  39 unit tests. The network-facing paths are still untested (open under
+  [missing coverage](#medium--missing-coverage)).
+- [x] **`lumen-cli`'s pinned tag was reachable only from `feature/saves`** — `feature/saves` is
+  merged into `main`, and every `v1.0.x` tag, including `lumen-cli`'s current `v1.0.8`, is on
+  `main`.
+
 ### Downloader reliability
 
-*Everything above the next italic note is from this pass, on top of `a813975`.*
+*Everything above the next italic note is from the `6b4b7f3` pass, on top of `a813975`.*
 
 - [x] **The batch couldn't short-circuit; a `ChunkHashMismatch` on one unit didn't stop the rest
   from spending their retry budgets.** `download_files` now drives units through
@@ -536,7 +685,7 @@ One line per fixed item, newest first within each group. Detail is in the refere
 - [x] **Only per-chunk MD5 verified; SHA-256 support was unused dead code** — resolved by deletion
   in `2100296`.
 - [x] **`ProgressRegression` and `VerificationStage` were source-breaking additions `lumen-cli`
-  hadn't absorbed** — resolved by `lumen-cli`'s pin bumps, now at `v1.0.4`.
+  hadn't absorbed** — resolved by `lumen-cli`'s pin bumps, now at `v1.0.8`.
 
 ### Auth & client
 
@@ -547,8 +696,8 @@ One line per fixed item, newest first within each group. Detail is in the refere
   `9cd8d0a`, re-fixed by `2ae200d` + `3ed4dd0`.
 - [x] **Error detail was invisible to consumers** — `5b7ca2f` re-exports every per-layer error
   enum. `ProtonError` and `SavesError` are re-exported too.
-- [x] **Local expiry was a hard failure, not a refresh-and-retry case** — `5b7ca2f`. Not applied to
-  `get_save_files` (open above).
+- [x] **Local expiry was a hard failure, not a refresh-and-retry case** — `5b7ca2f`. Not applied to the saves
+  methods (open above).
 - [x] **Any non-401 HTTP error was silently retried three times with its detail discarded** —
   `5b7ca2f`. The 401-without-auth path still loops (open above).
 - [x] **`refresh_auth` persisted tokens without `valid_until`** — `998829d`, regressed by `9a1f780`,
@@ -576,8 +725,8 @@ One line per fixed item, newest first within each group. Detail is in the refere
 ### Style
 
 - [x] **`Cargo.toml`'s `version = "0.1.1"` disagreed with every `restart` tag and collided with
-  `master`'s released `v0.1.1`** — `92030cf` moved to `1.0.0`, and `v1.0.2`–`v1.0.4` each match
-  their tag. `lumen-cli`'s `Cargo.lock` now records `1.0.4` for `tag=v1.0.4`. The `v1.0.1`
+  `master`'s released `v0.1.1`** — `92030cf` moved to `1.0.0`, and `v1.0.2`–`v1.0.9` each match
+  their tag. `lumen-cli`'s `Cargo.lock` records `1.0.8` for `tag=v1.0.8`. The `v1.0.1`
   exception is open under Low.
 - [x] **Leftover debug `println!` in a filter closure** — `1d98eb7`.
   `grep -rn 'println!\|eprintln!\|log::\|tracing::' src/` is still empty. The Proton work
