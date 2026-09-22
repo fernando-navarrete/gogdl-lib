@@ -1,6 +1,6 @@
 use serde::Deserialize;
 
-use crate::games::{GamesError, GamesManager, owned_games::GameId};
+use crate::games::{GamesError, GamesManager, owned_products::ProductId};
 
 /// Image links for a game, as returned by
 /// [`GogDl::get_game_links`](crate::GogDl::get_game_links).
@@ -33,7 +33,7 @@ impl GameLinks {
     /// which delegates here internally.
     pub async fn get_game_links(
         games_manager: &GamesManager,
-        game_id: GameId,
+        game_id: ProductId,
     ) -> Result<GameLinks, GamesError> {
         {
             let lock = games_manager.inner.lock().await;

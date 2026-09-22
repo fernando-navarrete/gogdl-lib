@@ -1,6 +1,6 @@
 use serde::Deserialize;
 
-use crate::games::{GamesError, GamesManager, owned_games::GameId};
+use crate::games::{GamesError, GamesManager, owned_products::ProductId};
 
 /// The store summary/description text for a game, as returned by
 /// [`GogDl::get_game_summary`](crate::GogDl::get_game_summary).
@@ -25,7 +25,7 @@ impl GameSummary {
     /// which delegates here internally.
     pub async fn get_game_summary(
         games_manager: &GamesManager,
-        game_id: GameId,
+        game_id: ProductId,
     ) -> Result<GameSummary, GamesError> {
         {
             let lock = games_manager.inner.lock().await;

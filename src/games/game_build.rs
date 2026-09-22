@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::games::{GamesError, GamesManager, owned_games::GameId};
+use crate::games::{GamesError, GamesManager, owned_products::ProductId};
 
 /// A single published build of a game.
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -42,7 +42,7 @@ impl GameBuilds {
     /// which delegates here internally.
     pub async fn get_game_builds(
         games_manager: &GamesManager,
-        game_id: GameId,
+        game_id: ProductId,
     ) -> Result<Self, GamesError> {
         {
             let lock = games_manager.inner.lock().await;

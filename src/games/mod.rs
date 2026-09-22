@@ -6,6 +6,7 @@ mod game_screenshots;
 mod game_summary;
 mod games_manager;
 mod owned_games;
+mod owned_products;
 
 pub use error::GamesError;
 pub use game_build::{GameBuild, GameBuilds};
@@ -15,3 +16,4 @@ pub use game_screenshots::GameScreenshots;
 pub use game_summary::GameSummary;
 pub use games_manager::GamesManager;
 pub use owned_games::OwnedGames;
+pub use owned_products::OwnedProducts;

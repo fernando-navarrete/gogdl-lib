@@ -73,7 +73,7 @@ pub use games::GameDetails;
 pub use games::GameLinks;
 pub use games::GameScreenshots;
 pub use games::GameSummary;
-pub use games::OwnedGames;
+pub use games::OwnedProducts;
 pub use gogdl::GogDl;
 pub use gogdl::GogDlError;
 pub use proton::GithubAsset;

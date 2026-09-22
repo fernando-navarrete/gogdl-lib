@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::games::{GamesError, GamesManager, owned_games::GameId};
+use crate::games::{GamesError, GamesManager, owned_products::ProductId};
 
 /// Details for a single game, as returned by
 /// [`GogDl::get_game_details`](crate::GogDl::get_game_details).
@@ -12,7 +12,7 @@ pub struct GameDetails {
     /// deserialization — always `0`. Use the `game_id` you already passed to
     /// `get_game_details` instead of reading this back.
     #[serde(skip)]
-    pub id: GameId,
+    pub id: ProductId,
 }
 
 impl GameDetails {
@@ -22,7 +22,7 @@ impl GameDetails {
     /// which delegates here internally.
     pub async fn get_game_details(
         games_manager: &GamesManager,
-        game_id: GameId,
+        game_id: ProductId,
     ) -> Result<GameDetails, GamesError> {
         {
             let lock = games_manager.inner.lock().await;

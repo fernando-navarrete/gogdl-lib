@@ -65,7 +65,7 @@ impl DownloadableProduct {
 
         let owned_products = {
             let inner = download_manager.inner.lock().await;
-            inner.games.get_owned_games().await?
+            inner.games.get_owned_products().await?
         };
 
         let downloadable_products = products

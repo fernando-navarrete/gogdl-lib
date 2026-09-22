@@ -1,6 +1,6 @@
 use serde::Deserialize;
 
-use crate::games::{GamesError, GamesManager, owned_games::GameId};
+use crate::games::{GamesError, GamesManager, owned_products::ProductId};
 
 /// Raw screenshot links for a game, as returned by
 /// [`GogDl::get_game_screenshots`](crate::GogDl::get_game_screenshots).
@@ -46,7 +46,7 @@ impl GameScreenshots {
     /// instead, which delegates here internally.
     pub async fn get_game_screenshots(
         games_manager: &GamesManager,
-        game_id: GameId,
+        game_id: ProductId,
     ) -> Result<GameScreenshots, GamesError> {
         {
             let lock = games_manager.inner.lock().await;

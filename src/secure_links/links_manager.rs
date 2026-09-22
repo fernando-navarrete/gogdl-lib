@@ -60,7 +60,7 @@ impl SecureLinksManager {
 
         let available_games = {
             let lock = self.inner.lock().await;
-            let games = lock.games.get_owned_games().await?;
+            let games = lock.games.get_owned_products().await?;
             games.owned
         };
 
