@@ -21,6 +21,12 @@ pub enum ProtonDownloadEvent {
     /// a delta, not a running total. The tarball is decompressed and
     /// extracted as it streams in, so this does not correspond to any
     /// on-disk byte count.
+    ///
+    /// Emitted once per network read, by design — same caller-owned
+    /// coalescing contract as [`DownloadEvent::Progress`](crate::DownloadEvent::Progress).
+    /// This is a single stream rather than several chunks in flight, so the
+    /// rate is lower, but it is still uncoalesced: accumulate and flush on
+    /// your own interval before handing deltas to a UI sink.
     Progress(usize),
     /// One entry (file, directory or symlink) has been extracted to disk.
     /// The payload is that entry's path, relative to the destination

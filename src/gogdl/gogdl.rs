@@ -376,6 +376,16 @@ impl GogDl {
     /// mismatch up to 3 times, both with jittered exponential backoff; see
     /// [`crate::DownloadEvent`] for what the download stage reports as it goes.
     ///
+    /// **The first chunk that fails terminally (retries exhausted) aborts
+    /// the whole download stage.** Units already in flight are cancelled —
+    /// each cancelled unit's reported bytes are taken back via
+    /// [`DownloadEvent::ProgressRegression`](crate::DownloadEvent::ProgressRegression)
+    /// — and units not yet started are never attempted. The error this
+    /// method returns is whichever unit failed first in *time*, not
+    /// necessarily first in `bundles`' order, so a failed call leaves an
+    /// install in an indeterminate partial state; call
+    /// [`repair_game`](Self::repair_game) afterwards to resume.
+    ///
     /// Resolves only once the whole transfer finishes or fails — drain `tx`'s
     /// paired receiver concurrently on another task.
     ///

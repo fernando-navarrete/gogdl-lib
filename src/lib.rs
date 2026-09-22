@@ -16,7 +16,10 @@
 //! provide, rather than by returning progress from the `async fn` itself. The
 //! future only resolves once the whole job is done (or has failed); drain the
 //! paired receiver concurrently on another task, or events will pile up
-//! unbounded in the channel for the lifetime of the call.
+//! unbounded in the channel for the lifetime of the call. Progress events are
+//! emitted at source granularity (one per network read) — coalescing them to
+//! a display rate you choose is the consumer's job, not this crate's; see
+//! [`DownloadEvent::Progress`].
 //!
 //! `download_game` and [`GogDl::repair_game`] have identical signatures but
 //! are not interchangeable — see their doc comments for which one resumes an

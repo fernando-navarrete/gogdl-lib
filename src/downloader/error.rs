@@ -101,6 +101,16 @@ pub enum DownloadError {
 
     /// A chunk's decompressed MD5 didn't match the manifest after every
     /// retry was exhausted.
+    ///
+    /// This aborts the whole batch: a digest that still doesn't match after
+    /// several attempts is evidence about the *manifest*, not about this one
+    /// chunk, so downloading the rest of the batch against the same manifest
+    /// is unlikely to help. In-flight units are cancelled (see the
+    /// batch-abort note on
+    /// [`GogDl::download_game`](crate::GogDl::download_game)); the right
+    /// recovery is re-resolving
+    /// [`GogDl::get_product_bundles`](crate::GogDl::get_product_bundles) for
+    /// a fresh manifest before retrying.
     #[error(
         "Chunk hash mismatch during download: file={path} offset={offset} expected={expected} actual={actual}"
     )]

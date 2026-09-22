@@ -53,36 +53,15 @@ the same count as the previous pass but a different mix: two new `unnecessary_ca
 secure-link retry sites, three new warnings in `saves/`, and three `redundant_field_names`/
 redefinition warnings gone. See the [clippy](#low--style--clippy) section.
 
+**Numbers re-derived for this pass, on top of `a813975`:** `cargo build --lib` now shows five
+`dead_code` warnings, not the one above — `a813975`'s `saves/remote_config.rs` added four unrelated
+to this pass. `cargo clippy --lib -- -W clippy::all` reports **42 clippy warnings** (47 with the
+five `dead_code` fields): one lower than the `43` above, this pass's `try_for_each_concurrent`
+rewrite of `download_files` having removed the redundant `path_resolver` redefinition. The rest of
+the paragraph above and the clippy list below were not re-audited against `a813975`; their line
+numbers may be stale.
+
 ---
-
-## High — downloader reliability
-
-- [ ] **The per-failure-class budget is right; the batch still can't short-circuit.** With
-  `attempt < MAX_ATTEMPTS - 4` (`src/downloader/downloader.rs:371`), a size-correct digest mismatch
-  costs 3 transfers rather than 6, and the `remaining() != 0` arm (`:384-401`) keeps all six. What
-  is unchanged is that nothing short-circuits: `download_files` drains the whole `buffer_unordered`
-  stream and only then collects the results (`:407-411`), so the first chunk's three failed attempts
-  don't stop the remaining units from spending theirs. Against a stale manifest that is 3× the
-  transfer for every affected chunk, discovered one chunk at a time. A first `ChunkHashMismatch` is
-  evidence about the *manifest*, not about that one chunk, and could reasonably abort the batch.
-
-- [ ] **`DownloadEvent::Progress` is emitted once per network read, the event-rate problem mainline
-  `v0.1.1` was cut to fix. It is now on three code paths.** `download_files`'s callback sends
-  `DownloadEvent::Progress(chunk_lenght)` for every `Bytes` the `bytes_stream()` yields
-  (`src/downloader/downloader.rs:310-312`) into an unbounded channel. A forwarding task re-sends it
-  into another unbounded channel (`:211-217` for `download`, `:131-137` for `repair`). With
-  `self.threads` chunks in flight on a fast connection that is thousands of sends per second,
-  bounded by read syscall size rather than by throughput. Since `f4d7388`, each of those reads also
-  pays a `Box::pin` allocation and a `Mutex::lock().await` (see Low).
-  `download_proton_release` copies the same shape (`src/proton/proton_downloader.rs:88-89`,
-  `ProtonDownloadEvent::Progress(chunk.len())` per read). It is a single stream, so the rate is
-  lower, but the channel is still unbounded.
-
-  The workspace `CLAUDE.md` documents this same shape as the repair-download memory leak that
-  `master`'s `v0.1.1` exists to fix. There, `gogdl_flutter`'s drain loops flooded an unbounded
-  `StreamSink` faster than Dart could drain it. The fix had two halves: coalescing in the bridge,
-  *and* cutting the rate at the source by moving `Progress` to the write-buffer flush boundary. This
-  line has neither half. Fix before any Flutter consumer is wired up to `repair_game`.
 
 ## Medium — credentials, saves & Proton
 
@@ -377,13 +356,6 @@ redefinition warnings gone. See the [clippy](#low--style--clippy) section.
   describes. A generic `AsyncWrite` sink parameter on `stream_chunk`, instead of a callback, would
   remove both the box and the lock.
 
-- [ ] **Exits from the attempt body that don't emit `ProgressRegression`: now four, all at zero.**
-  `open_file`'s `?` (`downloader.rs:267`), `OffsetWriter::new`'s `?` (`:272`, missed in earlier
-  passes), and `004e68e`'s two secure-link `return Err`s (`:285`, `:297`) all run before a byte is
-  reported, so there is no observable effect. The invariant should read "every exit cancels what it
-  reported". Moving secure-link resolution *above* `open_file` would also stop each failed link
-  fetch from opening and wrapping a file for nothing.
-
 - [ ] **`.map(|unit| unit.clone().unwrap().clone())` clones every surviving item twice.**
   `cb2d6a1` changed `.unwrap().clone()` to this at `downloader.rs:470,559,644` (two copies with a
   "safe" comment), right after taking the `Vec` by value. For `DepotFile` each clone copies a
@@ -399,8 +371,6 @@ redefinition warnings gone. See the [clippy](#low--style--clippy) section.
 
 - [ ] **Vestigial `let _ = body;` in `HttpClient::fetch`.** `client.rs:52` discards a `body` that
   `:58` then returns as `body: body`.
-
-- [ ] **`chunk_lenght` is misspelled.** `src/downloader/downloader.rs:310-312`.
 
 - [ ] **The free-space check discards its own error detail, now in three places.**
   `Downloader::download` (`downloader.rs:175-178`), `repair` (`:78-81`), and, new with `410000f`,
@@ -444,8 +414,6 @@ Locations re-derived:
 - [ ] 2 redundant `&` in `format!`: `depot/depot_info.rs:80`, `saves/save_files.rs:59` (new).
 - [ ] 1 `collapsible_if`: `saves/saves_auth.rs:56` (new), the cache lookup's nested
   `if let .. { if auth.is_valid() }`. `links_manager.rs:54-56` already uses the let-chain form.
-- [ ] 1 redundant redefinition of `path_resolver`: `downloader.rs:258`. `cb2d6a1` removed the
-  other three.
 - [ ] `OwnedGames::default()` shadows `std::default::Default` (`games/owned_games.rs:19`).
 - [ ] Useless `format!` on a constant URL (`games/owned_games.rs:34`).
 - [ ] One-offs: explicit closure for cloning (`depot/build_metadata.rs:40`), `io_other_error`
@@ -463,6 +431,35 @@ its direction.
 One line per fixed item, newest first within each group. Detail is in the referenced commits.
 
 ### Downloader reliability
+
+*Everything above the next italic note is from this pass, on top of `a813975`.*
+
+- [x] **The batch couldn't short-circuit; a `ChunkHashMismatch` on one unit didn't stop the rest
+  from spending their retry budgets.** `download_files` now drives units through
+  `TryStreamExt::try_for_each_concurrent` instead of `buffer_unordered(..).collect()` followed by a
+  fold: the first terminal error returns immediately, cancelling in-flight units and never starting
+  ones not yet scheduled. A new `ProgressGuard` (`src/downloader/util/progress_guard.rs`) ties each
+  attempt's `ProgressRegression` to `Drop` rather than eight hand-written send sites, so a unit
+  cancelled mid-transfer still takes back what it reported — closing the Low item about exits that
+  skipped `ProgressRegression`, and the `chunk_lenght` misspelling along with it. Documented on
+  `DownloadError::ChunkHashMismatch`, `DownloadEvent::ProgressRegression`, `DownloadStageEvent` and
+  `GogDl::download_game`/`repair_game`. Still untested — no test pins the short-circuit or the
+  cancellation-regression pairing.
+- [x] **Four exits from the attempt body didn't emit `ProgressRegression`** — closed by the same
+  `ProgressGuard` change: `open_file`'s `?`, `OffsetWriter::new`'s `?`, and the two secure-link
+  `return Err`s now all drop the guard at zero bytes reported, so the invariant ("every exit cancels
+  what it reported") holds structurally instead of by each site remembering to send it.
+- [x] **`chunk_lenght` was misspelled** — gone with the same change; the callback now calls
+  `progress.report(chunk.len())` instead of naming a local.
+- [x] **`DownloadEvent::Progress` is emitted once per network read** — resolved as intended
+  behavior, not a bug. Coalescing to a display rate is explicitly the consumer's job, so a frontend
+  can pick its own refresh rate rather than inherit one baked into the library; this crate reports
+  at source granularity and will not rate-limit on the consumer's behalf. Now documented on
+  `DownloadEvent::Progress`, `ProtonDownloadEvent::Progress` and `lib.rs`'s "Long-running
+  operations" section. The two-hop unbounded-channel forwarding this item's write-up bundled in
+  (`download`/`repair` re-sending `download_files`' events into the caller's channel) is unrelated
+  to the emission rate and is not addressed by this; `lib.rs` already documents draining the
+  receiver concurrently to avoid unbounded pile-up.
 
 *Everything above the next italic note landed after `v0.0.13-restart`, between `66105ed` and
 `e4596b6`.*

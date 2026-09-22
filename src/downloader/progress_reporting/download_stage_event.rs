@@ -14,6 +14,11 @@ use crate::downloader::progress_reporting::VerificationEvent;
 /// `VerificationStage` pass between allocation and the download stage, and
 /// only feeds units that fail verification into `DownloadStage`. Neither
 /// stage set is documented anywhere else — this ordering is the contract.
+///
+/// `DownloadStage` may stop partway through: the first chunk that fails
+/// terminally aborts the rest of that stage, so a failed call doesn't imply
+/// every unit was attempted. See the batch-abort note on
+/// [`GogDl::download_game`](crate::GogDl::download_game).
 pub enum DownloadStageEvent {
     /// A file's on-disk size was checked against its expected size, before
     /// any allocation or transfer. See [`FileSizeVerificationEvent`].

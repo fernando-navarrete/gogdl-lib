@@ -2,7 +2,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use async_compression::tokio::write::ZlibDecoder;
 use bytes::Bytes;
-use futures_util::{StreamExt, stream};
+use futures_util::{StreamExt, TryStreamExt, stream};
 use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::sync::{Mutex, mpsc};
 
@@ -18,7 +18,7 @@ use crate::{
         progress_reporting::{
             DownloadStageEvent, FileAllocationEvent, FileSizeVerificationEvent, VerificationEvent,
         },
-        util::{HashingWriter, OffsetWriter, compute_chunk_checksum},
+        util::{HashingWriter, OffsetWriter, ProgressGuard, compute_chunk_checksum},
     },
     fs::PathResolver,
     secure_links::SecureLinksManager,
@@ -253,9 +253,9 @@ impl Downloader {
         tx.send(DownloadEvent::Preparing).ok();
 
         tx.send(DownloadEvent::Prepared).ok();
-        let results: Vec<Result<(), DownloadError>> = stream::iter(download_units)
-            .map(|download_unit| {
-                let path_resolver = path_resolver;
+        stream::iter(download_units)
+            .map(Ok::<DownloadUnit, DownloadError>)
+            .try_for_each_concurrent(self.threads, |download_unit| {
                 tx.send(DownloadEvent::Downloading).ok();
                 let tx = tx.clone();
                 async move {
@@ -263,6 +263,7 @@ impl Downloader {
                     for attempt in 0..MAX_ATTEMPTS {
 
                         let secure_links_manager = &self.secure_links.clone();
+                        let mut progress = ProgressGuard::new(tx.clone());
 
                         let file = path_resolver.open_file(&download_unit.path, true).await?;
 
@@ -303,13 +304,10 @@ impl Downloader {
                             FileType::Other => url_format.parse_url_redist(&download_unit.compressed_md5),
                         };
 
-                        let mut reported_bytes = 0;
                         let decoder_ref = &decoder_slot;
                         let stream_result = self.client
                             .stream_chunk(&url, |chunk: Bytes| {
-                                let chunk_lenght = chunk.len();
-                                reported_bytes += chunk_lenght;
-                                tx.send(DownloadEvent::Progress(chunk_lenght)).ok();
+                                progress.report(chunk.len());
                                 let decoder = decoder_ref;
                                 Box::pin(async move { decoder.lock().await.write_all(&chunk).await })
                             })
@@ -317,7 +315,6 @@ impl Downloader {
                         match stream_result {
                                 Ok(_) => {},
                                 Err(ClientError::AuthError(err)) => {
-                                    tx.send(DownloadEvent::ProgressRegression(reported_bytes)).ok();
                                     secure_links_manager.invalidate_secure_links(&download_unit.product_id).await;
                                     if attempt != MAX_ATTEMPTS - 1 {
                                         backoff(attempt as u32).await;
@@ -326,7 +323,6 @@ impl Downloader {
                                     return Err(DownloadError::ClientError(ClientError::AuthError(err)));
                                 }
                                 Err(ClientError::HttpError { status, body }) => {
-                                    tx.send(DownloadEvent::ProgressRegression(reported_bytes)).ok();
                                     if status == reqwest::StatusCode::UNAUTHORIZED {
                                         secure_links_manager.invalidate_secure_links(&download_unit.product_id).await;
                                     }
@@ -340,15 +336,12 @@ impl Downloader {
                                     return Err(DownloadError::ClientError(ClientError::HttpError { status, body }));
                                 }
                                 Err(ClientError::ChunkStreamCallbackError(err)) => {
-                                    tx.send(DownloadEvent::ProgressRegression(reported_bytes)).ok();
                                     return Err(DownloadError::ClientError(ClientError::ChunkStreamCallbackError(err)))
                                 }
                                 Err(ClientError::UrlParseError(err)) => {
-                                    tx.send(DownloadEvent::ProgressRegression(reported_bytes)).ok();
                                     return Err(DownloadError::ClientError(ClientError::UrlParseError(err)))
                                 }
                                 Err(err) => {
-                                    tx.send(DownloadEvent::ProgressRegression(reported_bytes)).ok();
                                     if attempt != MAX_ATTEMPTS - 1 {
                                         backoff(attempt as u32).await;
                                         continue;
@@ -359,7 +352,6 @@ impl Downloader {
 
                         let mut decoder = decoder_slot.into_inner();
                         if let Err(err) = decoder.shutdown().await {
-                            tx.send(DownloadEvent::ProgressRegression(reported_bytes)).ok();
                             return Err(DownloadError::DeflateError(err))
                         }
 
@@ -367,7 +359,6 @@ impl Downloader {
                         let writer = buf_writer.into_inner();
 
                         if actual_md5 != download_unit.md5 {
-                            tx.send(DownloadEvent::ProgressRegression(reported_bytes)).ok();
                             if attempt < MAX_ATTEMPTS - 4 {
                                 secure_links_manager.invalidate_secure_links(&download_unit.product_id).await;
                                 backoff(attempt).await;
@@ -382,7 +373,6 @@ impl Downloader {
                         }
 
                         if writer.remaining() != 0 {
-                            tx.send(DownloadEvent::ProgressRegression(reported_bytes)).ok();
                             if attempt != MAX_ATTEMPTS - 1 {
                                 secure_links_manager.invalidate_secure_links(&download_unit.product_id).await;
                                 backoff(attempt).await;
@@ -399,16 +389,13 @@ impl Downloader {
                                 ),
                             )));
                         }
+                        progress.commit();
                         break;
                     }
                     Ok(())
                 }
             })
-            .buffer_unordered(self.threads)
-            .collect::<Vec<_>>()
-            .await;
-
-        results.into_iter().collect::<Result<(), DownloadError>>()?;
+            .await?;
         Ok(())
     }
 
