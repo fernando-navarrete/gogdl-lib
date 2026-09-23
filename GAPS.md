@@ -1,13 +1,12 @@
 # GAPS.md
 
-Open findings for `gogdl-lib`. Current tree: HEAD **`6b4b7f3`** ("Abort download batches on terminal
-chunk failures") on **`main`**, `Cargo.toml` at `1.0.9`. `feature/saves` has been merged into `main`,
-so every `v1.0.x` tag is now reachable from `main`. The newest tag, **`v1.0.9`** (`95c7d21`), is
-three commits behind HEAD. Those three commits (`26ea6c4` Proton rename, `a813975` visibility changes,
-`6b4b7f3` batch abort) are unreleased. **`lumen-cli` (sibling repo) is pinned to `v1.0.8`**
-(`Cargo.toml:12`, `Cargo.lock` source `tag=v1.0.8#a458a6b`), which is one tag behind and doesn't have
-the Wine-prefix save-location resolution from `abfdda3`. This pass did not rebuild `lumen-cli`
-against this tree.
+Open findings for `gogdl-lib`. Current tree: HEAD **`e032b7d`** ("Add owned games filtering by
+product type") on **`main`**, `Cargo.toml` at `1.0.10`. `feature/saves` has been merged into `main`,
+so every `v1.0.x` tag is now reachable from `main`. The newest tag, **`v1.0.10`** (`8d2b244`), is
+two commits behind HEAD. Those two commits (`d6dbdc5` owned-products rename, `e032b7d` owned-games
+filter) are unreleased. **`lumen-cli` (sibling repo) is pinned to `v1.0.10`** (`Cargo.toml:12`), so
+its next bump picks up the `get_owned_games` behavior change below with no compile error. This pass
+did not rebuild `lumen-cli` against this tree.
 
 **What changed since the last full pass of this document (`e4596b6`, `v1.0.4`), 13 commits in all:**
 
@@ -34,7 +33,20 @@ against this tree.
    and `proton/proton_downloader.rs`. See [missing coverage](#medium--missing-coverage) for what they
    don't reach.
 
-Line references below were re-derived against `6b4b7f3`. Fixed items are collapsed to one line
+**Since that pass (`8442d80`), `get_owned_games` means games only** (`d6dbdc5`, `e032b7d`):
+
+- The old "every owned product ID" lookup is now `OwnedProducts`/`GamesManager::get_owned_products`
+  (`src/games/owned_products.rs`). It is crate-internal: `GogDl::get_owned_products` and the
+  `OwnedProducts` re-export are gone. Secure links and `DownloadableProduct` still use it for their
+  ownership checks. `GameId` was renamed `ProductId` (still private).
+- `GogDl::get_owned_games` keeps its v1.0.10 signature and `OwnedGames { owned }` shape, but now
+  looks each owned product up on `gamesdb.gog.com/platforms/gog/external_releases/{id}` and keeps
+  only `type == "game"` (`src/games/owned_games.rs`). DLCs, packs and similar are dropped. The
+  signature didn't change, so callers get the new semantics silently. See
+  [owned games](#medium--owned-games) for the gaps this opens.
+
+Line references below were re-derived against `6b4b7f3`, except the owned-games and owned-products
+references, which are against `e032b7d`. Fixed items are collapsed to one line
 each in [Closed](#closed) at the bottom; the detail lives in the referenced commits.
 
 **Two standing facts that apply to almost every item here:**
@@ -48,11 +60,12 @@ each in [Closed](#closed) at the bottom; the detail lives in the referenced comm
 - **`v0.0.12-restart` still carries the retry off-by-one** fixed in `2469b13`. Nothing current
   resolves to it (`lumen-cli` is on `v1.0.8`), but the tag still exists.
 
-`cargo build --lib` shows **five `dead_code` warnings**: `ProtonManager.inner`
+`cargo build --lib` shows **six warnings**: an unused `OwnedProducts` import left behind by
+`e032b7d` (`src/gogdl/gogdl.rs:11`), plus five `dead_code`: `ProtonManager.inner`
 (`src/proton/proton_manager.rs:20`) and four unused `RemoteConfig` fields (`version`, `macos`,
 `overlay`, `supported` at `src/saves/remote_config.rs:20,115,123,134`). See
 [Low](#low--style--clippy). `cargo clippy --lib -- -W clippy::all` reports **42 clippy warnings**
-(47 with those five), 36 auto-fixable. The mix and locations are listed in the
+(48 with those six), 38 auto-fixable. The mix and locations are listed in the
 [clippy](#low--style--clippy) section.
 
 ---
@@ -141,7 +154,7 @@ each in [Closed](#closed) at the bottom; the detail lives in the referenced comm
   The lock isn't needed. `DepotManager` and `GamesManager` are cheap `Clone` handles over their own
   `Arc<Mutex<..>>`, so they can live on `SavesManager` directly, outside the mutex, leaving
   `SavesManagerInner` with only the two `HashMap`s. `SecureLinksManager::get_secure_links` has the
-  same pattern around `get_owned_games()` (`src/secure_links/links_manager.rs:62-63`). That one is
+  same pattern around `get_owned_products()` (`src/secure_links/links_manager.rs:62-63`). That one is
   older, but saves copied it.
 
 - [ ] **The saves API requires a still-valid session access token and never refreshes it, and a
@@ -167,6 +180,36 @@ each in [Closed](#closed) at the bottom; the detail lives in the referenced comm
   `Result<_, SavesError>`, and `GogDlError` has no saves variant (`src/gogdl/error.rs`). This was
   one method last pass; it is four now. A consumer with one `GogDlError` error path can't `?` them.
   Add `GogDlError::SavesError(#[from] SavesError)`, or amend the crate docs.
+
+## Medium — owned games
+
+- [ ] **`get_owned_games` silently drops any product whose `gamesdb` lookup fails.** Each lookup's
+  `Result` is filtered with `.filter(|d| d.is_ok())` (`src/games/owned_games.rs:48`), so a
+  transport error after retries, a 404 for a product `gamesdb` doesn't know, a 429, or a body
+  without a `type` field just removes that ID. The call still returns `Ok`. A flaky network
+  therefore returns a *shorter library*, not an error, and the caller can't tell. `lumen-cli`'s
+  `list_owned_games` (`../lumen-cli/src/middleware/catalog.rs:15-23`) calls this and says outright
+  that silently shrinking the list on a per-title failure is "exactly the kind of thing this tool
+  needs to show, not hide". The rustdoc now states the behavior, so it is documented, not fixed.
+  Options: fail the whole call on the first non-404 error, or return the unresolved IDs alongside
+  the games (e.g. an `unresolved: Vec<ProductId>` field on `OwnedGames`) so callers can decide.
+
+- [ ] **Every `get_owned_games` call re-fetches one `gamesdb` record per owned product.** Only the
+  underlying `OwnedProducts` list is cached. The type lookups aren't stored on `GamesManagerInner`
+  (`src/games/games_manager.rs:23-29`), and they run two at a time (`buffer_unordered(2)`,
+  `owned_games.rs:42`). A few-hundred-product library means a few hundred sequential-ish requests
+  on every call, and `lumen-cli` then fans out another `get_game_details` per game on top. Product
+  type doesn't change, so a `HashMap<ProductId, String>` (or `bool`) cache on `GamesManagerInner`,
+  like the other per-ID caches there, makes repeat calls free. A failed lookup should not be
+  cached, so the item above stays fixable.
+
+- [ ] **The game/non-game decision rests on an undocumented endpoint and an exact string.**
+  `gamesdb.gog.com` is not a documented GOG API, the request is unauthenticated
+  (`fetch(.., require_auth: false, ..)`, `owned_games.rs:38`), and the filter is
+  `produt_type == "game"` (`:50`). Any other spelling or new type string silently counts as
+  non-game. `GameDetails::get_game_details` already has its own "not a game" signal
+  (`GamesError::ProductNotAGame`, from `embed.gog.com/account/gameDetails`). The two can disagree,
+  and nothing reconciles or tests them.
 
 ## Medium — Proton
 
@@ -299,7 +342,7 @@ each in [Closed](#closed) at the bottom; the detail lives in the referenced comm
   no in-flight dedup. `download_files` runs up to `self.threads` units concurrently
   (`downloader.rs:258`), and each attempt of each unit calls `get_secure_links` itself (`:278`).
   - *Cold start:* the first `self.threads` tasks all miss the empty cache at once and each issues
-    its own round-trip, plus its own `get_owned_games()` check, since cache check and fetch aren't
+    its own round-trip, plus its own `get_owned_products()` check, since cache check and fetch aren't
     one critical section. This happens per product bundle, on every download and repair.
   - *Expiry:* a cache hit checks `SecureLinks::is_valid` first, but N chunks racing past the same
     deadline each miss independently. Six sites invalidate reactively
@@ -404,6 +447,8 @@ each in [Closed](#closed) at the bottom; the detail lives in the referenced comm
     `ProtonGeRelease`/`ProtonGeReleasesPage`. Also `ProtonGeRelease::get_suitable_asset` against a
     release with `aarch64` and `.sha512sum` siblings. That selection logic has been rewritten three
     times (`34a2c52`, `51cb054`, `8682797`) with nothing pinning it.
+  - **`get_owned_games`' filter:** a captured `gamesdb` response for a game, a DLC and a pack,
+    plus one failing lookup, pinning which IDs survive (see [owned games](#medium--owned-games)).
   - **`download_proton_release` end to end:** error attribution (`is_pipe_closed_by_reader`
     preferring the extraction error) against a truncated gzip stream, and the re-download overlay in
     the Proton item above.
@@ -506,13 +551,14 @@ each in [Closed](#closed) at the bottom; the detail lives in the referenced comm
 
 - [ ] **`v1.0.1`'s tag doesn't match its `Cargo.toml`, and `main` is ahead of the newest tag.**
   `v1.0.1` (`8682797`) was tagged with `version = "1.0.0"` still in `Cargo.toml`, so a `Cargo.lock`
-  resolved from it records the wrong version. `v1.0.2`–`v1.0.9` match. HEAD is three commits past
-  `v1.0.9` with `Cargo.toml` still at `1.0.9`, so tagging it without a bump would repeat the `v1.0.1`
-  mistake. The `-restart` tags (through `v0.1.12-restart`, plus the two `-debug` tags) also remain
+  resolved from it records the wrong version. `v1.0.2`–`v1.0.10` match. HEAD is two commits past
+  `v1.0.10` with `Cargo.toml` still at `1.0.10`, so tagging it without a bump would repeat the
+  `v1.0.1` mistake. Those two commits change what `get_owned_games` returns without changing its
+  signature, so the next tag's notes should say so. The `-restart` tags (through `v0.1.12-restart`, plus the two `-debug` tags) also remain
   alongside the `v1.0.x` ones.
 
-**Clippy: 42 warnings** (plus the five rustc `dead_code` above, 47 total). 36 are auto-fixable.
-Locations re-derived against `6b4b7f3`:
+**Clippy: 42 warnings** (plus the six rustc warnings above, 48 total). 38 are auto-fixable.
+Locations re-derived against `6b4b7f3` (owned-games/products against `e032b7d`):
 
 - [ ] **6 `unnecessary_cast`.** `backoff(attempt as u32)` on a `u32` at `client.rs:67` and
   `downloader.rs:283,295,320,333,346`. The two verification arms (`:364`, `:378`) write bare
@@ -533,8 +579,17 @@ Locations re-derived against `6b4b7f3`:
 - [ ] 2 redundant `&` in `format!`: `depot/depot_info.rs:80`, `saves/save_files.rs:152`.
 - [ ] 1 `collapsible_if`: `saves/saves_auth.rs:59`, the cache lookup's nested
   `if let .. { if auth.is_valid() }`. `links_manager.rs` already uses the let-chain form.
-- [ ] `OwnedGames::default()` shadows `std::default::Default` (`games/owned_games.rs:19`).
-- [ ] Useless `format!` on a constant URL (`games/owned_games.rs:34`).
+- [ ] 1 `manual_filter_map`: `.filter(|d| d.is_ok()).map(|d| d.as_ref().unwrap())`
+  (`games/owned_games.rs:48-49`). `filter_map(|d| d.as_ref().ok())` does the same with no `unwrap`.
+  The fix for the silent-drop item above will replace it anyway.
+- [ ] Useless `format!` on a constant URL (`games/owned_products.rs:39`).
+- [ ] `OwnedProducts::default()` is an inherent method shadowing `std::default::Default`
+  (`games/owned_products.rs:22`). Clippy's `should_implement_trait` stopped counting it once the
+  type became crate-internal in `d6dbdc5`, but `#[derive(Default)]` is still the fix.
+- [ ] `GogdbDetails::produt_type` is misspelled, and it's mapped with `#[serde(alias = "type")]`
+  where `rename` is meant (`games/owned_games.rs:19-21`). It works only because nothing serializes
+  the struct.
+- [ ] Unused import `OwnedProducts` (`gogdl/gogdl.rs:11`), a rustc warning, not clippy.
 - [ ] One-offs: explicit closure for cloning (`depot/build_metadata.rs:40`), `io_other_error`
   (`downloader/util/hash.rs:44`).
 

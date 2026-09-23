@@ -6,8 +6,11 @@ use crate::games::{GamesError, GamesManager};
 
 pub type ProductId = i32;
 
-/// The product IDs owned by the authenticated account, as returned by
-/// [`GogDl::get_owned_products`](crate::GogDl::get_owned_products).
+/// Every product ID owned by the authenticated account — games, DLCs, packs
+/// and anything else. Crate-internal: the ownership check behind secure
+/// links and downloadable products, and the input that
+/// [`GogDl::get_owned_games`](crate::GogDl::get_owned_games) filters down to
+/// games.
 #[derive(Serialize, Deserialize, Clone)]
 pub struct OwnedProducts {
     /// The owned product IDs.
@@ -15,14 +18,14 @@ pub struct OwnedProducts {
 }
 impl OwnedProducts {
     /// An empty `OwnedProducts` — the pre-fetch state, never itself returned by
-    /// [`GogDl::get_owned_products`](crate::GogDl::get_owned_products).
+    /// [`get_owned_products`](Self::get_owned_products).
     pub fn default() -> Self {
         Self { owned: Vec::new() }
     }
-    /// Not reachable from outside the crate — `GamesManager` is not
-    /// exported. Call
-    /// [`GogDl::get_owned_products`](crate::GogDl::get_owned_products) instead,
-    /// which delegates here internally.
+    /// Fetches the account's owned product IDs from
+    /// `embed.gog.com/user/data/games`. Cached on the `GamesManager` after
+    /// the first non-empty result — the network is not re-checked on later
+    /// calls.
     pub async fn get_owned_products(
         game_manager: &GamesManager,
     ) -> Result<OwnedProducts, GamesError> {

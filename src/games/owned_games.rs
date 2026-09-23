@@ -6,8 +6,12 @@ use crate::{
     games::{GamesManager, owned_products::ProductId},
 };
 
+/// The IDs of the owned products that are games, as returned by
+/// [`GogDl::get_owned_games`](crate::GogDl::get_owned_games). DLCs, packs
+/// and other non-game products the account owns are filtered out.
 #[derive(Serialize, Deserialize, Clone)]
 pub struct OwnedGames {
+    /// The owned game IDs, in no particular order.
     pub owned: Vec<ProductId>,
 }
 
@@ -18,6 +22,10 @@ struct GogdbDetails {
 }
 
 impl OwnedGames {
+    /// Not reachable from outside the crate — `GamesManager` is not
+    /// exported. Call
+    /// [`GogDl::get_owned_games`](crate::GogDl::get_owned_games) instead,
+    /// which delegates here internally.
     pub async fn get_owned_games(games_manager: &GamesManager) -> Result<OwnedGames, GamesError> {
         let owned_products = games_manager.get_owned_products().await?;
 

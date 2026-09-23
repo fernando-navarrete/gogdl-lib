@@ -212,6 +212,28 @@ impl GogDl {
         let auth_string = self.client.login_with_code(code).await?;
         Ok(auth_string)
     }
+    /// The IDs of every game the authenticated account owns. DLCs, packs
+    /// and other non-game products are filtered out by looking each owned
+    /// product up on `gamesdb.gog.com` and keeping those whose `type` is
+    /// `"game"`.
+    ///
+    /// Only the underlying owned-products list is cached (for the lifetime of
+    /// this `GogDl`, after the first successful call). The per-product
+    /// `gamesdb` lookups are **not** cached: every call issues one request per
+    /// owned product, two at a time, so on a large library this is slow —
+    /// cache the result yourself rather than calling it repeatedly. The
+    /// returned IDs are in no particular order.
+    ///
+    /// A product whose `gamesdb` lookup fails (transport error after retries,
+    /// a non-2xx status such as a 404 for a product `gamesdb` doesn't know,
+    /// or an unexpected response shape) is silently left out rather than
+    /// failing the call, so a transient failure can make an owned game
+    /// missing from the result.
+    ///
+    /// # Errors
+    /// [`GogDlError::GameError`] wrapping [`crate::GamesError::ClientError`] on
+    /// auth or transport failure fetching the owned-products list. Per-product
+    /// lookup failures are not reported; see above.
     pub async fn get_owned_games(&self) -> Result<OwnedGames, GogDlError> {
         let owned_games = self.games.get_owned_games().await?;
         Ok(owned_games)
