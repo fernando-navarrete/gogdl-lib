@@ -430,6 +430,16 @@ The paragraph below is the baseline it started from.)* `cargo build --lib` showe
 
 ## Medium — missing coverage
 
+- [x] **No downstream build check.** A breaking change here showed up only when `lumen-cli` or the
+  bridge bumped its pin, after the tag. Found while planning `v1.1.4`.
+
+  Fixed in `v1.1.4`: a manual `downstream` CI job clones both consumers, points them at this
+  checkout with a `[patch]` (plus `cargo update -p gogdl-lib`, without which cargo ignores the
+  patch against their old `Cargo.lock`) and runs `cargo build` for `lumen-cli` and `cargo test` for
+  the bridge's `rust/`. `LUMEN_CLI_REF`/`BRIDGE_REF` pick the refs; lumen-cli's `main` still pins
+  `v1.0.4`, so use `feature/remote-config` until it's merged. Renaming `get_owned_games` on a
+  scratch branch turned it red.
+
 - [ ] **Saves transfers, `refresh_auth` and Proton extraction are still untested.** `v1.1.0`
   covered `download_files`, `backoff`, the `is_valid` boundaries, the `Auth` round-trip and
   deserialization of captured responses (see [Closed](#closed)). Still open, first to last:

@@ -4,6 +4,12 @@ One section per tag, newest first. Consumers pin this crate by git tag. A change
 behind an unchanged signature is called out as **Behavior change**, and a signature change as
 **Breaking**. The `v0.x` and `-restart` tags predate this file and aren't covered.
 
+## 1.1.4
+
+No API or behavior change. CI only: a manual `downstream` job builds `lumen-cli` and the bridge's
+`rust/` crate against this commit (a `[patch]` override), so a breaking change shows up before the
+tag. The CI image gained `openssh-client`.
+
 ## 1.1.3
 
 No API change. Fix: an unauthenticated 401 no longer loops.
