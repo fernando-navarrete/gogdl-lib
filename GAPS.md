@@ -177,8 +177,8 @@ The paragraph below is the baseline it started from.)* `cargo build --lib` showe
     `SavesAuth`, so every call returns the same 401 until `valid_until` passes.
 
   Both behaviors are stated in the rustdoc, so this is documented, not fixed. The grant is also
-  fetched once per call and reused across the whole sequential batch, so combined with the
-  wrong-sign margin under [Low](#low--style--clippy), a batch can start on an already-expired grant.
+  fetched once per call and reused across the whole sequential batch, so a batch can still outlive
+  its grant (the wrong-sign margin that let it start on an already-expired one was fixed in `v1.1.2`).
 
 - [ ] **The four saves methods return `SavesError`, not `GogDlError`, contradicting the crate
   docs.** `src/lib.rs:30` says "Every fallible [`GogDl`] method returns [`GogDlError`]", and its
@@ -456,15 +456,11 @@ The paragraph below is the baseline it started from.)* `cargo build --lib` showe
 
 ## Low — style / clippy
 
-- [ ] **`Auth::is_valid`'s 60s margin has the wrong sign, and `SavesAuth::is_valid` copied it.**
-  `valid_until.is_some_and(|t| t > now - 60)` (`src/client/auth/credentials.rs:69-70`; it was `map_or(false, ..)` until `v1.1.0`'s clippy pass, which kept the direction) treats a token as
-  usable for 60 seconds *past* expiry, the opposite of its doc comment. `SavesAuth::is_valid`
-  (`src/saves/saves_auth.rs:108-111`) has the same expression under a doc comment that says the
-  margin is "subtracted from `valid_until`", which the code does not do. So a near-expiry game grant
-  is handed to a download or upload batch past its deadline and fails with a 401 that isn't evicted
-  (see the saves-auth item above). `CdnUrlParams::is_valid` (`links.rs:175`) is still the
-  only one of the three with the intended direction. Fix both together (`t - 60 > now`), ideally as
-  one helper.
+- [x] **`Auth::is_valid`'s 60s margin had the wrong sign, and `SavesAuth::is_valid` copied it.**
+  Fixed in `v1.1.2`: both counted a token as usable for 60 seconds *past* expiry (`t > now - 60`),
+  against their doc comments. All three `is_valid`s (`Auth`, `SavesAuth`, `CdnUrlParams`) now go
+  through the crate-private `Expiring` trait (`t - 60 > now`), so tokens are refreshed up to a minute earlier.
+  Boundary tests for all three.
 
 - [x] **Five fields are never read, and they are the crate's only rustc warnings.** Fixed in `v1.1.0`:
   `ProtonManagerInner`, `RemoteConfig.version`, `OsConfig.macos`, `OsConfigDetails.overlay` and
@@ -617,8 +613,8 @@ One line per fixed item, newest first within each group. Detail is in the refere
 - [x] **`download_files`, `backoff`, `is_valid`, the `Auth` round-trip and the captured-response
   deserializations (`SaveFile`, `RemoteConfig`, Proton releases, `gamesdb` game/DLC/collection) had
   no tests** — `src/downloader/engine.rs`, `src/test_support.rs`, `tests/`. The five `download_files`
-  cases are pinned, plus a sixth for `attempt < MAX_ATTEMPTS - 4`. The `is_valid` tests are written
-  against today's wrong-sign margin and flip in `v1.1.2`.
+  cases are pinned, plus a sixth for `attempt < MAX_ATTEMPTS - 4`. The `is_valid` tests were written
+  against the wrong-sign margin and flipped in `v1.1.2`.
 
 ### Cloud saves, Proton & coverage
 

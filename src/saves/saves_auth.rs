@@ -2,7 +2,7 @@ use serde::Deserialize;
 
 use crate::{
     ClientError,
-    client::HttpClient,
+    client::{Expiring, HttpClient},
     constants::TOKEN_URL,
     saves::{error::SavesError, saves_manager::SavesManager},
 };
@@ -128,12 +128,20 @@ impl SavesAuth {
             .extend(name.split('/'));
         Ok(url)
     }
-    /// Whether the access token is still usable, with a 60-second margin
-    /// subtracted from `valid_until` to absorb clock skew and in-flight
-    /// requests. `false` if `valid_until` was never set.
+    /// Whether the access token is still usable: `valid_until` must be more
+    /// than 60 seconds away, so a token is treated as expired a minute early
+    /// to absorb clock skew and in-flight requests. `false` if `valid_until`
+    /// was never set.
     pub fn is_valid(&self) -> bool {
+        self.is_fresh_at(chrono::Utc::now().timestamp())
+    }
+}
+
+impl Expiring for SavesAuth {
+    const FRESH_WITHOUT_DEADLINE: bool = false;
+
+    fn deadline(&self) -> Option<i64> {
         self.valid_until
-            .is_some_and(|t| t > chrono::Utc::now().timestamp() - 60)
     }
 }
 
@@ -203,15 +211,15 @@ mod tests {
         assert_eq!(url.fragment(), None);
     }
 
-    // Same wrong-sign margin as `Auth::is_valid`; `v1.1.2` flips these rows.
+    // Same margin as `Auth::is_valid`: more than 60s before `valid_until`.
     #[test]
     fn is_valid_at_the_boundaries() {
         for (offset, expected) in [
             (61, true),
-            (60, true),
-            (59, true),
-            (0, true),
-            (-59, true),
+            (60, false),
+            (59, false),
+            (0, false),
+            (-59, false),
             (-60, false),
             (-61, false),
         ] {

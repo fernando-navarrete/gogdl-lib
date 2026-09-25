@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use url::Url;
 
+use crate::client::Expiring;
 use crate::secure_links::{SecureLinksManager, error::SecureLinksError};
 
 /// The CDN's presigned-URL parameters for one endpoint, as returned by the
@@ -171,9 +172,59 @@ impl CdnUrlParams {
     /// reactively, via a CDN 401 (see
     /// [`SecureLinksManager::invalidate_secure_links`](crate::secure_links::SecureLinksManager::invalidate_secure_links)).
     pub fn is_valid(&self) -> bool {
-        match self.expires_at {
-            Some(expires_at) => (expires_at as i64) - 60 > chrono::Utc::now().timestamp(),
-            None => true,
+        self.is_fresh_at(chrono::Utc::now().timestamp())
+    }
+}
+
+impl Expiring for CdnUrlParams {
+    const FRESH_WITHOUT_DEADLINE: bool = true;
+
+    fn deadline(&self) -> Option<i64> {
+        self.expires_at.map(|t| t as i64)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::with_valid_until;
+
+    fn params(expires_at: Option<u64>) -> CdnUrlParams {
+        CdnUrlParams {
+            base_url: String::new(),
+            path: String::new(),
+            token: String::new(),
+            expires_at,
+            dirs: None,
+            ttl: None,
+            source: None,
+            gog_token: None,
+            l: None,
         }
+    }
+
+    // Valid only while `expires_at` is more than 60s away, like `Auth::is_valid`.
+    #[test]
+    fn is_valid_at_the_boundaries() {
+        for (offset, expected) in [
+            (61, true),
+            (60, false),
+            (59, false),
+            (0, false),
+            (-59, false),
+            (-60, false),
+            (-61, false),
+        ] {
+            assert_eq!(
+                with_valid_until(offset, |t| params(Some(t as u64)).is_valid()),
+                expected,
+                "expires_at = now {offset:+}s"
+            );
+        }
+    }
+
+    #[test]
+    fn is_valid_without_expires_at() {
+        assert!(params(None).is_valid());
     }
 }

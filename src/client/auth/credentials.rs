@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::client::Expiring;
 use crate::client::auth::AuthError;
 
 /// A GOG auth session: access/refresh tokens plus enough metadata to know
@@ -62,12 +63,20 @@ impl Auth {
         };
         Ok(tokens)
     }
-    /// Whether the access token is still usable, with a 60-second margin
-    /// subtracted from `valid_until` to absorb clock skew and in-flight
-    /// requests. `false` if `valid_until` was never set.
+    /// Whether the access token is still usable: `valid_until` must be more
+    /// than 60 seconds away, so a token is treated as expired a minute early
+    /// to absorb clock skew and in-flight requests. `false` if `valid_until`
+    /// was never set.
     pub fn is_valid(&self) -> bool {
+        self.is_fresh_at(chrono::Utc::now().timestamp())
+    }
+}
+
+impl Expiring for Auth {
+    const FRESH_WITHOUT_DEADLINE: bool = false;
+
+    fn deadline(&self) -> Option<i64> {
         self.valid_until
-            .is_some_and(|t| t > chrono::Utc::now().timestamp() - 60)
     }
 }
 
@@ -89,17 +98,15 @@ mod tests {
         }
     }
 
-    // Today's margin has the wrong sign (`t > now - 60`): a token stays
-    // "valid" for a minute *after* it expires. `v1.1.2` flips these rows
-    // (GAPS "Low — style / clippy"), so `t > now + 60`.
+    // Valid only while `valid_until` is more than 60s away.
     #[test]
     fn is_valid_at_the_boundaries() {
         for (offset, expected) in [
             (61, true),
-            (60, true),
-            (59, true),
-            (0, true),
-            (-59, true),
+            (60, false),
+            (59, false),
+            (0, false),
+            (-59, false),
             (-60, false),
             (-61, false),
         ] {

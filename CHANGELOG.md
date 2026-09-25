@@ -4,6 +4,16 @@ One section per tag, newest first. Consumers pin this crate by git tag. A change
 behind an unchanged signature is called out as **Behavior change**, and a signature change as
 **Breaking**. The `v0.x` and `-restart` tags predate this file and aren't covered.
 
+## 1.1.2
+
+No API change. Fix: the expiry margin had the wrong sign.
+
+* **Behavior change:** `Auth::is_valid` and `SavesAuth::is_valid` now report a token as expired 60
+  seconds *before* `valid_until`, as their docs always said. Before, they kept reporting it valid
+  until 60 seconds *after*. `GogDl` therefore refreshes tokens up to a minute earlier, and a saves
+  download or upload batch no longer starts on an already-expired grant.
+* `CdnUrlParams::is_valid` already had the right direction; all three now share one implementation.
+
 ## 1.1.1
 
 No API change. Security fix: refresh tokens no longer end up in error strings.
