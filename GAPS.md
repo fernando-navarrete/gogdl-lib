@@ -1,12 +1,13 @@
 # GAPS.md
 
-Open findings for `gogdl-lib`. Current tree: HEAD **`e032b7d`** ("Add owned games filtering by
-product type") on **`main`**, `Cargo.toml` at `1.0.10`. `feature/saves` has been merged into `main`,
-so every `v1.0.x` tag is now reachable from `main`. The newest tag, **`v1.0.10`** (`8d2b244`), is
-two commits behind HEAD. Those two commits (`d6dbdc5` owned-products rename, `e032b7d` owned-games
-filter) are unreleased. **`lumen-cli` (sibling repo) is pinned to `v1.0.10`** (`Cargo.toml:12`), so
-its next bump picks up the `get_owned_games` behavior change below with no compile error. This pass
-did not rebuild `lumen-cli` against this tree.
+Open findings for `gogdl-lib`. Current tree: branch **`feat/v1.1.0-foundation`** (cut from `main` at
+`be366f4`), where all `v1.1.x` work happens (see `v1.1.0-FOUNDATION.md`), `Cargo.toml` at `1.0.11`.
+The newest tag, **`v1.0.11`** (`d5b43e6`), includes the owned-products rename (`d6dbdc5`) and the
+owned-games filter (`e032b7d`). `feature/saves` has been merged into `main`, so every `v1.0.x` tag
+is reachable from `main`. Consumer pins: the bridge (`gogdl_flutter`) is on `v1.0.11`, and
+**`lumen-cli`** is on **`v1.0.10`** (`Cargo.toml:12`), so its next bump picks up the
+`get_owned_games` behavior change below with no compile error. This pass did not rebuild
+`lumen-cli` against this tree.
 
 **What changed since the last full pass of this document (`e4596b6`, `v1.0.4`), 13 commits in all:**
 
@@ -58,7 +59,7 @@ each in [Closed](#closed) at the bottom; the detail lives in the referenced comm
   why the "a failed chunk is reported as success" bug shipped four times on the old `restart` line,
   and `6b4b7f3` restructured the batch driver with nothing to pin it.
 - **`v0.0.12-restart` still carries the retry off-by-one** fixed in `2469b13`. Nothing current
-  resolves to it (`lumen-cli` is on `v1.0.8`), but the tag still exists.
+  resolves to it (`lumen-cli` is on `v1.0.10`), but the tag still exists.
 
 `cargo build --lib` shows **six warnings**: an unused `OwnedProducts` import left behind by
 `e032b7d` (`src/gogdl/gogdl.rs:11`), plus five `dead_code`: `ProtonManager.inner`
