@@ -2,7 +2,8 @@
 # setup as gogdl_flutter's and lumen's .gitlab-ci.yml. See v1.1.0-FOUNDATION.md (Phases 5 and 6):
 # the `check` stage gates everything, and the `release` stage publishes a GitLab release on
 # vX.Y.Z tags.
-# This crate has no private dependencies, so unlike the bridge there is no deploy key.
+# This crate has no private dependencies, so the check and release jobs need no deploy key; only
+# the manual `downstream` job does (see it below).
 #
 # Jobs run in a prebuilt image (ci/Dockerfile: apt packages and the pinned rustup toolchain),
 # so none of them touches apt or rustup: the network is slow and the runner is small. The
@@ -30,6 +31,7 @@ workflow:
 stages:
   - check
   - release
+  - downstream
 
 default:
   image:
@@ -136,3 +138,65 @@ release:
     tag_name: $CI_COMMIT_TAG
     name: $CI_COMMIT_TAG
     description: ./release_notes.md
+
+# Manual only, and never part of a tag pipeline's outcome: builds the two consumers against this
+# commit, so a breaking change shows up before the tag instead of when a consumer bumps its pin
+# (GAPS "No downstream build check"). Start it from Build -> Pipelines -> Run pipeline, then play
+# the job. It clones each consumer, appends a [patch] that points gogdl-lib at this checkout, and
+# runs `cargo build` for lumen-cli and `cargo test` for the bridge's rust/ crate (no Flutter, no
+# codegen: rust/ has no build.rs).
+#
+# Refs: LUMEN_CLI_REF and BRIDGE_REF default to main, and can be overridden in the Run pipeline
+# form. lumen-cli's main still pins gogdl-lib v1.0.4, so until its feature/remote-config is
+# merged, set LUMEN_CLI_REF=feature/remote-config or the job fails on its own old code.
+#
+# Access: one read-only deploy key, enabled on the lumen-cli, gogdl_flutter and gogdl-lib
+# projects (Settings -> Repository -> Deploy keys), stored base64-encoded on one line as
+# `DOWNSTREAM_DEPLOY_KEY_B64` (Settings -> CI/CD -> Variables: Type Variable, masked, NOT
+# protected: a protected variable comes through empty on unprotected branches). One key rather
+# than one per project because ssh offers the agent's first key and doesn't fall back to the next
+# once GitLab rejects it for the other project.
+#
+# Toolchain: this image's Rust (RUSTUP_TOOLCHAIN) is used for both consumers, whatever their own
+# rust-toolchain.toml says. No --locked: `cargo update -p gogdl-lib` rewrites gogdl-lib's entry in
+# their Cargo.lock so the [patch] takes effect (in the checkouts only, nothing is pushed).
+downstream:
+  stage: downstream
+  rules:
+    - when: manual
+  allow_failure: true
+  variables:
+    LUMEN_CLI_REF: main
+    BRIDGE_REF: main
+    CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+    CARGO_TARGET_DIR: "$CI_PROJECT_DIR/.ci/downstream/target"
+  cache:
+    - *cache-cargo
+    - key:
+        prefix: target-downstream
+        files:
+          - Cargo.lock
+      paths:
+        - .ci/downstream/target/
+  before_script:
+    - !reference [.toolchain, script]
+    - mkdir -p ~/.ssh
+    - echo "$DOWNSTREAM_DEPLOY_KEY_B64" | base64 -d > ~/.ssh/downstream_deploy_key
+    - chmod 600 ~/.ssh/downstream_deploy_key
+    - eval "$(ssh-agent -s)"
+    - ssh-add ~/.ssh/downstream_deploy_key
+    - ssh-keyscan -p 2200 thinkcentre.home >> ~/.ssh/known_hosts 2>/dev/null
+  script:
+    - export RUSTUP_TOOLCHAIN=$(cat /opt/rust-version)
+    - rm -rf .ci/downstream/lumen-cli .ci/downstream/gogdl_flutter
+    - mkdir -p .ci/downstream
+    - git clone --depth 1 --branch "$LUMEN_CLI_REF" ssh://git@thinkcentre.home:2200/gogdl/lumen-cli.git .ci/downstream/lumen-cli
+    - git clone --depth 1 --branch "$BRIDGE_REF" ssh://git@thinkcentre.home:2200/gogdl/gogdl_flutter.git .ci/downstream/gogdl_flutter
+    - |
+      for manifest in .ci/downstream/lumen-cli/Cargo.toml .ci/downstream/gogdl_flutter/rust/Cargo.toml; do
+        printf '\n[patch."ssh://git@thinkcentre.home:2200/gogdl/gogdl-lib.git"]\ngogdl-lib = { path = "%s" }\n' "$CI_PROJECT_DIR" >> "$manifest"
+      done
+    # The consumers' Cargo.lock still pins the old tag, and cargo ignores a [patch] until the lock
+    # is updated ("patch ... was not used in the crate graph"), so re-lock gogdl-lib first.
+    - cd .ci/downstream/lumen-cli && cargo update -p gogdl-lib && cargo build
+    - cd "$CI_PROJECT_DIR/.ci/downstream/gogdl_flutter/rust" && cargo update -p gogdl-lib && cargo test

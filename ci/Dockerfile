@@ -5,10 +5,11 @@ FROM debian:bookworm-slim
 
 ARG RUST_VERSION
 
+# openssh-client: only the manual `downstream` job uses it (it clones the consumers over ssh).
 # build-essential/cmake/pkg-config: aws-lc-sys and friends (reqwest's rustls).
 RUN apt-get update -qq \
  && apt-get install -qq -y --no-install-recommends \
-      git curl ca-certificates \
+      git curl ca-certificates openssh-client \
       build-essential cmake pkg-config \
  && rm -rf /var/lib/apt/lists/*
 
