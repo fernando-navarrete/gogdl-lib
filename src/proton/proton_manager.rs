@@ -1,6 +1,6 @@
-use std::{path::Path, sync::Arc};
+use std::path::Path;
 
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::mpsc;
 
 use crate::{
     ProtonGeRelease,
@@ -17,22 +17,13 @@ use crate::{
 /// `DepotManager`.
 #[derive(Clone)]
 pub struct ProtonManager {
-    inner: Arc<Mutex<ProtonManagerInner>>,
     pub client: HttpClient,
 }
-
-/// Placeholder for future in-process caching of release pages, mirroring
-/// the other managers' `inner` state. Currently empty and unused — every
-/// call to [`ProtonManager::get_releases_page`] re-fetches from GitHub.
-pub struct ProtonManagerInner {}
 
 impl ProtonManager {
     /// Builds a `ProtonManager` around an already-constructed [`HttpClient`].
     pub fn new(client: HttpClient) -> Self {
-        Self {
-            inner: Arc::new(Mutex::new(ProtonManagerInner {})),
-            client,
-        }
+        Self { client }
     }
     /// Fetches one page of Proton-GE releases from GitHub. See
     /// [`GogDl::get_proton_releases`](crate::GogDl::get_proton_releases) for

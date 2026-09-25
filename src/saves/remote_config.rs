@@ -16,8 +16,6 @@ use crate::{SavesError, saves::SavesManager};
 /// are modelled, the rest of the document is ignored.
 #[derive(Deserialize)]
 pub struct RemoteConfig {
-    /// Version of the configuration document itself, as reported by GOG.
-    version: String,
     /// The document's body: one section per operating system.
     content: OsConfig,
 }
@@ -109,29 +107,15 @@ struct OsConfig {
     /// reads.
     #[serde(alias = "Windows")]
     pub windows: Option<OsConfigDetails>,
-    /// The game's macOS client settings. Deserialized for completeness;
-    /// unused.
-    #[serde(alias = "MacOS")]
-    pub macos: Option<OsConfigDetails>,
 }
 
 /// What the Galaxy client enables for a game on one operating system.
 #[derive(Deserialize)]
 struct OsConfigDetails {
-    /// The Galaxy in-game overlay settings, if the game declares any.
-    /// Deserialized for completeness; unused.
-    pub overlay: Option<OverlayDetail>,
     /// The game's cloud save settings, if it declares any. Absent for games
     /// that never shipped cloud saves on this system.
     #[serde(alias = "cloudStorage")]
     pub cloud_storage: Option<CloudStorageDetail>,
-}
-
-/// The Galaxy in-game overlay settings for one operating system.
-#[derive(Deserialize)]
-struct OverlayDetail {
-    /// Whether the game supports the overlay.
-    pub supported: bool,
 }
 
 /// A game's cloud save settings for one operating system.

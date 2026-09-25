@@ -16,4 +16,3 @@ pub use game_screenshots::GameScreenshots;
 pub use game_summary::GameSummary;
 pub use games_manager::GamesManager;
 pub use owned_games::OwnedGames;
-pub use owned_products::OwnedProducts;

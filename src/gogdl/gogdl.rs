@@ -8,7 +8,6 @@ use crate::depot::{DepotManager, ProductDetails};
 use crate::downloader::{DownloadManager, DownloadableProduct, ProductBundle, VerificationEvent};
 use crate::games::{
     GameBuilds, GameDetails, GameLinks, GameScreenshots, GameSummary, GamesManager, OwnedGames,
-    OwnedProducts,
 };
 use crate::gogdl::error::GogDlError;
 use crate::proton::{ProtonDownloadEvent, ProtonGeRelease, ProtonGeReleasesPage, ProtonManager};
