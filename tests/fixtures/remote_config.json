@@ -1,0 +1,32 @@
+{
+  "version": "2.0.37",
+  "content": {
+    "MacOS": {
+      "overlay": {
+        "supported": false
+      },
+      "cloudStorage": {
+        "enabled": false,
+        "locations": []
+      }
+    },
+    "Windows": {
+      "overlay": {
+        "supported": false
+      },
+      "cloudStorage": {
+        "enabled": true,
+        "locations": [
+          {
+            "name": "saves",
+            "location": "<?SAVED_GAMES?>/CD Projekt Red/Cyberpunk 2077"
+          }
+        ]
+      }
+    },
+    "cloudStorage": {
+      "quota": 2097152000
+    }
+  },
+  "bases": []
+}

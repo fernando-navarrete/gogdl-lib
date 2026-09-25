@@ -221,3 +221,16 @@ pub fn zlib(data: &[u8]) -> Vec<u8> {
 pub fn md5_hex(data: &[u8]) -> String {
     hex::encode(Md5::digest(data))
 }
+
+/// Runs `check` with `valid_until = now + offset` (Unix seconds) and returns
+/// its result, redoing it if the wall clock ticked over a second in between,
+/// so a boundary assertion can't flake.
+pub fn with_valid_until(offset: i64, check: impl Fn(i64) -> bool) -> bool {
+    loop {
+        let now = chrono::Utc::now().timestamp();
+        let result = check(now + offset);
+        if chrono::Utc::now().timestamp() == now {
+            return result;
+        }
+    }
+}

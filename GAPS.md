@@ -442,16 +442,16 @@ each in [Closed](#closed) at the bottom; the detail lives in the referenced comm
     `X-Object-Meta-LocalLastModified`, and a listing with two names that resolve to one path (see
     the round-trip item). Also a captured real listing for a `__default` game and a `saves` game, so
     the naming assumption is pinned to GOG rather than to itself.
-  - **`backoff`'s bounds.** The attempt → ceiling mapping is a plain table test.
-  - **Auth logic, all testable without network:** `Auth::is_valid` and `SavesAuth::is_valid`
+  - **`backoff`'s bounds.** The attempt → ceiling mapping is a plain table test. *Covered in `v1.1.0` (`src/downloader/util/backoff.rs`).*
+  - **Auth logic, all testable without network:** *(`is_valid` boundaries and the round-trip are covered in `v1.1.0`; `refresh_auth` persisting `valid_until` and concurrent refreshes collapsing still aren't — `REFRESH_URL` is hardcoded.)* `Auth::is_valid` and `SavesAuth::is_valid`
     boundaries (both have the wrong-sign margin, see Low), the `to_string`/`from_string` round-trip,
     `refresh_auth` persisting `valid_until`, and concurrent refreshes collapsing.
   - **Deserialization against captured responses:** `SaveFile`, `RemoteConfig`, and
     `ProtonGeRelease`/`ProtonGeReleasesPage`. Also `ProtonGeRelease::get_suitable_asset` against a
     release with `aarch64` and `.sha512sum` siblings. That selection logic has been rewritten three
-    times (`34a2c52`, `51cb054`, `8682797`) with nothing pinning it.
+    times (`34a2c52`, `51cb054`, `8682797`) with nothing pinning it. *Covered in `v1.1.0` (fixtures in `tests/fixtures/`).*
   - **`get_owned_games`' filter:** a captured `gamesdb` response for a game, a DLC and a pack,
-    plus one failing lookup, pinning which IDs survive (see [owned games](#medium--owned-games)).
+    plus one failing lookup, pinning which IDs survive (see [owned games](#medium--owned-games)). *Covered in `v1.1.0` (`keep_games`, with the real `spam` type for a collection).*
   - **`download_proton_release` end to end:** error attribution (`is_pipe_closed_by_reader`
     preferring the extraction error) against a truncated gzip stream, and the re-download overlay in
     the Proton item above.

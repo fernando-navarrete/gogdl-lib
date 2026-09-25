@@ -21,6 +21,19 @@ struct GogdbDetails {
     product_type: String,
 }
 
+/// Keeps the IDs whose lookup succeeded and came back as `type == "game"`.
+/// A failed lookup is dropped silently, whatever the reason (a 404 for a
+/// product gamesdb doesn't know, a transport error, a 5xx): `v1.3.0` changes
+/// that, so it isn't pinned as a contract.
+fn keep_games(lookups: &[Result<(ProductId, GogdbDetails), GamesError>]) -> Vec<ProductId> {
+    lookups
+        .iter()
+        .filter_map(|detail| detail.as_ref().ok())
+        .filter(|(_, detail)| detail.product_type == "game")
+        .map(|(id, _)| *id)
+        .collect::<Vec<_>>()
+}
+
 impl OwnedGames {
     /// Not reachable from outside the crate — `GamesManager` is not
     /// exported. Call
@@ -43,13 +56,53 @@ impl OwnedGames {
             .collect::<Vec<_>>()
             .await;
 
-        let owned_games = owned_games
-            .iter()
-            .filter_map(|detail| detail.as_ref().ok())
-            .filter(|(_, detail)| detail.product_type == "game")
-            .map(|(id, _)| *id)
-            .collect::<Vec<_>>();
+        let owned_games = keep_games(&owned_games);
 
         Ok(OwnedGames { owned: owned_games })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ClientError;
+
+    fn details(json: &str) -> GogdbDetails {
+        serde_json::from_str(json).unwrap()
+    }
+
+    #[test]
+    fn only_products_typed_game_are_kept() {
+        let game = details(include_str!("../../tests/fixtures/gamesdb_game.json"));
+        let dlc = details(include_str!("../../tests/fixtures/gamesdb_dlc.json"));
+        // GOG's type for a collection like "Alien: Isolation Collection" is
+        // "spam", not "pack" (captured from gamesdb).
+        let pack = details(include_str!("../../tests/fixtures/gamesdb_pack.json"));
+        assert_eq!(
+            [&game, &dlc, &pack].map(|d| d.product_type.as_str()),
+            ["game", "dlc", "spam"]
+        );
+
+        let lookups = vec![
+            Ok((1, dlc)),
+            Ok((2, game)),
+            Ok((3, pack)),
+            Err(GamesError::ClientError(ClientError::AuthError(
+                crate::client::AuthError::NotAuthenticated,
+            ))),
+        ];
+        assert_eq!(keep_games(&lookups), vec![2]);
+    }
+
+    #[test]
+    fn a_failed_lookup_for_a_game_drops_it_silently() {
+        // Today's behavior, changed by `v1.3.0` (GAPS "owned games").
+        let game = details(include_str!("../../tests/fixtures/gamesdb_game.json"));
+        let lookups = vec![
+            Ok((2, game)),
+            Err(GamesError::ProductNotAGame),
+            Err(GamesError::ProductNotAGame),
+        ];
+        assert_eq!(keep_games(&lookups), vec![2]);
     }
 }

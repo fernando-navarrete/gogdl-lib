@@ -152,3 +152,58 @@ pub struct CloudStorageLocation {
     /// `<?SAVED_GAMES?>/GameName`) — not an expanded filesystem path.
     pub location: String,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(json: &str) -> RemoteConfig {
+        serde_json::from_str(json).unwrap()
+    }
+
+    #[test]
+    fn a_captured_config_deserializes() {
+        let config = parse(include_str!("../../tests/fixtures/remote_config.json"));
+        assert!(config.is_supported());
+        let locations = config.get_locations().unwrap();
+        assert_eq!(locations.len(), 1);
+        assert_eq!(locations[0].name, "saves");
+        assert_eq!(
+            locations[0].location,
+            "<?SAVED_GAMES?>/CD Projekt Red/Cyberpunk 2077"
+        );
+    }
+
+    #[test]
+    fn a_document_without_a_windows_section_is_unsupported() {
+        let config = parse(
+            r#"{"content": {"MacOS": {"cloudStorage": {"enabled": true, "locations": []}}}}"#,
+        );
+        assert!(!config.is_supported());
+        assert!(matches!(
+            config.get_locations(),
+            Err(SavesError::CloudStorageNotSupported)
+        ));
+    }
+
+    #[test]
+    fn a_windows_section_without_cloud_storage_is_unsupported() {
+        let config = parse(r#"{"content": {"Windows": {"overlay": {"supported": false}}}}"#);
+        assert!(!config.is_supported());
+        assert!(matches!(
+            config.get_locations(),
+            Err(SavesError::CloudStorageNotSupported)
+        ));
+    }
+
+    #[test]
+    fn disabled_cloud_storage_still_lists_its_locations() {
+        let config = parse(
+            r#"{"content": {"Windows": {"cloudStorage": {"enabled": false,
+                "locations": [{"name": "__default", "location": "<?SAVED_GAMES?>/G"}]}}}}"#,
+        );
+        assert!(!config.is_supported());
+        let locations = config.get_locations().unwrap();
+        assert_eq!(locations[0].name, "__default");
+    }
+}

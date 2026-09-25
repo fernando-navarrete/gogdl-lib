@@ -359,4 +359,52 @@ mod tests {
         assert!(location.is_none());
         assert_eq!(relative, "AutoSave-0/sav.dat");
     }
+
+    fn listing() -> Vec<SaveFile> {
+        serde_json::from_str(include_str!("../../tests/fixtures/save_files.json")).unwrap()
+    }
+
+    #[test]
+    fn a_captured_listing_deserializes() {
+        let files = listing();
+        assert_eq!(files.len(), 7);
+        let sav = files
+            .iter()
+            .find(|f| f.name == "saves/AutoSave-0/sav.dat")
+            .unwrap();
+        assert_eq!(sav.bytes, 4_236_032);
+        assert_eq!(
+            sav.last_modified,
+            "2026-09-22T04:21:13.399060Z"
+                .parse::<DateTime<Utc>>()
+                .unwrap()
+        );
+        assert_eq!(sav.content_type, "application/octet-stream");
+        assert_eq!(sav.hash.len(), 32);
+    }
+
+    // Cyberpunk 2077 declares a single location called `saves`, so the
+    // listing's `saves/AutoSave-0/sav.dat` must keep its slot directory.
+    #[test]
+    fn a_captured_saves_location_listing_keeps_its_slot_directories() {
+        let locations = locations(&["saves"]);
+        let paths: Vec<_> = listing()
+            .iter()
+            .map(|f| f.relative_path_in(&locations).unwrap().to_string())
+            .collect();
+        assert_eq!(
+            paths,
+            [
+                "AutoSave-0/metadata.9.json",
+                "AutoSave-0/sav.dat",
+                "AutoSave-0/screenshot.png",
+                "AutoSave-1/metadata.9.json",
+                "AutoSave-1/sav.dat",
+                "AutoSave-1/screenshot.png",
+                "user.gls",
+            ]
+        );
+        let unique: HashSet<_> = paths.iter().collect();
+        assert_eq!(unique.len(), paths.len());
+    }
 }

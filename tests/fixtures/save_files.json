@@ -1,0 +1,51 @@
+[
+  {
+    "bytes": 2072,
+    "last_modified": "2026-09-22T04:21:12.547450+00:00",
+    "hash": "b02f6d1d0bd8c44b48772ab42663a468",
+    "name": "saves/AutoSave-0/metadata.9.json",
+    "content_type": "application/octet-stream"
+  },
+  {
+    "bytes": 4236032,
+    "last_modified": "2026-09-22T04:21:13.399060+00:00",
+    "hash": "1adf65933a05fcfdee5c9df9751b8c90",
+    "name": "saves/AutoSave-0/sav.dat",
+    "content_type": "application/octet-stream"
+  },
+  {
+    "bytes": 96439,
+    "last_modified": "2026-09-22T04:21:22.060490+00:00",
+    "hash": "fe087f073112fcac9484e04fcb8f3015",
+    "name": "saves/AutoSave-0/screenshot.png",
+    "content_type": "application/octet-stream"
+  },
+  {
+    "bytes": 2079,
+    "last_modified": "2026-09-22T04:21:22.486320+00:00",
+    "hash": "fa4adf7ce032811ea335dd01e5ca437d",
+    "name": "saves/AutoSave-1/metadata.9.json",
+    "content_type": "application/octet-stream"
+  },
+  {
+    "bytes": 4382925,
+    "last_modified": "2026-09-22T04:21:23.020040+00:00",
+    "hash": "9c082dcd8e9d128c53f7708c10855b0d",
+    "name": "saves/AutoSave-1/sav.dat",
+    "content_type": "application/octet-stream"
+  },
+  {
+    "bytes": 94625,
+    "last_modified": "2026-09-22T04:21:26.518530+00:00",
+    "hash": "b02c3317487b984f77fb529eb6b4a5b6",
+    "name": "saves/AutoSave-1/screenshot.png",
+    "content_type": "application/octet-stream"
+  },
+  {
+    "bytes": 941,
+    "last_modified": "2026-09-22T04:22:42.422000+00:00",
+    "hash": "44747b945d70be00f73c954fe3e874f4",
+    "name": "saves/user.gls",
+    "content_type": "application/octet-stream"
+  }
+]

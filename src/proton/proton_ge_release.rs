@@ -86,3 +86,75 @@ impl ProtonGeRelease {
         Ok(release)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ProtonGeReleasesPage;
+
+    fn release(assets: &[&str]) -> ProtonGeRelease {
+        let assets: Vec<_> = assets
+            .iter()
+            .map(|name| {
+                serde_json::json!({
+                    "name": name,
+                    "browser_download_url": format!("https://example.invalid/{name}"),
+                    "size": name.len(),
+                })
+            })
+            .collect();
+        serde_json::from_value(serde_json::json!({
+            "url": "https://api.github.com/repos/o/r/releases/1",
+            "tag_name": "GE-Proton0-0",
+            "id": 1,
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z",
+            "published_at": "2026-01-01T00:00:00Z",
+            "assets": assets,
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_captured_releases_page_deserializes() {
+        let page: ProtonGeReleasesPage = serde_json::from_str(include_str!(
+            "../../tests/fixtures/proton_ge_releases_page.json"
+        ))
+        .unwrap();
+        let tags: Vec<_> = page
+            .releases()
+            .iter()
+            .map(|r| r.tag_name.as_str())
+            .collect();
+        assert_eq!(tags, ["GE-Proton11-7", "GE-Proton11-6"]);
+        assert!(page.releases()[0].published_at > page.releases()[1].published_at);
+        assert_eq!(page.releases()[0].assets.len(), 4);
+    }
+
+    #[test]
+    fn a_captured_release_picks_the_x86_64_tarball() {
+        let release: ProtonGeRelease =
+            serde_json::from_str(include_str!("../../tests/fixtures/proton_ge_release.json"))
+                .unwrap();
+        // The capture lists the aarch64 tarball and both `.sha512sum` files
+        // before the x86_64 tarball.
+        assert_eq!(release.assets[0].name, "GE-Proton11-7-aarch64.sha512sum");
+        let asset = release.get_suitable_asset().unwrap();
+        assert_eq!(asset.name, "GE-Proton11-7-x86_64.tar.gz");
+        assert_eq!(release.get_release_size().unwrap(), asset.size);
+    }
+
+    #[test]
+    fn without_a_linux_tarball_there_is_no_suitable_asset() {
+        let release = release(&[
+            "a-aarch64.tar.gz",
+            "a-x86_64.sha512sum",
+            "a-aarch64.sha512sum",
+        ]);
+        assert!(matches!(
+            release.get_suitable_asset(),
+            Err(ProtonError::NoSuitableAsset(tag)) if tag == "GE-Proton0-0"
+        ));
+        assert!(release.get_release_size().is_err());
+    }
+}

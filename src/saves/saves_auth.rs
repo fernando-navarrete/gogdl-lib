@@ -114,6 +114,7 @@ impl SavesAuth {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::with_valid_until;
 
     fn auth() -> SavesAuth {
         SavesAuth {
@@ -150,5 +151,33 @@ mod tests {
         );
         assert_eq!(url.query(), None);
         assert_eq!(url.fragment(), None);
+    }
+
+    // Same wrong-sign margin as `Auth::is_valid`; `v1.1.2` flips these rows.
+    #[test]
+    fn is_valid_at_the_boundaries() {
+        for (offset, expected) in [
+            (61, true),
+            (60, true),
+            (59, true),
+            (0, true),
+            (-59, true),
+            (-60, false),
+            (-61, false),
+        ] {
+            let valid = with_valid_until(offset, |t| {
+                SavesAuth {
+                    valid_until: Some(t),
+                    ..auth()
+                }
+                .is_valid()
+            });
+            assert_eq!(valid, expected, "valid_until = now {offset:+}s");
+        }
+    }
+
+    #[test]
+    fn is_valid_is_false_without_valid_until() {
+        assert!(!auth().is_valid());
     }
 }

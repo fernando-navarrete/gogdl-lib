@@ -70,3 +70,81 @@ impl Auth {
             .is_some_and(|t| t > chrono::Utc::now().timestamp() - 60)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::with_valid_until;
+
+    fn auth(valid_until: Option<i64>) -> Auth {
+        Auth {
+            access_token: "access".to_string(),
+            refresh_token: "refresh".to_string(),
+            expires_in: 3600,
+            token_type: "bearer".to_string(),
+            session_id: "session".to_string(),
+            scope: None,
+            user_id: "42".to_string(),
+            valid_until,
+        }
+    }
+
+    // Today's margin has the wrong sign (`t > now - 60`): a token stays
+    // "valid" for a minute *after* it expires. `v1.1.2` flips these rows
+    // (GAPS "Low — style / clippy"), so `t > now + 60`.
+    #[test]
+    fn is_valid_at_the_boundaries() {
+        for (offset, expected) in [
+            (61, true),
+            (60, true),
+            (59, true),
+            (0, true),
+            (-59, true),
+            (-60, false),
+            (-61, false),
+        ] {
+            assert_eq!(
+                with_valid_until(offset, |t| auth(Some(t)).is_valid()),
+                expected,
+                "valid_until = now {offset:+}s"
+            );
+        }
+    }
+
+    #[test]
+    fn is_valid_is_false_without_valid_until() {
+        assert!(!auth(None).is_valid());
+    }
+
+    #[test]
+    fn to_string_and_from_string_round_trip() {
+        for (scope, valid_until) in [
+            (None, None),
+            (Some("scope".to_string()), Some(1_790_000_000)),
+        ] {
+            let mut original = auth(valid_until);
+            original.scope = scope;
+            let restored = Auth::from_string(&original.to_string().unwrap()).unwrap();
+            assert_eq!(restored.access_token, original.access_token);
+            assert_eq!(restored.refresh_token, original.refresh_token);
+            assert_eq!(restored.expires_in, original.expires_in);
+            assert_eq!(restored.token_type, original.token_type);
+            assert_eq!(restored.session_id, original.session_id);
+            assert_eq!(restored.scope, original.scope);
+            assert_eq!(restored.user_id, original.user_id);
+            assert_eq!(restored.valid_until, original.valid_until);
+        }
+    }
+
+    #[test]
+    fn from_string_rejects_what_is_not_an_auth() {
+        assert!(matches!(
+            Auth::from_string("not json"),
+            Err(AuthError::AuthDecodeError(_))
+        ));
+        assert!(matches!(
+            Auth::from_string("{}"),
+            Err(AuthError::AuthDecodeError(_))
+        ));
+    }
+}
