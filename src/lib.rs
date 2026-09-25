@@ -56,6 +56,8 @@ mod gogdl;
 mod proton;
 mod saves;
 mod secure_links;
+#[cfg(test)]
+mod test_support;
 
 pub use client::Auth;
 pub use client::TokenObserver;

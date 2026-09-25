@@ -424,7 +424,9 @@ each in [Closed](#closed) at the bottom; the detail lives in the referenced comm
   Covered: save name ↔ local path mapping, save-location expansion and Wine user lookup
   (including hostile `$USER` and `..`), `object_url` escaping, MD5 hex, and Proton root detection.
   Highest-value additions, first to last:
-  - **One `#[tokio::test]` driving `download_files` against a scripted chunk source.**
+  - **One `#[tokio::test]` driving `download_files` against a scripted chunk source.** *Covered in
+    `v1.1.0` (`src/downloader/engine.rs` tests, fixture in `src/test_support.rs`); the five cases
+    below are all pinned, plus a sixth for `attempt < MAX_ATTEMPTS - 4`.*
     `stream_chunk` takes a plain URL, so a local HTTP server fixture drives the whole loop with no
     secure-link mocking beyond the manager.
     - *Fails transport on attempts 0–4, then serves wrong-MD5 bytes on attempt 5* → asserts `Err`.

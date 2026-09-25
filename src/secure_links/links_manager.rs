@@ -17,6 +17,14 @@ pub struct SecureLinksManager {
     pub inner: Arc<Mutex<SecureLinksManagerInner>>,
     /// HTTP client used to fetch fresh secure links.
     pub client: HttpClient,
+    /// Test-only: number of [`get_secure_links`](Self::get_secure_links)
+    /// calls, to count attempts that never reach the network.
+    #[cfg(test)]
+    lookups: Arc<std::sync::atomic::AtomicUsize>,
+    /// Test-only: links served in place of a fetch from GOG, so eviction
+    /// (`invalidate_secure_links`) still leads to a working refetch.
+    #[cfg(test)]
+    fixture_links: Arc<std::sync::Mutex<HashMap<String, SecureLinks>>>,
 }
 
 /// State behind [`SecureLinksManager`]'s mutex: the owned-games lookup and
@@ -36,7 +44,25 @@ impl SecureLinksManager {
                 links_cache: HashMap::new(),
             })),
             client,
+            #[cfg(test)]
+            lookups: Arc::default(),
+            #[cfg(test)]
+            fixture_links: Arc::default(),
         }
+    }
+    /// Test-only: makes every fetch of `game_id`'s links (after the
+    /// ownership check) return `links` instead of calling GOG.
+    #[cfg(test)]
+    pub fn fixture_links(&self, game_id: &str, links: SecureLinks) {
+        self.fixture_links
+            .lock()
+            .unwrap()
+            .insert(game_id.to_string(), links);
+    }
+    /// Test-only: how many times `get_secure_links` has been called.
+    #[cfg(test)]
+    pub fn lookups(&self) -> usize {
+        self.lookups.load(std::sync::atomic::Ordering::Relaxed)
     }
     /// Returns cached [`SecureLinks`] for `game_id` if present and still
     /// valid ([`SecureLinks::is_valid`]); otherwise confirms the account
@@ -49,6 +75,9 @@ impl SecureLinksManager {
     /// own it; otherwise whatever the owned-games lookup or the fetch itself
     /// failed with.
     pub async fn get_secure_links(&self, game_id: &str) -> Result<SecureLinks, SecureLinksError> {
+        #[cfg(test)]
+        self.lookups
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         {
             let lock = self.inner.lock().await;
             if let Some(links) = lock.links_cache.get(game_id)
@@ -72,7 +101,14 @@ impl SecureLinksManager {
         if !available_games.contains(&game_id_i32) {
             return Err(SecureLinksError::ProductNotOwned(game_id.to_string()));
         }
-        let secure_links = SecureLinks::get_secure_links(self, game_id).await?;
+        #[cfg(test)]
+        let fixture = self.fixture_links.lock().unwrap().get(game_id).cloned();
+        #[cfg(not(test))]
+        let fixture: Option<SecureLinks> = None;
+        let secure_links = match fixture {
+            Some(links) => links,
+            None => SecureLinks::get_secure_links(self, game_id).await?,
+        };
 
         {
             let mut lock = self.inner.lock().await;

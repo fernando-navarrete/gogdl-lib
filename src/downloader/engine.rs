@@ -630,3 +630,274 @@ impl Downloader {
             .collect::<Vec<_>>()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use tokio::sync::Notify;
+
+    use super::*;
+    use crate::{
+        games::GamesManager,
+        secure_links::{CdnUrlParams, SecureLinks, SecureLinksError, UrlFormat},
+        test_support::{ChunkServer, Reply, TempDir, md5_hex, zlib},
+    };
+
+    const PRODUCT: &str = "1";
+
+    /// The path `download_files` asks the server for, given a unit's
+    /// compressed MD5 (see the `url_format` in `harness`).
+    fn chunk_path(compressed_md5: &str) -> String {
+        format!(
+            "/depot/{}/{}/{}",
+            &compressed_md5[0..2],
+            &compressed_md5[2..4],
+            compressed_md5
+        )
+    }
+
+    /// One file of `raw` in the temp dir and a unit that covers all of it.
+    /// `n` makes the compressed MD5 (and so the URL) distinct per unit.
+    fn unit(dir: &TempDir, n: u8, raw: &[u8], product_id: &str) -> DownloadUnit {
+        let path = format!("file{n}.bin");
+        std::fs::write(dir.path().join(&path), vec![0u8; raw.len()]).unwrap();
+        DownloadUnit {
+            md5: md5_hex(raw),
+            size: raw.len() as u64,
+            compressed_md5: format!("{n:02x}{}", "ab".repeat(15)),
+            _compressed_size: 0,
+            path,
+            offset: 0,
+            file_type: FileType::DepotFile,
+            product_id: product_id.to_string(),
+        }
+    }
+
+    struct Harness {
+        server: ChunkServer,
+        dir: TempDir,
+        downloader: Downloader,
+    }
+
+    /// A downloader whose secure links for `PRODUCT` point at a fresh local
+    /// server, and whose owned-products cache already says `PRODUCT` is
+    /// owned, so nothing leaves the machine.
+    async fn harness(threads: usize) -> Harness {
+        let server = ChunkServer::start().await;
+        let client = HttpClient::new_with_client(reqwest::Client::new());
+        let games = GamesManager::new(client.clone());
+        games.inner.lock().await.owned_products.owned = vec![PRODUCT.parse().unwrap()];
+        let secure_links = SecureLinksManager::new(client.clone(), games);
+        secure_links.fixture_links(
+            PRODUCT,
+            SecureLinks {
+                product_id: 1,
+                urls: vec![UrlFormat {
+                    endpoint_name: "test".into(),
+                    url_format: "{base_url}{path}".into(),
+                    priority: 1,
+                    parameters: CdnUrlParams {
+                        base_url: server.base_url(),
+                        path: "/depot".into(),
+                        token: String::new(),
+                        expires_at: None,
+                        dirs: None,
+                        ttl: None,
+                        source: None,
+                        gog_token: None,
+                        l: None,
+                    },
+                }],
+            },
+        );
+        let mut downloader = Downloader::new(client, secure_links);
+        downloader.threads = threads;
+        Harness {
+            server,
+            dir: TempDir::new(),
+            downloader,
+        }
+    }
+
+    /// Runs `download_files` and returns its result, the net bytes reported
+    /// (`Progress` minus `ProgressRegression`) and the gross `Progress` sum.
+    async fn run(h: &Harness, units: Vec<DownloadUnit>) -> (Result<(), DownloadError>, i64, i64) {
+        let resolver = PathResolver::new(h.dir.path().to_path_buf()).await.unwrap();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let result = h.downloader.download_files(units, &resolver, tx).await;
+        let (mut net, mut gross) = (0i64, 0i64);
+        while let Some(event) = rx.recv().await {
+            match event {
+                DownloadEvent::Progress(n) => {
+                    net += n as i64;
+                    gross += n as i64;
+                }
+                DownloadEvent::ProgressRegression(n) => net -= n as i64,
+                _ => {}
+            }
+        }
+        (result, net, gross)
+    }
+
+    /// Fixture units share one product, so a harness needs the dir before
+    /// the units exist; this builds both.
+    async fn one_unit(threads: usize, raw: &[u8]) -> (Harness, DownloadUnit) {
+        let h = harness(threads).await;
+        let u = unit(&h.dir, 1, raw, PRODUCT);
+        (h, u)
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn transport_failures_then_bad_md5_on_the_last_attempt_is_an_error() {
+        let (h, u) = one_unit(1, b"the right bytes").await;
+        let path = chunk_path(&u.compressed_md5);
+        let mut script = vec![Reply::Close; 5];
+        script.push(Reply::Body(zlib(b"the wrong bytes")));
+        h.server.script(&path, script);
+
+        let (result, net, _) = run(&h, vec![u]).await;
+
+        assert!(
+            matches!(result, Err(DownloadError::ChunkHashMismatch { .. })),
+            "{result:?}"
+        );
+        assert_eq!(h.server.requests(&path), MAX_ATTEMPTS as usize);
+        assert_eq!(net, 0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn bad_md5_is_only_retried_on_the_first_two_attempts() {
+        // Pins `attempt < MAX_ATTEMPTS - 4`: a mismatch on the third attempt
+        // is terminal even though attempts remain.
+        let (h, u) = one_unit(1, b"the right bytes").await;
+        let path = chunk_path(&u.compressed_md5);
+        h.server
+            .script(&path, vec![Reply::Body(zlib(b"the wrong bytes"))]);
+
+        let (result, net, _) = run(&h, vec![u]).await;
+
+        assert!(
+            matches!(result, Err(DownloadError::ChunkHashMismatch { .. })),
+            "{result:?}"
+        );
+        assert_eq!(h.server.requests(&path), 3);
+        assert_eq!(net, 0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn every_attempt_failing_is_an_error() {
+        let (h, u) = one_unit(1, b"the right bytes").await;
+        let path = chunk_path(&u.compressed_md5);
+        h.server.script(&path, vec![Reply::Status(500)]);
+
+        let (result, net, _) = run(&h, vec![u]).await;
+
+        assert!(
+            matches!(
+                result,
+                Err(DownloadError::ClientError(ClientError::HttpError { status, .. }))
+                    if status == reqwest::StatusCode::INTERNAL_SERVER_ERROR
+            ),
+            "{result:?}"
+        );
+        assert_eq!(h.server.requests(&path), MAX_ATTEMPTS as usize);
+        assert_eq!(net, 0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn bad_md5_then_good_bytes_succeeds_and_nets_one_chunk_of_progress() {
+        let raw = b"the right bytes";
+        let (h, u) = one_unit(1, raw).await;
+        let path = chunk_path(&u.compressed_md5);
+        let good = zlib(raw);
+        h.server.script(
+            &path,
+            vec![
+                Reply::Body(zlib(b"the wrong bytes")),
+                Reply::Body(good.clone()),
+            ],
+        );
+        let file = h.dir.path().join(&u.path);
+
+        let (result, net, gross) = run(&h, vec![u]).await;
+
+        result.unwrap();
+        assert_eq!(h.server.requests(&path), 2);
+        // Progress counts compressed bytes; the bad attempt was taken back.
+        assert_eq!(net, good.len() as i64);
+        assert!(gross > net, "the first attempt's bytes were reported too");
+        assert_eq!(std::fs::read(file).unwrap(), raw);
+    }
+
+    #[tokio::test]
+    async fn a_terminal_failure_aborts_the_batch_and_nets_progress_to_zero() {
+        let h = harness(2).await;
+        let raw = b"a chunk that never finishes downloading";
+        let stuck = unit(&h.dir, 1, raw, PRODUCT);
+        let failing = unit(&h.dir, 2, raw, PRODUCT);
+        let half_sent = Arc::new(Notify::new());
+        let body = zlib(raw);
+        h.server.script(
+            &chunk_path(&stuck.compressed_md5),
+            vec![Reply::PartialThenHang {
+                sent: body.len() / 2,
+                body,
+                notify: half_sent.clone(),
+            }],
+        );
+        // Garbage isn't zlib, so the decoder rejects it: a terminal
+        // `ChunkStreamCallbackError`, no retry. Held back until the stuck
+        // unit has sent its half, plus a beat for the client to read it.
+        h.server.script(
+            &chunk_path(&failing.compressed_md5),
+            vec![Reply::After(
+                half_sent,
+                Box::new(Reply::Delay(
+                    Duration::from_millis(100),
+                    Box::new(Reply::Body(b"not zlib".to_vec())),
+                )),
+            )],
+        );
+
+        let (result, net, gross) =
+            tokio::time::timeout(Duration::from_secs(5), run(&h, vec![stuck, failing]))
+                .await
+                .expect("the batch must return without waiting for the stuck unit");
+
+        assert!(
+            matches!(
+                result,
+                Err(DownloadError::ClientError(
+                    ClientError::ChunkStreamCallbackError(_)
+                ))
+            ),
+            "{result:?}"
+        );
+        assert!(gross > 0, "the stuck unit had reported progress");
+        assert_eq!(net, 0, "cancelled units take their progress back");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn product_not_owned_is_retried_like_any_other_secure_link_failure() {
+        // Characterizes today's behavior: an unowned product burns all six
+        // attempts (with backoff). v1.2.0 makes it return at once, which
+        // flips this to `lookups() == 1`.
+        let h = harness(1).await;
+        let u = unit(&h.dir, 1, b"whatever", "2");
+
+        let (result, net, _) = run(&h, vec![u]).await;
+
+        assert!(
+            matches!(
+                result,
+                Err(DownloadError::SecureLinksError(
+                    SecureLinksError::ProductNotOwned(_)
+                ))
+            ),
+            "{result:?}"
+        );
+        assert_eq!(h.downloader.secure_links.lookups(), MAX_ATTEMPTS as usize);
+        assert_eq!(net, 0);
+    }
+}
