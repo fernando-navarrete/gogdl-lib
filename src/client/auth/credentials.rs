@@ -67,6 +67,6 @@ impl Auth {
     /// requests. `false` if `valid_until` was never set.
     pub fn is_valid(&self) -> bool {
         self.valid_until
-            .map_or(false, |t| t > chrono::Utc::now().timestamp() - 60)
+            .is_some_and(|t| t > chrono::Utc::now().timestamp() - 60)
     }
 }

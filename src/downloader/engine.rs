@@ -98,7 +98,7 @@ impl Downloader {
         let (files_allocation_error, _) = tokio::join!(files_allocation_fut, progress_future);
 
         // Check if all files were allocated successfully, if not, we may have run out of disk space
-        if files_allocation_error.len() != 0 {
+        if !files_allocation_error.is_empty() {
             tx.send(DownloadStageEvent::FileAllocationError()).ok();
             return Err(DownloadError::FileAllocationError);
         }
@@ -118,7 +118,7 @@ impl Downloader {
         };
         let (missing_units, _) = tokio::join!(missing_units_fut, progress_future);
 
-        if missing_units.len() == 0 {
+        if missing_units.is_empty() {
             // All units verified, no missing chunks
             return Ok(());
         }
@@ -195,7 +195,7 @@ impl Downloader {
         let (files_allocation_error, _) = tokio::join!(files_allocation_fut, progress_future);
 
         // Check if all files were allocated successfully, if not, we may have run out of disk space
-        if files_allocation_error.len() != 0 {
+        if !files_allocation_error.is_empty() {
             tx.send(DownloadStageEvent::FileAllocationError()).ok();
             return Err(DownloadError::FileAllocationError);
         }
@@ -280,7 +280,7 @@ impl Downloader {
                             Err(err) => {
                                 secure_links_manager.invalidate_secure_links(&download_unit.product_id).await;
                                 if attempt != MAX_ATTEMPTS - 1 {
-                                    backoff(attempt as u32).await;
+                                    backoff(attempt).await;
                                     continue;
                                 }
                                 return Err(DownloadError::SecureLinksError(err));
@@ -292,7 +292,7 @@ impl Downloader {
                             Err(err) => {
                                 secure_links_manager.invalidate_secure_links(&download_unit.product_id).await;
                                 if attempt != MAX_ATTEMPTS - 1 {
-                                    backoff(attempt as u32).await;
+                                    backoff(attempt).await;
                                     continue;
                                 }
                                 return Err(DownloadError::SecureLinksError(err));
@@ -317,7 +317,7 @@ impl Downloader {
                                 Err(ClientError::AuthError(err)) => {
                                     secure_links_manager.invalidate_secure_links(&download_unit.product_id).await;
                                     if attempt != MAX_ATTEMPTS - 1 {
-                                        backoff(attempt as u32).await;
+                                        backoff(attempt).await;
                                         continue;
                                     }
                                     return Err(DownloadError::ClientError(ClientError::AuthError(err)));
@@ -330,7 +330,7 @@ impl Downloader {
                                         if status == reqwest::StatusCode::UNAUTHORIZED {
                                             continue;
                                         }
-                                        backoff(attempt as u32).await;
+                                        backoff(attempt).await;
                                         continue;
                                     }
                                     return Err(DownloadError::ClientError(ClientError::HttpError { status, body }));
@@ -343,7 +343,7 @@ impl Downloader {
                                 }
                                 Err(err) => {
                                     if attempt != MAX_ATTEMPTS - 1 {
-                                        backoff(attempt as u32).await;
+                                        backoff(attempt).await;
                                         continue;
                                     }
                                     return Err(DownloadError::ClientError(err))
@@ -450,13 +450,12 @@ impl Downloader {
             .collect::<Vec<_>>()
             .await;
 
-        let failed_files = failed_files
+        failed_files
             .iter()
             .filter(|&unit| unit.is_some())
             // Unwrap is safe here because we know the unit is Some(_)
             .map(|unit| unit.clone().unwrap().clone())
-            .collect::<Vec<_>>();
-        failed_files
+            .collect::<Vec<_>>()
     }
 
     async fn verify_files_size(
@@ -539,13 +538,12 @@ impl Downloader {
             .collect::<Vec<_>>()
             .await;
 
-        let missing_units = missing_files
+        missing_files
             .iter()
             .filter(|&unit| unit.is_some())
             // Unwrap is safe here because we know the unit is Some
             .map(|unit| unit.clone().unwrap().clone())
-            .collect::<Vec<_>>();
-        missing_units
+            .collect::<Vec<_>>()
     }
 
     async fn verify_download_units(
@@ -618,18 +616,17 @@ impl Downloader {
                         download_unit.size,
                     ))
                     .ok();
-                    return None;
+                    None
                 }
             })
             .buffer_unordered(self.threads)
             .collect::<Vec<_>>()
             .await;
 
-        let missing_units = units
+        units
             .iter()
             .filter(|&unit| unit.is_some())
             .map(|unit| unit.clone().unwrap().clone())
-            .collect::<Vec<_>>();
-        missing_units
+            .collect::<Vec<_>>()
     }
 }

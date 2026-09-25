@@ -1,5 +1,5 @@
 mod error;
-mod gogdl;
+mod facade;
 
 pub use error::GogDlError;
-pub use gogdl::GogDl;
+pub use facade::GogDl;

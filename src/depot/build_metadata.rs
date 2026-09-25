@@ -46,7 +46,7 @@ impl BuildMetadata {
                     .any(|&lang| depot.languages.iter().any(|l| l == lang))
                     || depot.languages.contains(&"*".to_string())
             })
-            .map(|depot| depot.clone())
+            .cloned()
             .collect::<Vec<_>>();
         self.depots = filtered_depots;
     }

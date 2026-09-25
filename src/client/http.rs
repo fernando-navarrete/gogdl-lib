@@ -53,18 +53,18 @@ impl HttpClient {
                     let _ = body;
                     if status == reqwest::StatusCode::UNAUTHORIZED {
                         if require_auth {
-                            self.auth_manager.refresh_auth(&self).await?;
+                            self.auth_manager.refresh_auth(self).await?;
                         }
                     } else {
-                        return Err(ClientError::HttpError { status, body: body });
+                        return Err(ClientError::HttpError { status, body });
                     }
                 }
                 Err(ClientError::AuthError(AuthError::TokenExpired)) => {
-                    self.auth_manager.refresh_auth(&self).await?;
+                    self.auth_manager.refresh_auth(self).await?;
                 }
                 Err(ClientError::NetworkError(err)) => {
                     if attempt != MAX_ATTEMPTS - 1 {
-                        backoff(attempt as u32).await;
+                        backoff(attempt).await;
                         continue;
                     }
                     return Err(ClientError::NetworkError(err));
@@ -233,10 +233,10 @@ impl HttpClient {
             let result = self
                 .get_json_with_auth(url, &auth.access_token, headers)
                 .await?;
-            return Ok(result);
+            Ok(result)
         } else {
             let result = self.get_json(url, headers).await?;
-            return Ok(result);
+            Ok(result)
         }
     }
     async fn get_json<T: DeserializeOwned>(

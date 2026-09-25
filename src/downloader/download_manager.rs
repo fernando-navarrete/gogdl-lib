@@ -7,7 +7,7 @@ use crate::{
     depot::DepotManager,
     downloader::{
         DownloadStageEvent, ProductBundle, downloadable_product::DownloadableProduct,
-        downloader::Downloader, error::DownloadError, progress_reporting::VerificationEvent,
+        engine::Downloader, error::DownloadError, progress_reporting::VerificationEvent,
     },
     games::GamesManager,
     secure_links::SecureLinksManager,
@@ -66,8 +66,8 @@ impl DownloadManager {
     ) -> Result<(), DownloadError> {
         let links = {
             let inner = self.inner.lock().await;
-            let links = inner.secure_links.clone();
-            links
+
+            inner.secure_links.clone()
         };
         let downloader = Downloader::new(self.client.clone(), links);
         downloader.verify(bundles, path, tx).await?;
@@ -81,8 +81,8 @@ impl DownloadManager {
     ) -> Result<(), DownloadError> {
         let links = {
             let inner = self.inner.lock().await;
-            let links = inner.secure_links.clone();
-            links
+
+            inner.secure_links.clone()
         };
         let downloader = Downloader::new(self.client.clone(), links);
         downloader.download(bundles, path, tx).await?;
@@ -96,8 +96,8 @@ impl DownloadManager {
     ) -> Result<(), DownloadError> {
         let links = {
             let inner = self.inner.lock().await;
-            let links = inner.secure_links.clone();
-            links
+
+            inner.secure_links.clone()
         };
         let downloader = Downloader::new(self.client.clone(), links);
         downloader.repair(bundles, path, tx).await?;

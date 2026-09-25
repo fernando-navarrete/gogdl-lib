@@ -110,11 +110,10 @@ impl AuthManager {
         {
             let mut inner = self.inner.lock().await;
             inner.tokens = Some(auth.clone());
-            let observer = if let Some(observer) = inner.token_observer.as_ref() {
-                Some(observer.clone())
-            } else {
-                None
-            };
+            let observer = inner
+                .token_observer
+                .as_ref()
+                .map(|observer| observer.clone());
             drop(inner);
             if let Some(observer) = observer {
                 observer.on_token_refreshed(auth.clone());

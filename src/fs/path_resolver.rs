@@ -50,11 +50,9 @@ impl PathResolver {
             .find(|&disk| self.canonical_base.starts_with(disk.mount_point()));
 
         match disk {
-            None => {
-                return Err(FileSystemError::NoDiskMatchingPath(
-                    self.canonical_base.clone(),
-                ));
-            }
+            None => Err(FileSystemError::NoDiskMatchingPath(
+                self.canonical_base.clone(),
+            )),
             Some(disk) => {
                 let free_space = disk.available_space();
                 Ok(free_space)

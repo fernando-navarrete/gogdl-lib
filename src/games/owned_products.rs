@@ -11,17 +11,12 @@ pub type ProductId = i32;
 /// links and downloadable products, and the input that
 /// [`GogDl::get_owned_games`](crate::GogDl::get_owned_games) filters down to
 /// games.
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Default)]
 pub struct OwnedProducts {
     /// The owned product IDs.
     pub owned: Vec<ProductId>,
 }
 impl OwnedProducts {
-    /// An empty `OwnedProducts` — the pre-fetch state, never itself returned by
-    /// [`get_owned_products`](Self::get_owned_products).
-    pub fn default() -> Self {
-        Self { owned: Vec::new() }
-    }
     /// Fetches the account's owned product IDs from
     /// `embed.gog.com/user/data/games`. Cached on the `GamesManager` after
     /// the first non-empty result — the network is not re-checked on later
@@ -36,7 +31,7 @@ impl OwnedProducts {
         if !owned_products.owned.is_empty() {
             return Ok(owned_products);
         }
-        let url = format!("https://embed.gog.com/user/data/games");
+        let url = "https://embed.gog.com/user/data/games".to_string();
 
         let owned_products: OwnedProducts =
             game_manager.client.fetch(&url, false, true, None).await?;

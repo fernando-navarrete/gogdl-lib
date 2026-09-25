@@ -36,11 +36,9 @@ pub struct DepotFile {
 
 impl DepotFile {
     pub fn size(&self) -> Option<u64> {
-        if let Some(chunks) = &self.chunks {
-            Some(chunks.iter().map(|chunk| chunk.size).sum())
-        } else {
-            None
-        }
+        self.chunks
+            .as_ref()
+            .map(|chunks| chunks.iter().map(|chunk| chunk.size).sum())
     }
     pub fn to_download_units(&self, product_id: String) -> Vec<DownloadUnit> {
         let mut offset = 0;
@@ -55,7 +53,7 @@ impl DepotFile {
                     compressed_md5: chunk.compressed_md5.clone(),
                     _compressed_size: chunk.compressed_size,
                     path: self.path.clone(),
-                    offset: offset,
+                    offset,
                     file_type: match self.file_type.as_ref() {
                         "DepotFile" => FileType::DepotFile,
                         _ => FileType::Other,
@@ -77,7 +75,7 @@ impl DepotInfo {
             "https://cdn.gog.com/content-system/v2/meta/{}/{}/{}",
             &depot_manifest[0..2],
             &depot_manifest[2..4],
-            &depot_manifest
+            depot_manifest
         );
 
         let depot_info: DepotInfo = download_manager

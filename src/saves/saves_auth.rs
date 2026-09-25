@@ -56,10 +56,10 @@ impl SavesAuth {
     ) -> Result<Self, SavesError> {
         {
             let inner = saves_manager.inner.lock().await;
-            if let Some(auth) = inner.auth_cache.get(&(game_id, build_name.to_string())) {
-                if auth.is_valid() {
-                    return Ok(auth.clone());
-                }
+            if let Some(auth) = inner.auth_cache.get(&(game_id, build_name.to_string()))
+                && auth.is_valid()
+            {
+                return Ok(auth.clone());
             }
         }
         let game_ids = saves_manager.get_game_save_ids(game_id, build_name).await?;
@@ -107,7 +107,7 @@ impl SavesAuth {
     /// requests. `false` if `valid_until` was never set.
     pub fn is_valid(&self) -> bool {
         self.valid_until
-            .map_or(false, |t| t > chrono::Utc::now().timestamp() - 60)
+            .is_some_and(|t| t > chrono::Utc::now().timestamp() - 60)
     }
 }
 

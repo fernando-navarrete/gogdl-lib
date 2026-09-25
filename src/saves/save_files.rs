@@ -149,7 +149,7 @@ impl SaveFile {
                 false,
                 false,
                 Some(&[
-                    ("Authorization", &format!("Bearer {}", &auth.access_token)),
+                    ("Authorization", &format!("Bearer {}", auth.access_token)),
                     ("Accept", "application/json"),
                 ]),
             )

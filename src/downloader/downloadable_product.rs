@@ -59,7 +59,7 @@ impl DownloadableProduct {
         for depot in depots.iter().cloned() {
             products
                 .entry(&depot.product_id)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(depot.clone());
         }
 

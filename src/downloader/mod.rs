@@ -1,7 +1,7 @@
 mod download_manager;
 mod download_unit;
 mod downloadable_product;
-mod downloader;
+mod engine;
 mod error;
 mod product_bundle;
 mod progress_reporting;

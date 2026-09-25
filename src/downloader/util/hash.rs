@@ -41,7 +41,7 @@ pub async fn compute_chunk_checksum(path: PathBuf, offset: u64, size: u64) -> io
         Ok::<String, io::Error>(hex_digest)
     })
     .await
-    .map_err(|join_err| io::Error::new(io::ErrorKind::Other, join_err.to_string()))?
+    .map_err(|join_err| io::Error::other(join_err.to_string()))?
 }
 
 pub struct HashingWriter<W: AsyncWrite + Unpin> {

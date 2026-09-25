@@ -17,8 +17,8 @@ pub struct OwnedGames {
 
 #[derive(Deserialize)]
 struct GogdbDetails {
-    #[serde(alias = "type")]
-    produt_type: String,
+    #[serde(rename = "type")]
+    product_type: String,
 }
 
 impl OwnedGames {
@@ -45,9 +45,8 @@ impl OwnedGames {
 
         let owned_games = owned_games
             .iter()
-            .filter(|detail| detail.is_ok())
-            .map(|detail| detail.as_ref().unwrap())
-            .filter(|(_, detail)| detail.produt_type == "game")
+            .filter_map(|detail| detail.as_ref().ok())
+            .filter(|(_, detail)| detail.product_type == "game")
             .map(|(id, _)| *id)
             .collect::<Vec<_>>();
 

@@ -5,7 +5,7 @@ use tokio::sync::Mutex;
 use crate::{
     client::HttpClient,
     games::GamesManager,
-    secure_links::{error::SecureLinksError, secure_links::SecureLinks},
+    secure_links::{error::SecureLinksError, links::SecureLinks},
 };
 
 /// Fetches and caches [`SecureLinks`] per `game_id`, checking ownership on a
