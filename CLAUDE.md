@@ -76,7 +76,7 @@ When a method is added, changed or removed on `GogDl`, update this table and `CH
 - `tests/public_types.rs` and `tests/fixtures/`: an integration test that builds every public type
   from outside the crate, and scrubbed captures of real responses.
 - `ci/`, `tool/`, `.gitlab-ci.yml`: see **Gates** and **Releasing**.
-- `ROADMAP.md`, `GAPS.md`, `CHANGELOG.md`.
+- `ROADMAP.md`, `GAPS.md`, `CHANGELOG.md`, `devlog/` (decisions and pitfalls per finished line).
 
 ## Tests
 
@@ -116,5 +116,4 @@ One tag per release, on the working branch (not `main`), as `ROADMAP.md`'s versi
    `Cargo.toml`, `Cargo.lock` and a non-empty `CHANGELOG.md` section agree, then creates the GitLab
    release with that section. Check it is green.
 
-`v1.1.0-FOUNDATION.md` is the work plan for the `v1.1.x` line; it is replaced by
-`devlog/v1.1.0-foundation.md` once that line is done.
+`devlog/v1.1.0-foundation.md` records the decisions and pitfalls of the `v1.1.x` line.

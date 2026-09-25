@@ -1,5 +1,5 @@
 # CI/CD for gogdl-lib. Runs on the self-hosted runner on thinkcentre.home (Docker executor), same
-# setup as gogdl_flutter's and lumen's .gitlab-ci.yml. See v1.1.0-FOUNDATION.md (Phases 5 and 6):
+# setup as gogdl_flutter's and lumen's .gitlab-ci.yml. See devlog/v1.1.0-foundation.md (Phases 5 and 6):
 # the `check` stage gates everything, and the `release` stage publishes a GitLab release on
 # vX.Y.Z tags.
 # This crate has no private dependencies, so the check and release jobs need no deploy key; only

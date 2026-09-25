@@ -1,13 +1,12 @@
 # GAPS.md
 
-Open findings for `gogdl-lib`. Current tree: branch **`feat/v1.1.0-foundation`** (cut from `main` at
-`be366f4`), where all `v1.1.x` work happens (see `v1.1.0-FOUNDATION.md`), `Cargo.toml` at `1.1.0`.
-The newest tag, **`v1.1.0`** (on this branch, not yet in `main`), follows **`v1.0.11`** (`d5b43e6`), which includes the owned-products rename (`d6dbdc5`) and the
-owned-games filter (`e032b7d`). `feature/saves` has been merged into `main`, so every `v1.0.x` tag
-is reachable from `main`. Consumer pins: the bridge (`gogdl_flutter`) is on `v1.0.11`, and
+Open findings for `gogdl-lib`. Current tree: **`main`**, `Cargo.toml` at `1.1.5`. The newest tag is
+**`v1.1.5`**; the `v1.1.x` line (tests, CI/CD and five patches) is merged into `main` and its
+decisions are in `devlog/v1.1.0-foundation.md`. `v1.0.11` (`d5b43e6`) includes the owned-products
+rename (`d6dbdc5`) and the owned-games filter (`e032b7d`). `feature/saves` was merged into `main`, so
+every tag is reachable from `main`. Consumer pins: the bridge (`gogdl_flutter`) is on `v1.0.11`, and
 **`lumen-cli`** is on **`v1.0.10`** (`Cargo.toml:12`), so its next bump picks up the
-`get_owned_games` behavior change below with no compile error. This pass did not rebuild
-`lumen-cli` against this tree.
+`get_owned_games` behavior change below with no compile error.
 
 **What changed since the last full pass of this document (`e4596b6`, `v1.0.4`), 13 commits in all:**
 
