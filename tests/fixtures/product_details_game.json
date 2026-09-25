@@ -1,0 +1,17 @@
+{
+  "copyrights": "",
+  "releaseStatus": "unavailable",
+  "_embedded": {
+    "productType": "GAME",
+    "product": {
+      "id": 1423049311,
+      "title": "Cyberpunk 2077",
+      "isInstallable": true,
+      "gogReleaseDate": "2020-12-07T11:55:59+01:00"
+    },
+    "publisher": {
+      "name": "CD PROJEKT RED",
+      "searchIndex": "cd-projekt-red"
+    }
+  }
+}

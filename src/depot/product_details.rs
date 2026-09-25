@@ -8,6 +8,27 @@ type ProductId = i32;
 /// [`GogDl::get_product_details`](crate::GogDl::get_product_details).
 /// Unlike [`GameDetails`](crate::GameDetails), `product_id` need not be a
 /// game — DLC and other pack products work too.
+///
+/// # Constructing in tests
+///
+/// Deserialize it from the `/v2/games/{id}` response; only `_embedded.productType`
+/// and `_embedded.product` (`id`, `title`) are read. `title` is skipped by serde
+/// and only filled in by `get_product_details`, so set it by hand when a test
+/// needs it. `productType` is upper case as GOG sends it (`"GAME"`, `"DLC"`).
+///
+/// ```
+/// use gogdl_lib::ProductDetails;
+///
+/// let mut details: ProductDetails = serde_json::from_str(
+///     r#"{"_embedded": {"productType": "DLC",
+///         "product": {"id": 1288586309, "title": "Trauma"}}}"#,
+/// )
+/// .unwrap();
+/// assert_eq!(details.get_product_type(), "DLC");
+/// assert_eq!(details.get_product_id(), 1288586309);
+/// assert_eq!(details.title, "");
+/// details.title = "Trauma".into();
+/// ```
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ProductDetails {
     #[serde(alias = "_embedded")]
@@ -60,7 +81,7 @@ impl ProductDetails {
         }
         Ok(product_details)
     }
-    /// The product type as reported by GOG (e.g. `"game"`, `"dlc"`, `"pack"`).
+    /// The product type as reported by GOG, upper case (e.g. `"GAME"`, `"DLC"`).
     pub fn get_product_type(&self) -> String {
         self.embedded.product_type.clone()
     }

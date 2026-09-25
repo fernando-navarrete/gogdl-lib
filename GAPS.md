@@ -456,6 +456,15 @@ each in [Closed](#closed) at the bottom; the detail lives in the referenced comm
     preferring the extraction error) against a truncated gzip stream, and the re-download overlay in
     the Proton item above.
 
+- [ ] **The event enums and Proton types can't be compared or printed from outside the crate.**
+  `DownloadEvent`, `DownloadStageEvent`, `FileAllocationEvent`, `FileSizeVerificationEvent`,
+  `VerificationEvent`, `ProtonDownloadEvent`, `SavesDownloadEvent`, `SavesUploadEvent`,
+  `ProtonGeRelease`, `ProtonGeReleasesPage` and `GithubAsset` derive none of `Debug`, `Clone` or
+  `PartialEq`, so a consumer's test can build them (every variant and field is public, see
+  `tests/public_types.rs`) but must use `matches!` instead of `assert_eq!`/`{:?}`. Found in
+  `v1.1.0` (Phase 4). Adding the derives is additive, so it can ship in any patch or minor; left
+  out of `v1.1.0` to keep it free of public API changes.
+
 - [ ] **No `CLAUDE.md`/`api.md` in this repo.** `master` had both as canonical specs for
   `gogdl_flutter`, and `lumen-cli` has its own `CLAUDE.md`. Rustdoc (enforced by
   `#![warn(missing_docs)]`) covers per-item semantics, but there's no single tracker of which

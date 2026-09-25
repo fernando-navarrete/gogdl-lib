@@ -7,6 +7,18 @@
 /// `(relative path, expected uncompressed size)`. Any variant other than
 /// `FileSizeVerificationSuccess` means the file goes on to the allocation
 /// stage.
+///
+/// # Constructing in tests
+///
+/// Every variant is public, so build them directly. The type does not implement
+/// `Debug` or `PartialEq`; match with `matches!` instead of `assert_eq!`.
+///
+/// ```
+/// use gogdl_lib::FileSizeVerificationEvent;
+///
+/// let event = FileSizeVerificationEvent::FileNotFound("game.exe".into(), 10);
+/// assert!(matches!(event, FileSizeVerificationEvent::FileNotFound(_, 10)));
+/// ```
 pub enum FileSizeVerificationEvent {
     /// The manifest lists this file with no chunks; it was skipped. Size is
     /// always `0`.

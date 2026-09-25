@@ -4,6 +4,22 @@ use serde::{Deserialize, Serialize};
 use crate::games::{GamesError, GamesManager, owned_products::ProductId};
 
 /// A single published build of a game.
+///
+/// # Constructing in tests
+///
+/// Deserialize it from the JSON GOG returns; unknown keys are ignored.
+///
+/// ```
+/// use gogdl_lib::GameBuild;
+///
+/// let build: GameBuild = serde_json::from_str(
+///     r#"{"build_id": "1", "version_name": "2.31a",
+///         "date_published": "2025-09-16T13:04:39+0000",
+///         "link": "https://example.invalid/manifest"}"#,
+/// )
+/// .unwrap();
+/// assert_eq!(build.version_name, "2.31a");
+/// ```
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct GameBuild {
     /// GOG's internal build identifier.
@@ -23,6 +39,24 @@ pub struct GameBuild {
 /// [`GogDl::get_game_builds`](crate::GogDl::get_game_builds). Always
 /// reflects the Windows depot (`os/windows/builds`) — there is currently no
 /// way to request a different OS.
+///
+/// # Constructing in tests
+///
+/// Deserialize it from the builds listing. `game_title` is skipped by serde, so
+/// it stays empty.
+///
+/// ```
+/// use gogdl_lib::GameBuilds;
+///
+/// let builds: GameBuilds = serde_json::from_str(
+///     r#"{"count": 1, "items": [{"build_id": "1", "version_name": "2.31a",
+///         "date_published": "2025-09-16T13:04:39+0000",
+///         "link": "https://example.invalid/manifest"}]}"#,
+/// )
+/// .unwrap();
+/// assert_eq!(builds.items.len(), 1);
+/// assert_eq!(builds.game_title, "");
+/// ```
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct GameBuilds {
     /// Not populated. `#[serde(skip)]` and never assigned after

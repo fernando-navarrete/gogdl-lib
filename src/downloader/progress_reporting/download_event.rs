@@ -3,6 +3,18 @@
 /// [`GogDl::repair_game`](crate::GogDl::repair_game) that actually transfers
 /// chunk bytes, wrapped in
 /// [`DownloadStageEvent::DownloadStage`](crate::DownloadStageEvent::DownloadStage).
+///
+/// # Constructing in tests
+///
+/// Every variant is public, so build them directly. The type does not implement
+/// `Debug` or `PartialEq`; match with `matches!` instead of `assert_eq!`.
+///
+/// ```
+/// use gogdl_lib::DownloadEvent;
+///
+/// let event = DownloadEvent::Progress(4096);
+/// assert!(matches!(event, DownloadEvent::Progress(4096)));
+/// ```
 pub enum DownloadEvent {
     /// Emitted once, immediately before the transfer stage begins.
     Preparing,

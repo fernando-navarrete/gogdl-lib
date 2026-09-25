@@ -9,6 +9,18 @@
 /// payload does converge to `total_bytes` — unlike `DownloadEvent::Progress`,
 /// whose compressed/uncompressed unit mismatch against its sizing events is
 /// a known rough edge.
+///
+/// # Constructing in tests
+///
+/// Every variant is public, so build them directly. The type does not implement
+/// `Debug` or `PartialEq`; match with `matches!` instead of `assert_eq!`.
+///
+/// ```
+/// use gogdl_lib::ProtonDownloadEvent;
+///
+/// let event = ProtonDownloadEvent::Downloading { total_bytes: 10 };
+/// assert!(matches!(event, ProtonDownloadEvent::Downloading { total_bytes: 10 }));
+/// ```
 pub enum ProtonDownloadEvent {
     /// Emitted once, before the first byte is read. `total_bytes` is the
     /// release asset's compressed size, as reported by GitHub — the

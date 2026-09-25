@@ -10,6 +10,28 @@ use crate::{
 /// [`ProtonGeReleasesPage`](crate::ProtonGeReleasesPage). Mirrors (a subset
 /// of) GitHub's release object directly — see
 /// [`GogDl::get_proton_releases`](crate::GogDl::get_proton_releases).
+///
+/// # Constructing in tests
+///
+/// Deserialize it from GitHub's release object. It does not implement `Debug` or
+/// `PartialEq`, so inspect fields rather than using `assert_eq!` on the release.
+///
+/// ```
+/// use gogdl_lib::ProtonGeRelease;
+///
+/// let release: ProtonGeRelease = serde_json::from_str(
+///     r#"{"url": "https://api.github.com/repos/o/r/releases/1",
+///         "tag_name": "GE-Proton11-7", "id": 1,
+///         "created_at": "2026-01-01T00:00:00Z",
+///         "updated_at": "2026-01-01T00:00:00Z",
+///         "published_at": "2026-01-01T00:00:00Z",
+///         "assets": [{"name": "GE-Proton11-7.tar.gz",
+///                     "browser_download_url": "https://example.invalid/a",
+///                     "size": 10}]}"#,
+/// )
+/// .unwrap();
+/// assert_eq!(release.get_release_size().unwrap(), 10);
+/// ```
 #[derive(Deserialize)]
 pub struct ProtonGeRelease {
     /// GitHub's API URL for this release (not a browser-facing page).

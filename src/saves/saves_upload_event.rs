@@ -11,6 +11,18 @@ use std::path::PathBuf;
 /// There is no `ProgressRegression` sibling, unlike
 /// [`DownloadEvent`](crate::DownloadEvent): saves are not retried, so no
 /// previously-reported byte is ever taken back.
+///
+/// # Constructing in tests
+///
+/// Every variant is public, so build them directly. The type does not implement
+/// `Debug` or `PartialEq`; match with `matches!` instead of `assert_eq!`.
+///
+/// ```
+/// use gogdl_lib::SavesUploadEvent;
+///
+/// let event = SavesUploadEvent::FileFinished { name: "slot".into() };
+/// assert!(matches!(event, SavesUploadEvent::FileFinished { .. }));
+/// ```
 pub enum SavesUploadEvent {
     /// Emitted once, before the first file. `total_files` is `0` if the
     /// directory holds no files.

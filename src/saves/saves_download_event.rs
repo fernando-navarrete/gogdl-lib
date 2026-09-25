@@ -11,6 +11,18 @@ use std::path::PathBuf;
 /// There is no `ProgressRegression` sibling, unlike
 /// [`DownloadEvent`](crate::DownloadEvent): saves are not retried, so no
 /// previously-reported byte is ever taken back.
+///
+/// # Constructing in tests
+///
+/// Every variant is public, so build them directly. The type does not implement
+/// `Debug` or `PartialEq`; match with `matches!` instead of `assert_eq!`.
+///
+/// ```
+/// use gogdl_lib::SavesDownloadEvent;
+///
+/// let event = SavesDownloadEvent::Preparing { total_files: 1, total_bytes: 9 };
+/// assert!(matches!(event, SavesDownloadEvent::Preparing { total_files: 1, .. }));
+/// ```
 pub enum SavesDownloadEvent {
     /// Emitted once, before the first file. Describes the whole job; both
     /// fields are `0` when the game has no cloud saves.

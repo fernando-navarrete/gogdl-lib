@@ -19,6 +19,21 @@ use crate::downloader::progress_reporting::VerificationEvent;
 /// terminally aborts the rest of that stage, so a failed call doesn't imply
 /// every unit was attempted. See the batch-abort note on
 /// [`GogDl::download_game`](crate::GogDl::download_game).
+///
+/// # Constructing in tests
+///
+/// Every variant is public, so build them directly. The type does not implement
+/// `Debug` or `PartialEq`; match with `matches!` instead of `assert_eq!`.
+///
+/// ```
+/// use gogdl_lib::{DownloadEvent, DownloadStageEvent};
+///
+/// let event = DownloadStageEvent::DownloadStage(DownloadEvent::Downloading);
+/// assert!(matches!(
+///     event,
+///     DownloadStageEvent::DownloadStage(DownloadEvent::Downloading)
+/// ));
+/// ```
 pub enum DownloadStageEvent {
     /// A file's on-disk size was checked against its expected size, before
     /// any allocation or transfer. See [`FileSizeVerificationEvent`].
