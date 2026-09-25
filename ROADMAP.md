@@ -201,7 +201,7 @@ Follow-up patches (`v1.4.1+`), one per tag:
 1. `v1.4.1`: one `stream_url`/`send_checked` pair in `HttpClient` instead of the copied bodies, and
    a shared const for the GitHub headers.
 2. `v1.4.2`: an `AsyncWrite` sink for `stream_chunk`, removing the per-read box and lock, and the
-   double clones in `downloader.rs`.
+   double clones in `engine.rs`.
 3. `v1.4.3`: trim `rand` and `tar` default features.
 
 ## v1.5.0 — Cloud saves (for bridge `v1.6.0`)
