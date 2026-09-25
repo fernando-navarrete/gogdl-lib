@@ -4,6 +4,20 @@ One section per tag, newest first. Consumers pin this crate by git tag. A change
 behind an unchanged signature is called out as **Behavior change**, and a signature change as
 **Breaking**. The `v0.x` and `-restart` tags predate this file and aren't covered.
 
+## 1.1.5
+
+No API or behavior change. Docs only: rustdoc that no longer matched the code, and a `CLAUDE.md`.
+
+* The docs no longer say the `reqwest::Client` must set a `User-Agent` for the Proton-GE fetches.
+  Both send their own (`7a57534`), so a consumer's client needs no `User-Agent` configured.
+* The crate overview counts three methods that don't talk to GOG, lists the two saves transfers
+  under long-running operations, and says the four cloud saves methods return `SavesError`, not
+  `GogDlError`.
+* `SavesError::CloudStorageNotSupported`, `RemoteConfig::get_locations`, `AuthError::TokenExpired`
+  and the saves internals' descriptions match what the code does.
+* `CLAUDE.md` lists the capabilities and their `GogDl` entry points, the gates and the release
+  steps.
+
 ## 1.1.4
 
 No API or behavior change. CI only: a manual `downstream` job builds `lumen-cli` and the bridge's

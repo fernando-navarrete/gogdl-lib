@@ -3,7 +3,8 @@ use thiserror::Error;
 use crate::ClientError;
 use crate::fs::FileSystemError;
 
-/// Errors from listing ([`GogDl::get_proton_releases`](crate::GogDl::get_proton_releases))
+/// Errors from listing ([`GogDl::get_proton_releases`](crate::GogDl::get_proton_releases)),
+/// fetching one ([`GogDl::get_proton_release_by_tag`](crate::GogDl::get_proton_release_by_tag))
 /// or downloading ([`GogDl::download_proton_release`](crate::GogDl::download_proton_release))
 /// Proton-GE releases.
 ///
@@ -14,8 +15,7 @@ use crate::fs::FileSystemError;
 #[derive(Debug, Error)]
 pub enum ProtonError {
     /// The underlying HTTP request to GitHub failed — see [`ClientError`].
-    /// Notably includes a 403 from a missing `User-Agent` or an exhausted
-    /// rate limit; see
+    /// Notably includes a 403 from an exhausted rate limit; see
     /// [`GogDl::get_proton_releases`](crate::GogDl::get_proton_releases).
     #[error("Client error: {0}")]
     ClientError(#[from] ClientError),

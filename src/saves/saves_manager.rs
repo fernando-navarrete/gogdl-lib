@@ -17,8 +17,11 @@ use crate::{
     },
 };
 
-/// Crate-internal manager backing
-/// [`GogDl::get_save_files`](crate::GogDl::get_save_files). Not exported —
+/// Crate-internal manager backing the cloud saves methods of `GogDl`
+/// ([`get_save_files`](crate::GogDl::get_save_files),
+/// [`get_remote_config`](crate::GogDl::get_remote_config),
+/// [`download_save_files`](crate::GogDl::download_save_files) and
+/// [`upload_save_files`](crate::GogDl::upload_save_files)). Not exported —
 /// `GogDl` is the only entry point, mirroring `GamesManager` and
 /// `DepotManager`.
 pub struct SavesManager {
@@ -56,7 +59,8 @@ impl SavesManager {
     }
     /// Obtains a game-scoped cloud saves auth grant, cached per
     /// `(game_id, build_name)`. See [`SavesAuth::get_saves_auth`]. Not
-    /// exposed publicly; used by [`get_save_files`](Self::get_save_files).
+    /// exposed publicly; used by [`get_save_files`](Self::get_save_files) and the
+    /// download and upload paths.
     pub async fn get_saves_auth(
         &self,
         game_id: i32,

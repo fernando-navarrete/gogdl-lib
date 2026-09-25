@@ -10,8 +10,9 @@
 //!
 //! # Long-running operations
 //!
-//! [`GogDl::download_game`], [`GogDl::repair_game`], [`GogDl::verify_files`]
-//! and [`GogDl::download_proton_release`] report progress by sending events
+//! [`GogDl::download_game`], [`GogDl::repair_game`], [`GogDl::verify_files`],
+//! [`GogDl::download_proton_release`], [`GogDl::download_save_files`] and
+//! [`GogDl::upload_save_files`] report progress by sending events
 //! into an [`mpsc::UnboundedSender`](tokio::sync::mpsc::UnboundedSender) you
 //! provide, rather than by returning progress from the `async fn` itself. The
 //! future only resolves once the whole job is done (or has failed); drain the
@@ -35,13 +36,19 @@
 //! `GogDlError::ClientError(ClientError::AuthError(_))`, since there is no
 //! flattened top-level auth variant.
 //!
+//! The exception is cloud saves: [`GogDl::get_save_files`],
+//! [`GogDl::get_remote_config`], [`GogDl::download_save_files`] and
+//! [`GogDl::upload_save_files`] return [`SavesError`] directly, which
+//! `GogDlError` has no variant for, so they need their own error path.
+//!
 //! # Proton-GE releases
 //!
-//! [`GogDl::get_proton_releases`] is the one method that doesn't talk to GOG
-//! at all — it lists releases from the `proton-ge-custom` GitHub repo, with
-//! no GOG auth and no caching. GitHub rejects unauthenticated requests that
-//! carry no `User-Agent` header with a 403, so the `reqwest::Client` passed
-//! to [`GogDl::new_from_client`] must set one for this call to succeed. See
+//! Three methods don't talk to GOG at all: [`GogDl::get_proton_releases`] and
+//! [`GogDl::get_proton_release_by_tag`] read releases of the
+//! `proton-ge-custom` GitHub repo, with no GOG auth and no caching, and
+//! [`GogDl::download_proton_release`] downloads and extracts one of them. The
+//! two lookups send their own `User-Agent`, so the client needs no
+//! configuration, but they share GitHub's unauthenticated rate limit. See
 //! [`GogDl::get_proton_releases`] for details.
 
 #![warn(missing_docs)]

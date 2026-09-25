@@ -12,7 +12,10 @@ pub enum AuthError {
 
     /// The locally-held access token is past its computed expiry. Callers
     /// that go through [`crate::GogDl`]'s methods never see this directly —
-    /// it triggers an automatic refresh-and-retry instead.
+    /// it triggers an automatic refresh-and-retry instead. The exception is
+    /// the cloud saves methods, which need a still-valid access token and
+    /// return this (wrapped in [`SavesError::ClientError`](crate::SavesError))
+    /// rather than refresh.
     #[error("Auth token expired locally")]
     TokenExpired,
 

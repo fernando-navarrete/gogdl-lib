@@ -188,6 +188,9 @@ The paragraph below is the baseline it started from.)* `cargo build --lib` showe
   one method last pass; it is four now. A consumer with one `GogDlError` error path can't `?` them.
   Add `GogDlError::SavesError(#[from] SavesError)`, or amend the crate docs.
 
+  The crate docs and `GogDlError`'s rustdoc were amended in `v1.1.5` to say so. The variant is
+  breaking, so it stays open for `v1.4.0` (ROADMAP).
+
 ## Medium — owned games
 
 - [ ] **`get_owned_games` silently drops any product whose `gamesdb` lookup fails.** Each lookup's
@@ -255,7 +258,7 @@ The paragraph below is the baseline it started from.)* `cargo build --lib` showe
   (`require_auth`), so an unauthenticated 401 is one request. The rustdoc now says only transport
   errors are retried. Pinned by tests in `client/http.rs`.
 
-- [ ] **The crate-level and Proton docs are stale: a `User-Agent` requirement the code no longer
+- [x] **The crate-level and Proton docs are stale: a `User-Agent` requirement the code no longer
   has, and an overview that predates saves.**
   - *User-Agent.* `7a57534` made both GitHub API fetches send `("User-Agent", "gogdl")` per request
     (`proton_ge_release.rs:80`, `proton_ge_releases_page.rs:42`). Yet
@@ -275,6 +278,13 @@ The paragraph below is the baseline it started from.)* `cargo build --lib` showe
     (`saves_auth.rs:10-11`) still describe themselves as backing only `get_save_files`.
 
   `#![warn(missing_docs)]` only catches missing docs, not stale ones.
+
+  Fixed in `v1.1.5`: the `User-Agent` requirement is gone from `GogDl::get_proton_releases`,
+  `get_proton_release_by_tag`, `ProtonError::ClientError` and `lib.rs`; the overview covers the
+  three GitHub-only methods, the saves transfers and `SavesError`; and the saves internals'
+  descriptions match the code. A read of the rendered docs found one more stale claim, fixed
+  the same way: `AuthError::TokenExpired` said `GogDl` callers never see it, but the saves methods
+  return it.
 
 ## Medium — duplication & consistency
 
@@ -462,11 +472,14 @@ The paragraph below is the baseline it started from.)* `cargo build --lib` showe
   `v1.1.0` (Phase 4). Adding the derives is additive, so it can ship in any patch or minor; left
   out of `v1.1.0` to keep it free of public API changes.
 
-- [ ] **No `CLAUDE.md`/`api.md` in this repo.** `master` had both as canonical specs for
+- [x] **No `CLAUDE.md`/`api.md` in this repo.** `master` had both as canonical specs for
   `gogdl_flutter`, and `lumen-cli` has its own `CLAUDE.md`. Rustdoc (enforced by
   `#![warn(missing_docs)]`) covers per-item semantics, but there's no single tracker of which
   capabilities exist. That gap keeps widening: cloud saves went from list-only to a full
   download/upload surface with its own path-mapping rules in one release cycle.
+
+  Fixed in `v1.1.5`: `CLAUDE.md` lists every `GogDl` method by area, with the gates and the release
+  steps. There is no `api.md`; rustdoc stays the per-item spec.
 
 ## Low — style / clippy
 

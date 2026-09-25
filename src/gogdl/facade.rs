@@ -73,20 +73,19 @@ impl GogDl {
     ///
     /// **Not cached** — every call is a fresh round-trip.
     ///
-    /// **Requires a `User-Agent` on the underlying client.** GitHub answers
-    /// 403 to any request with no `User-Agent` header; the `reqwest::Client`
-    /// passed to [`new_from_client`](Self::new_from_client) must set one
-    /// (e.g. via [`reqwest::ClientBuilder::user_agent`]) for this call to
-    /// succeed. The unauthenticated rate limit is also 60 requests/hour per
-    /// IP, shared with everything else on that address.
+    /// The request carries its own `User-Agent` header, which GitHub
+    /// requires, so the `reqwest::Client` passed to
+    /// [`new_from_client`](Self::new_from_client) needs no configuration for
+    /// this call. The unauthenticated rate limit is 60 requests/hour per IP,
+    /// shared with everything else on that address.
     ///
     /// # Errors
     /// [`GogDlError::ProtonError`] wrapping
     /// [`crate::ProtonError::ClientError`], notably a
-    /// [`crate::ClientError::HttpError`] with `status: 403` for a missing
-    /// `User-Agent` or an exhausted rate limit — returned immediately, since
-    /// the underlying fetch only retries transport errors. Any other
-    /// non-success status, a 401 included, is returned after one request.
+    /// [`crate::ClientError::HttpError`] with `status: 403` for an exhausted
+    /// rate limit — returned immediately, since the underlying fetch only
+    /// retries transport errors. Any other non-success status, a 401
+    /// included, is returned after one request.
     pub async fn get_proton_releases(
         &self,
         page: u32,
@@ -104,17 +103,16 @@ impl GogDl {
     ///
     /// **Not cached** — every call is a fresh round-trip.
     ///
-    /// **Requires a `User-Agent` on the underlying client**, for the same
-    /// reason as [`get_proton_releases`](Self::get_proton_releases) — GitHub
-    /// answers 403 to any request with no `User-Agent` header. Subject to the
-    /// same unauthenticated rate limit (60 requests/hour per IP).
+    /// Sends its own `User-Agent` header, like
+    /// [`get_proton_releases`](Self::get_proton_releases), so the client needs
+    /// no configuration. Subject to the same unauthenticated rate limit (60
+    /// requests/hour per IP).
     ///
     /// # Errors
     /// [`GogDlError::ProtonError`] wrapping
     /// [`crate::ProtonError::ClientError`], notably a
     /// [`crate::ClientError::HttpError`] with `status: 404` if `tag` doesn't
-    /// match any release, or `status: 403` for a missing `User-Agent` or an
-    /// exhausted rate limit.
+    /// match any release, or `status: 403` for an exhausted rate limit.
     pub async fn get_proton_release_by_tag(
         &self,
         tag: &str,

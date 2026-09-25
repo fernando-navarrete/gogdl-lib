@@ -6,9 +6,11 @@ use crate::{
 };
 
 /// The top-level error type returned by every fallible [`crate::GogDl`]
-/// method. Wraps whichever per-layer error enum the failure originated in;
-/// there is no flattened variant, so an auth failure typically arrives as
-/// e.g. `GogDlError::ClientError(ClientError::AuthError(_))`.
+/// method except the four cloud saves ones, which return
+/// [`SavesError`](crate::SavesError) directly. Wraps whichever per-layer
+/// error enum the failure originated in; there is no flattened variant, so an
+/// auth failure typically arrives as e.g.
+/// `GogDlError::ClientError(ClientError::AuthError(_))`.
 #[derive(Error, Debug)]
 pub enum GogDlError {
     /// A catalog lookup failed — see [`GamesError`].

@@ -10,7 +10,8 @@ use crate::{
 /// A game-scoped GOG auth grant for the cloud saves service.
 ///
 /// Crate-internal: obtained through `SavesManager::get_saves_auth` on
-/// behalf of [`GogDl::get_save_files`](crate::GogDl::get_save_files).
+/// behalf of the cloud saves listing, downloads and uploads of
+/// [`GogDl`](crate::GogDl).
 ///
 /// Same shape as [`Auth`](crate::Auth), but issued to a specific game's
 /// client rather than this crate's session. It is cached in memory and
@@ -43,8 +44,8 @@ pub struct SavesAuth {
 impl SavesAuth {
     /// Not reachable from outside the crate — `SavesManager` is not
     /// exported. Called through `SavesManager::get_saves_auth`; the
-    /// public-facing contract is documented on
-    /// [`GogDl::get_save_files`](crate::GogDl::get_save_files).
+    /// public-facing contract of the grant (caching, expiry, no refresh) is
+    /// documented on [`GogDl::get_save_files`](crate::GogDl::get_save_files).
     ///
     /// Returns the cached grant for `(game_id, build_name)` if it is still
     /// [valid](Self::is_valid); otherwise resolves the game's credentials via

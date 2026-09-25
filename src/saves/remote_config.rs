@@ -73,10 +73,8 @@ impl RemoteConfig {
     /// them.
     ///
     /// Reads the Windows section only, like
-    /// [`is_supported`](Self::is_supported). `async` only for symmetry with
-    /// the rest of the saves API — it awaits nothing and never performs a
-    /// request, so it reflects the document fetched when this
-    /// `RemoteConfig` was obtained.
+    /// [`is_supported`](Self::is_supported). Never performs a request, so it
+    /// reflects the document fetched when this `RemoteConfig` was obtained.
     ///
     /// A section whose `cloudStorage` block is present but *disabled* still
     /// returns its locations; check

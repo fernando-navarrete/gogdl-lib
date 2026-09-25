@@ -5,7 +5,7 @@ use crate::{SavesError, saves::SavesManager};
 /// crate's session client.
 ///
 /// Crate-internal: resolved and cached by `SavesManager` on behalf of
-/// [`GogDl::get_save_files`](crate::GogDl::get_save_files).
+/// the cloud saves methods of [`GogDl`](crate::GogDl).
 #[derive(Clone)]
 pub struct GameSaveIds {
     /// The game's OAuth client ID. Also identifies the game's storage area

@@ -40,9 +40,12 @@ pub enum SavesError {
 
     /// The game's [`RemoteConfig`](crate::RemoteConfig) declares no cloud
     /// storage for Windows — it has either no Windows section at all, or
-    /// one with no `cloudStorage` block. Only ever returned by
+    /// one with no `cloudStorage` block, or an empty list of locations.
+    /// Returned by
     /// [`RemoteConfig::get_locations`](crate::RemoteConfig::get_locations),
-    /// never by a request.
+    /// and by [`GogDl::download_save_files`](crate::GogDl::download_save_files)
+    /// and [`GogDl::upload_save_files`](crate::GogDl::upload_save_files) when
+    /// the game declares no location to transfer to or from.
     #[error("Cloud storage not supported")]
     CloudStorageNotSupported,
 
