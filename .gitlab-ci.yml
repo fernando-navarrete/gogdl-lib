@@ -1,0 +1,107 @@
+# CI for gogdl-lib. Runs on the self-hosted runner on thinkcentre.home (Docker executor), same
+# setup as gogdl_flutter's and lumen's .gitlab-ci.yml. See v1.1.0-FOUNDATION.md (Phase 5).
+# This crate has no private dependencies, so unlike the bridge there is no deploy key.
+#
+# Jobs run in a prebuilt image (ci/Dockerfile: apt packages and the pinned rustup toolchain),
+# so none of them touches apt or rustup: the network is slow and the runner is small. The
+# runner shares the host's docker through its mounted docker.sock, so the image is built on the
+# host with `ci/build-image.sh` and jobs see it directly. Rebuild it after bumping the channel
+# in rust-toolchain.toml (update `image:` below to the printed name; the `.toolchain` check
+# fails a job whose image has a stale Rust). The runner's config.toml (volume
+# `gitlab-runner-config`) must not force pulls, under [runners.docker]:
+#   pull_policy = ["if-not-present"]
+# (or allowed_pull_policies including it), then `docker service update --force gitlab-runner`.
+#
+# If a job fails to resolve thinkcentre.home, the runner's containers aren't seeing the LAN's
+# /etc/hosts entry (it's a hosts-file entry, not real DNS). Fix it in
+# /etc/gitlab-runner/config.toml under [runners.docker]:
+#   extra_hosts = ["thinkcentre.home:192.168.8.234"]
+# then restart the runner (`sudo gitlab-runner restart`).
+
+# Pipelines run only for tag pushes (e.g. v1.1.0) and for manual runs from the web UI
+# (Build -> Pipelines -> Run pipeline) on any branch, to keep load off the self-hosted runner.
+workflow:
+  rules:
+    - if: $CI_COMMIT_TAG
+    - if: $CI_PIPELINE_SOURCE == "web"
+
+stages:
+  - check
+
+default:
+  image:
+    name: gogdl-lib-ci:rust-1.98.1
+    pull_policy: if-not-present
+
+# Everything that gets cached must live inside the project dir. The toolchain is in the image
+# (/opt/cargo/bin is on PATH); only cargo's download caches are relocated here.
+variables:
+  CARGO_HOME: "$CI_PROJECT_DIR/.ci/cargo"
+  CARGO_TERM_COLOR: always
+
+# Fails when the image's Rust isn't the one pinned in rust-toolchain.toml, which would
+# otherwise be tested against the old toolchain without any error (rustup would even download
+# the pinned one on every run). (A literal block, not a plain list-item string: the sed
+# script's `" *"` would otherwise be fragile in YAML.)
+.toolchain:
+  script:
+    - |
+      want=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)
+      have=$(cat /opt/rust-version)
+      if [ "$want" != "$have" ]; then
+        echo "CI image has Rust $have but rust-toolchain.toml pins $want: rebuild it with ci/build-image.sh and update image: in .gitlab-ci.yml" >&2
+        exit 1
+      fi
+    - rustc --version
+
+.cache-cargo: &cache-cargo
+  key:
+    prefix: cargo
+    files:
+      - Cargo.lock
+  paths:
+    - .ci/cargo/registry/
+    - .ci/cargo/git/
+
+.cache-target: &cache-target
+  key:
+    prefix: target-$CI_JOB_NAME
+    files:
+      - Cargo.lock
+  paths:
+    - target/
+
+lint:
+  stage: check
+  cache:
+    - *cache-cargo
+    - *cache-target
+  before_script:
+    - !reference [.toolchain, script]
+  script:
+    - cargo fmt --check
+    - cargo clippy --locked --all-targets -- -D warnings
+
+# Unit tests, tests/ and doctests, all offline (the HTTP fixture binds 127.0.0.1).
+test:
+  stage: check
+  cache:
+    - *cache-cargo
+    - *cache-target
+  before_script:
+    - !reference [.toolchain, script]
+  script:
+    - cargo test --locked
+
+# Keeps missing_docs and intra-doc links honest.
+doc:
+  stage: check
+  variables:
+    RUSTDOCFLAGS: "-D warnings"
+  cache:
+    - *cache-cargo
+    - *cache-target
+  before_script:
+    - !reference [.toolchain, script]
+  script:
+    - cargo doc --no-deps --locked
