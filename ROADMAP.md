@@ -10,8 +10,8 @@ numbered.
 - **Patch** (`1.x.y`): one tag per small, self-contained fix or addition.
 - **Minor** (`1.x.0`): a big update, meaning a feature set or cross-cutting refactor. Patches then
   continue from `.1` under that minor.
-- Tags use the existing `vX.Y.Z` format. `v1.0.11` is the newest tag (and `HEAD`), so the next stage
-  is **`v1.1.0`**. The old `-restart`/`-debug` tags stay, but nothing new is tagged that way.
+- Tags use the existing `vX.Y.Z` format. `v1.1.0`–`v1.1.5` shipped (the foundation line), so the
+  next stage is **`v1.2.0`**. The old `-restart`/`-debug` tags stay, but nothing new is tagged that way.
 - For each release: bump `version` in `Cargo.toml` to match the tag (the `v1.0.1` mismatch in GAPS
   "Low — style / clippy" must not happen again), tick the item(s) in `GAPS.md`, add a
   `CHANGELOG.md` entry, commit, then tag.
@@ -40,7 +40,7 @@ later as its own patch.
 
 | Lumen stage | Bridge release | Needs from `gogdl-lib` (bridge GAPS §7 / Lumen D#) | `gogdl-lib` release |
 |---|---|---|---|
-| (none, internal) | `v1.2.0` ✅ | Test-constructible types (§7.1) | `v1.1.0` |
+| (none, internal) | `v1.2.0` ✅ | Test-constructible types (§7.1) | `v1.1.0` ✅ |
 | `v1.3.0` Download management | `v1.3.0` | Cancel-safe contract (§7.2), download error kinds (§7.3), free-space query and mount fix (§7.4, D4, D5), no save truncation (§7.6 part), per-product sizes (§7.10), Proton cleanup on failure (D6) | `v1.2.0` |
 | `v1.4.0` Library and account | `v1.4.0` | `logout` (§7.5), owned games that don't silently shrink, cheaper title and DLC lookups | `v1.3.0` |
 | `v1.5.0` UI polish and packaging | `v1.5.0` | Login error kinds (§7.3 auth part), breaking error and API cleanup | `v1.4.0` |
@@ -59,7 +59,7 @@ bridge's `v1.3.0` plan ships a `statvfs` fallback and doesn't wait. They are the
 
 ---
 
-## v1.1.0 — Foundation: tests, CI and CD
+## v1.1.0 — Foundation: tests, CI and CD ✅
 
 This goes before any feature work so that everything after it lands with tests and a pipeline.
 GAPS' first "standing fact" is that nothing on the download, auth or client paths is tested, and
