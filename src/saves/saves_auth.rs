@@ -2,6 +2,8 @@ use serde::Deserialize;
 
 use crate::{
     ClientError,
+    client::HttpClient,
+    constants::TOKEN_URL,
     saves::{error::SavesError, saves_manager::SavesManager},
 };
 
@@ -67,13 +69,14 @@ impl SavesAuth {
         let client_id = game_ids.client_id;
         let client_secret = game_ids.client_secret;
         let refresh_token = saves_manager.client.get_refresh_token().await?;
-        let url = format!(
-            "https://auth.gog.com/token?client_id={client_id}&client_secret={client_secret}&grant_type=refresh_token&refresh_token={refresh_token}"
-        );
-        let mut saves_auth: SavesAuth = saves_manager
-            .client
-            .fetch_no_retry(&url, false, false, None)
-            .await?;
+        let mut saves_auth = Self::exchange(
+            &saves_manager.client,
+            TOKEN_URL,
+            &client_id,
+            &client_secret,
+            &refresh_token,
+        )
+        .await?;
         saves_auth.valid_until =
             Some(saves_auth.expires_in as i64 + chrono::Utc::now().timestamp());
 
@@ -84,6 +87,29 @@ impl SavesAuth {
                 .insert((game_id, build_name.to_string()), saves_auth.clone());
         }
         Ok(saves_auth)
+    }
+    /// POSTs the game-scoped refresh grant to `url`. The grant goes in a form
+    /// body and the transport error has its URL stripped, so neither the
+    /// session's refresh token nor the game's `client_secret` can reach an
+    /// error string.
+    async fn exchange(
+        client: &HttpClient,
+        url: &str,
+        client_id: &str,
+        client_secret: &str,
+        refresh_token: &str,
+    ) -> Result<Self, SavesError> {
+        Ok(client
+            .post_token(
+                url,
+                &[
+                    ("client_id", client_id),
+                    ("client_secret", client_secret),
+                    ("grant_type", "refresh_token"),
+                    ("refresh_token", refresh_token),
+                ],
+            )
+            .await?)
     }
     /// The `cloudstorage.gog.com` URL of the object called `name` in this
     /// user's storage area for the game `client_id`. `name` is the full
@@ -126,6 +152,30 @@ mod tests {
             scope: None,
             user_id: "42".to_string(),
             valid_until: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_failed_exchange_leaks_neither_the_refresh_token_nor_the_client_secret() {
+        use crate::test_support::{ChunkServer, Reply};
+        let server = ChunkServer::start().await;
+        for reply in [Reply::Close, Reply::Status(400)] {
+            server.script("/token", vec![reply]);
+            let err = SavesAuth::exchange(
+                &HttpClient::new_with_client(reqwest::Client::new()),
+                &format!("{}/token", server.base_url()),
+                "client",
+                "SECRET-SENTINEL",
+                "REFRESH-SENTINEL",
+            )
+            .await
+            .err()
+            .unwrap();
+            for text in [err.to_string(), format!("{err:?}")] {
+                assert!(text.contains("rror"), "not an error string: {text}");
+                assert!(!text.contains("SECRET-SENTINEL"), "leaked: {text}");
+                assert!(!text.contains("REFRESH-SENTINEL"), "leaked: {text}");
+            }
         }
     }
 

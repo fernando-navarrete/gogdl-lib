@@ -122,7 +122,7 @@ The paragraph below is the baseline it started from.)* `cargo build --lib` showe
   from and written to its storage area. Check `is_supported()` there, or document that the caller
   must.
 
-- [ ] **Refresh tokens are sent in URL query strings, and `reqwest::Error`'s `Display` prints the
+- [x] **Refresh tokens are sent in URL query strings, and `reqwest::Error`'s `Display` prints the
   URL, so a network failure puts the token in an error string.** `reqwest` 0.13.4's `Error`
   formats as `... for url (<full url>)` (`reqwest-0.13.4/src/error.rs:280`) unless
   `.without_url()` is called, and nothing in this crate calls it. Two paths put a live refresh token
@@ -143,6 +143,11 @@ The paragraph below is the baseline it started from.)* `cargo build --lib` showe
   request's error is converted, or POST the grant as a form body if GOG's token endpoint accepts
   it. Neither query value is percent-encoded either, though GOG's token alphabet doesn't currently
   need it.
+
+  Fixed in `v1.1.1`: the login, refresh and saves exchanges are POSTs with a form body (GOG's token
+  endpoint answers a POST like a GET, probed with a bogus token and checked live), through
+  `HttpClient::post_token`, which also strips the URL from every `reqwest::Error`. Tests pin both
+  halves: no secret in the `Display`/`Debug` of a failed exchange, and no URL in a `NetworkError`.
 
 - [ ] **`SavesManager` holds its `inner` mutex across network round-trips, the same shape fixed for
   auth in `9a1f780`.** `GameSaveIds::get_game_save_ids` takes `saves_manager.inner.lock()` and

@@ -4,6 +4,18 @@ One section per tag, newest first. Consumers pin this crate by git tag. A change
 behind an unchanged signature is called out as **Behavior change**, and a signature change as
 **Breaking**. The `v0.x` and `-restart` tags predate this file and aren't covered.
 
+## 1.1.1
+
+No API change. Security fix: refresh tokens no longer end up in error strings.
+
+* The login, refresh and cloud-saves token exchanges are now POSTs with a form body, not GETs with
+  the credentials in the query string, and the URL is stripped from their transport errors. Before,
+  a network failure in one of them put the session's refresh token (and, for the saves exchange, a
+  game's `client_secret`) in the `Display`/`Debug` of `AuthError::ClientError`,
+  `SavesError::ClientError` and the `GogDlError`s wrapping them.
+* **Consumers that logged those errors may have refresh tokens in old logs.** Treat them as
+  exposed: log in again to get a new session, and purge or rotate the logs.
+
 ## 1.1.0
 
 No API or behavior change: consumers can move their pin to `v1.1.0` without touching their code.

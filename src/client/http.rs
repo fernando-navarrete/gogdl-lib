@@ -76,6 +76,43 @@ impl HttpClient {
         }
         Err(ClientError::MaxRetriesReached)
     }
+    /// POSTs `form` to a token endpoint as `application/x-www-form-urlencoded`
+    /// and decodes the JSON reply. Not retried, no bearer token.
+    ///
+    /// Credentials belong in `form`, not in `url`. Every `reqwest::Error` is
+    /// stripped of its URL before it is returned, so no error from here can
+    /// print a secret, even one a caller put in the query string.
+    pub async fn post_token<T: DeserializeOwned>(
+        &self,
+        url: &str,
+        form: &[(&str, &str)],
+    ) -> Result<T, ClientError> {
+        let url = reqwest::Url::parse(url)?;
+        let response = self
+            .client
+            .post(url)
+            .form(form)
+            .send()
+            .await
+            .map_err(|e| ClientError::NetworkError(e.without_url()))?;
+
+        if !response.status().is_success() {
+            let response_status = response.status();
+            let response_text = response
+                .text()
+                .await
+                .map_err(|e| ClientError::NetworkError(e.without_url()))?;
+            return Err(ClientError::HttpError {
+                status: response_status,
+                body: response_text,
+            });
+        }
+        let response_text = response
+            .text()
+            .await
+            .map_err(|e| ClientError::NetworkError(e.without_url()))?;
+        Ok(serde_json::from_str(&response_text)?)
+    }
     pub async fn stream_chunk<'a>(
         &'a self,
         url: &str,
@@ -342,5 +379,29 @@ impl HttpClient {
     pub async fn get_refresh_token(&self) -> Result<String, ClientError> {
         let auth = self.auth_manager.get_auth().await?;
         Ok(auth.refresh_token)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::{ChunkServer, Reply};
+
+    // Pins `.without_url()` on its own: the secret is in the URL here.
+    #[tokio::test]
+    async fn post_token_transport_errors_carry_no_url() {
+        let server = ChunkServer::start().await;
+        server.script("/token?refresh_token=URL-SENTINEL", vec![Reply::Close]);
+        let url = format!("{}/token?refresh_token=URL-SENTINEL", server.base_url());
+        let client = HttpClient::new_with_client(reqwest::Client::new());
+        let err = client
+            .post_token::<serde_json::Value>(&url, &[("grant_type", "refresh_token")])
+            .await
+            .err()
+            .unwrap();
+        assert!(matches!(err, ClientError::NetworkError(_)));
+        for text in [err.to_string(), format!("{err:?}")] {
+            assert!(!text.contains("URL-SENTINEL"), "leaked: {text}");
+        }
     }
 }
