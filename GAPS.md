@@ -1,8 +1,8 @@
 # GAPS.md
 
 Open findings for `gogdl-lib`. Current tree: branch **`feat/v1.1.0-foundation`** (cut from `main` at
-`be366f4`), where all `v1.1.x` work happens (see `v1.1.0-FOUNDATION.md`), `Cargo.toml` at `1.0.11`.
-The newest tag, **`v1.0.11`** (`d5b43e6`), includes the owned-products rename (`d6dbdc5`) and the
+`be366f4`), where all `v1.1.x` work happens (see `v1.1.0-FOUNDATION.md`), `Cargo.toml` at `1.1.0`.
+The newest tag, **`v1.1.0`** (on this branch, not yet in `main`), follows **`v1.0.11`** (`d5b43e6`), which includes the owned-products rename (`d6dbdc5`) and the
 owned-games filter (`e032b7d`). `feature/saves` has been merged into `main`, so every `v1.0.x` tag
 is reachable from `main`. Consumer pins: the bridge (`gogdl_flutter`) is on `v1.0.11`, and
 **`lumen-cli`** is on **`v1.0.10`** (`Cargo.toml:12`), so its next bump picks up the
@@ -52,16 +52,17 @@ each in [Closed](#closed) at the bottom; the detail lives in the referenced comm
 
 **Two standing facts that apply to almost every item here:**
 
-- **Nothing on the download, auth or client paths is tested.** The 39 tests are pure-logic tests of
-  save path mapping, save-location expansion, object URLs, MD5 hex and Proton root detection. No
-  test touches `download_files`, `HttpClient`, `AuthManager` or any network response, and there is
-  no `tests/` directory. Treat every downloader/auth fix in this doc as unverified. That gap is still
-  why the "a failed chunk is reported as success" bug shipped four times on the old `restart` line,
+- **Coverage is partial.** As of `v1.1.0` there are 84 offline tests: `download_files` against a
+  local server, `backoff`, `is_valid`, deserialization of captured responses and the public types.
+  Still untested: saves transfers against a server, `refresh_auth`, `HttpClient::fetch` and
+  `download_proton_release` end to end (see [missing coverage](#medium--missing-coverage)). Treat
+  fixes in those paths as unverified. The gap was why the "a failed chunk is reported as success" bug shipped four times on the old `restart` line,
   and `6b4b7f3` restructured the batch driver with nothing to pin it.
 - **`v0.0.12-restart` still carries the retry off-by-one** fixed in `2469b13`. Nothing current
   resolves to it (`lumen-cli` is on `v1.0.10`), but the tag still exists.
 
-`cargo build --lib` shows **six warnings**: an unused `OwnedProducts` import left behind by
+*(Fixed in `v1.1.0`: `cargo build` and `cargo clippy --all-targets -- -D warnings` are now clean.
+The paragraph below is the baseline it started from.)* `cargo build --lib` showed **six warnings**: an unused `OwnedProducts` import left behind by
 `e032b7d` (`src/gogdl/facade.rs:11`), plus five `dead_code`: `ProtonManager.inner`
 (`src/proton/proton_manager.rs:20`) and four unused `RemoteConfig` fields (`version`, `macos`,
 `overlay`, `supported` at `src/saves/remote_config.rs:20,115,123,134`). See
@@ -420,38 +421,15 @@ each in [Closed](#closed) at the bottom; the detail lives in the referenced comm
 
 ## Medium — missing coverage
 
-- [ ] **Tests exist now, but only for pure path logic. Every network-facing path is still untested.**
-  Covered: save name ↔ local path mapping, save-location expansion and Wine user lookup
-  (including hostile `$USER` and `..`), `object_url` escaping, MD5 hex, and Proton root detection.
-  Highest-value additions, first to last:
-  - **One `#[tokio::test]` driving `download_files` against a scripted chunk source.** *Covered in
-    `v1.1.0` (`src/downloader/engine.rs` tests, fixture in `src/test_support.rs`); the five cases
-    below are all pinned, plus a sixth for `attempt < MAX_ATTEMPTS - 4`.*
-    `stream_chunk` takes a plain URL, so a local HTTP server fixture drives the whole loop with no
-    secure-link mocking beyond the manager.
-    - *Fails transport on attempts 0–4, then serves wrong-MD5 bytes on attempt 5* → asserts `Err`.
-      This is the only thing that would pin `attempt < MAX_ATTEMPTS - 4`. Write it first.
-    - *Fails every attempt* → asserts `Err`.
-    - *Wrong-MD5 on the first attempt, good bytes on the second* → pins the MD5 retry and, through
-      the net reported byte total, `ProgressGuard`'s arithmetic.
-    - *One unit fails terminally while others are in flight* → pins `6b4b7f3`'s short-circuit and
-      that cancelled units' progress nets to zero.
-    - *Secure-link fetch fails with `ProductNotOwned`* → pins whatever the fix for the retry item
-      above decides.
+- [ ] **Saves transfers, `refresh_auth` and Proton extraction are still untested.** `v1.1.0`
+  covered `download_files`, `backoff`, the `is_valid` boundaries, the `Auth` round-trip and
+  deserialization of captured responses (see [Closed](#closed)). Still open, first to last:
   - **Save download/upload against a local server.** A truncated write, an ETag mismatch, a missing
     `X-Object-Meta-LocalLastModified`, and a listing with two names that resolve to one path (see
-    the round-trip item). Also a captured real listing for a `__default` game and a `saves` game, so
-    the naming assumption is pinned to GOG rather than to itself.
-  - **`backoff`'s bounds.** The attempt → ceiling mapping is a plain table test. *Covered in `v1.1.0` (`src/downloader/util/backoff.rs`).*
-  - **Auth logic, all testable without network:** *(`is_valid` boundaries and the round-trip are covered in `v1.1.0`; `refresh_auth` persisting `valid_until` and concurrent refreshes collapsing still aren't — `REFRESH_URL` is hardcoded.)* `Auth::is_valid` and `SavesAuth::is_valid`
-    boundaries (both have the wrong-sign margin, see Low), the `to_string`/`from_string` round-trip,
-    `refresh_auth` persisting `valid_until`, and concurrent refreshes collapsing.
-  - **Deserialization against captured responses:** `SaveFile`, `RemoteConfig`, and
-    `ProtonGeRelease`/`ProtonGeReleasesPage`. Also `ProtonGeRelease::get_suitable_asset` against a
-    release with `aarch64` and `.sha512sum` siblings. That selection logic has been rewritten three
-    times (`34a2c52`, `51cb054`, `8682797`) with nothing pinning it. *Covered in `v1.1.0` (fixtures in `tests/fixtures/`).*
-  - **`get_owned_games`' filter:** a captured `gamesdb` response for a game, a DLC and a pack,
-    plus one failing lookup, pinning which IDs survive (see [owned games](#medium--owned-games)). *Covered in `v1.1.0` (`keep_games`, with the real `spam` type for a collection).*
+    the round-trip item). Also a captured listing for a `__default` game (the captured one is a
+    `saves` game).
+  - **`refresh_auth` persisting `valid_until`, and concurrent refreshes collapsing.** Blocked on
+    `REFRESH_URL` being hardcoded; needs injectable hosts (an API change, so a minor).
   - **`download_proton_release` end to end:** error attribution (`is_pipe_closed_by_reader`
     preferring the extraction error) against a truncated gzip stream, and the re-download overlay in
     the Proton item above.
@@ -563,16 +541,16 @@ each in [Closed](#closed) at the bottom; the detail lives in the referenced comm
 - [ ] **`DownloadEvent::Preparing`/`Prepared` are emitted back-to-back with no work between them.**
   `engine.rs:253-255`. Collapse them, or do real work in between.
 
-- [ ] **`v1.0.1`'s tag doesn't match its `Cargo.toml`, and `main` is ahead of the newest tag.**
+- [x] **`v1.0.1`'s tag doesn't match its `Cargo.toml`, and `main` is ahead of the newest tag.**
   `v1.0.1` (`8682797`) was tagged with `version = "1.0.0"` still in `Cargo.toml`, so a `Cargo.lock`
   resolved from it records the wrong version. `v1.0.2`–`v1.0.10` match. HEAD is two commits past
   `v1.0.10` with `Cargo.toml` still at `1.0.10`, so tagging it without a bump would repeat the
   `v1.0.1` mistake. Those two commits change what `get_owned_games` returns without changing its
   signature, so the next tag's notes should say so. The `-restart` tags (through `v0.1.12-restart`, plus the two `-debug` tags) also remain
   alongside the `v1.0.x` ones.
-  Partly addressed on the `v1.1.0` branch: `rust-toolchain.toml` is pinned (Phase 1). The
-  tag/`Cargo.toml` check comes with Phase 6's release script, which closes this item as far as
-  future tags go.
+  Fixed in `v1.1.0`: `rust-toolchain.toml` is pinned, and the `release` job's
+  `tool/release_notes.sh` fails a tag whose version disagrees with `Cargo.toml` or `Cargo.lock`.
+  The old `v1.0.1` tag itself stays as it is.
 
 **Clippy: 42 warnings, all fixed in `v1.1.0`** (`cargo clippy --all-targets -- -D warnings` is clean on `1.98.1`) (plus the six rustc warnings above, 48 total). 38 are auto-fixable.
 Locations re-derived against `6b4b7f3` (owned-games/products against `e032b7d`):
@@ -628,6 +606,14 @@ the inverted margin's `map_or` spelling, not its direction.
 ## Closed
 
 One line per fixed item, newest first within each group. Detail is in the referenced commits.
+
+### Foundation (`v1.1.0`)
+
+- [x] **`download_files`, `backoff`, `is_valid`, the `Auth` round-trip and the captured-response
+  deserializations (`SaveFile`, `RemoteConfig`, Proton releases, `gamesdb` game/DLC/collection) had
+  no tests** — `src/downloader/engine.rs`, `src/test_support.rs`, `tests/`. The five `download_files`
+  cases are pinned, plus a sixth for `attempt < MAX_ATTEMPTS - 4`. The `is_valid` tests are written
+  against today's wrong-sign margin and flip in `v1.1.2`.
 
 ### Cloud saves, Proton & coverage
 
