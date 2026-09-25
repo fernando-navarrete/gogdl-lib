@@ -50,11 +50,8 @@ impl HttpClient {
             match self.inner_fetch(url, decode, require_auth, headers).await {
                 Ok(result) => return Ok(result),
                 Err(ClientError::HttpError { status, body }) => {
-                    let _ = body;
-                    if status == reqwest::StatusCode::UNAUTHORIZED {
-                        if require_auth {
-                            self.auth_manager.refresh_auth(self).await?;
-                        }
+                    if status == reqwest::StatusCode::UNAUTHORIZED && require_auth {
+                        self.auth_manager.refresh_auth(self).await?;
                     } else {
                         return Err(ClientError::HttpError { status, body });
                     }
@@ -386,6 +383,65 @@ impl HttpClient {
 mod tests {
     use super::*;
     use crate::test_support::{ChunkServer, Reply};
+
+    fn json_client() -> HttpClient {
+        HttpClient::new_with_client(reqwest::Client::new())
+    }
+
+    #[tokio::test]
+    async fn unauthenticated_401_returns_at_once() {
+        let server = ChunkServer::start().await;
+        server.script(
+            "/rel",
+            vec![Reply::StatusBody(401, b"Bad credentials".to_vec())],
+        );
+        let url = format!("{}/rel", server.base_url());
+        let err = json_client()
+            .fetch::<serde_json::Value>(&url, false, false, None)
+            .await
+            .err()
+            .unwrap();
+        match err {
+            ClientError::HttpError { status, body } => {
+                assert_eq!(status, reqwest::StatusCode::UNAUTHORIZED);
+                assert_eq!(body, "Bad credentials");
+            }
+            other => panic!("expected HttpError, got {other:?}"),
+        }
+        assert_eq!(server.requests("/rel"), 1);
+    }
+
+    #[tokio::test]
+    async fn http_5xx_is_not_retried() {
+        let server = ChunkServer::start().await;
+        server.script("/rel", vec![Reply::Status(503)]);
+        let url = format!("{}/rel", server.base_url());
+        let err = json_client()
+            .fetch::<serde_json::Value>(&url, false, false, None)
+            .await
+            .err()
+            .unwrap();
+        assert!(matches!(
+            err,
+            ClientError::HttpError { status, .. } if status == reqwest::StatusCode::SERVICE_UNAVAILABLE
+        ));
+        assert_eq!(server.requests("/rel"), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn transport_errors_are_retried() {
+        let server = ChunkServer::start().await;
+        server.script(
+            "/rel",
+            vec![Reply::Close, Reply::Close, Reply::Body(b"{}".to_vec())],
+        );
+        let url = format!("{}/rel", server.base_url());
+        json_client()
+            .fetch::<serde_json::Value>(&url, false, false, None)
+            .await
+            .unwrap();
+        assert_eq!(server.requests("/rel"), 3);
+    }
 
     // Pins `.without_url()` on its own: the secret is in the URL here.
     #[tokio::test]

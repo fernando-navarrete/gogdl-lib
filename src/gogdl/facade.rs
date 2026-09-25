@@ -85,8 +85,8 @@ impl GogDl {
     /// [`crate::ProtonError::ClientError`], notably a
     /// [`crate::ClientError::HttpError`] with `status: 403` for a missing
     /// `User-Agent` or an exhausted rate limit — returned immediately, since
-    /// the underlying fetch only retries a 401 or a transport error, and a
-    /// 403 is neither.
+    /// the underlying fetch only retries transport errors. Any other
+    /// non-success status, a 401 included, is returned after one request.
     pub async fn get_proton_releases(
         &self,
         page: u32,

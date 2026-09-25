@@ -240,7 +240,7 @@ The paragraph below is the baseline it started from.)* `cargo build --lib` showe
   `HashingWriter` idea the chunk downloader uses) and comparing against the `.sha512sum` asset
   before the rename would close both.
 
-- [ ] **`HttpClient::fetch` spins on a 401 when `require_auth` is `false`: six immediate retries, no
+- [x] **`HttpClient::fetch` spins on a 401 when `require_auth` is `false`: six immediate retries, no
   backoff, then the status is discarded.** The `HttpError` arm (`src/client/http.rs:52-61`) only
   refreshes when `require_auth` is true. Otherwise it falls out of the `match` with no `continue`,
   no `backoff` and no `return`. The loop re-sends the identical request `MAX_ATTEMPTS` times back to
@@ -250,6 +250,10 @@ The paragraph below is the baseline it started from.)* `cargo build --lib` showe
   `GogDl::get_proton_releases`' rustdoc describes the fetch as one that "only retries a 401 or a
   transport error", which reads as deliberate handling. On the unauthenticated path, a 401 should
   return `HttpError` immediately like every other non-success status.
+
+  Fixed in `v1.1.3`: the arm returns `HttpError { status, body }` at once unless a refresh applies
+  (`require_auth`), so an unauthenticated 401 is one request. The rustdoc now says only transport
+  errors are retried. Pinned by tests in `client/http.rs`.
 
 - [ ] **The crate-level and Proton docs are stale: a `User-Agent` requirement the code no longer
   has, and an overview that predates saves.**
@@ -763,7 +767,7 @@ One line per fixed item, newest first within each group. Detail is in the refere
 - [x] **Local expiry was a hard failure, not a refresh-and-retry case** — `5b7ca2f`. Not applied to the saves
   methods (open above).
 - [x] **Any non-401 HTTP error was silently retried three times with its detail discarded** —
-  `5b7ca2f`. The 401-without-auth path still loops (open above).
+  `5b7ca2f`. The 401-without-auth loop was fixed in `v1.1.3`.
 - [x] **`refresh_auth` persisted tokens without `valid_until`** — `998829d`, regressed by `9a1f780`,
   fixed again in `5b7ca2f`.
 - [x] **Restoring persisted tokens locked the app out entirely** — `6c76f03`.

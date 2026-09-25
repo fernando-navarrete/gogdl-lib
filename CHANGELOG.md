@@ -4,6 +4,17 @@ One section per tag, newest first. Consumers pin this crate by git tag. A change
 behind an unchanged signature is called out as **Behavior change**, and a signature change as
 **Breaking**. The `v0.x` and `-restart` tags predate this file and aren't covered.
 
+## 1.1.3
+
+No API change. Fix: an unauthenticated 401 no longer loops.
+
+* **Behavior change:** `HttpClient::fetch` with `require_auth == false` (the two Proton-GE GitHub
+  fetches) now returns `ClientError::HttpError` with the status and body after one request. Before,
+  it re-sent the request six times back to back and returned `ClientError::MaxRetriesReached`,
+  losing the 401. Transport errors are still retried with backoff, and other statuses still return
+  at once.
+* `GogDl::get_proton_releases`' rustdoc no longer says a 401 is retried.
+
 ## 1.1.2
 
 No API change. Fix: the expiry margin had the wrong sign.

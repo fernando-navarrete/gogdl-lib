@@ -25,6 +25,8 @@ pub enum Reply {
     Close,
     /// Answer with this status and an empty body.
     Status(u16),
+    /// Answer with this status and this body.
+    StatusBody(u16, Vec<u8>),
     /// Answer `200` with this body.
     Body(Vec<u8>),
     /// Send the headers and the first `sent` bytes of `body`, signal
@@ -144,9 +146,15 @@ async fn send(stream: &mut TcpStream, reply: Reply) {
         match reply {
             Reply::Close => return,
             Reply::Status(code) => {
-                let head =
-                    format!("HTTP/1.1 {code} X\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                reply = Reply::StatusBody(code, Vec::new());
+            }
+            Reply::StatusBody(code, body) => {
+                let head = format!(
+                    "HTTP/1.1 {code} X\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
                 stream.write_all(head.as_bytes()).await.ok();
+                stream.write_all(&body).await.ok();
                 return;
             }
             Reply::Body(body) => {
