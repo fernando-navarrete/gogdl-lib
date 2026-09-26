@@ -52,10 +52,10 @@ Things consumers need that don't need a change here: resume is already `repair_g
 `v1.3.0` "B"), and dropping a game job's future already stops it (no `tokio::spawn`), which
 `v1.2.0` only has to document. Update detection uses `get_game_builds` as it is today.
 
-**Conflict to settle in `v1.2.0`:** Lumen's plan lists D4/D5 (free space) as blocking, while the
-bridge's `v1.3.0` plan ships a `statvfs` fallback and doesn't wait. They are the first items of
-`v1.2.0` either way. If Lumen reaches its free-space phase first, cut them as a `v1.1.x` patch
-(additive, so allowed).
+**Settled:** Lumen's plan lists D4/D5 (free space) as blocking, while the bridge's `v1.3.0` plan ships
+a `statvfs` fallback and doesn't wait. They were cut early as the additive patch **`v1.1.6`**
+(`get_free_space`, the longest-mount fix and the "retires" typo), so Lumen can pin it without
+waiting for `v1.2.0`.
 
 ---
 
@@ -124,9 +124,9 @@ Lumen's D4–D6. The bridge ships fallbacks for all of them, and picks each one 
 patch, so this doesn't block it. It should still land before Lumen finishes its `v1.3.0`.
 
 - `GogDl::get_free_space(path) -> Result<u64, GogDlError>`, the same number the download's own
-  pre-flight check uses (bridge §7.4, Lumen D4).
+  pre-flight check uses (bridge §7.4, Lumen D4). *Shipped early in `v1.1.6`.*
 - `PathResolver::get_free_space` picks the **longest** matching mount point, not the first. Lumen
-  confirmed that `/` wins over `/media/gamedisk` today (Lumen D5). Needs a test with a fake disk list.
+  confirmed that `/` wins over `/media/gamedisk` today (Lumen D5). *Shipped early in `v1.1.6`.*
 - `NotEnoughFreeSpace` carries required and available bytes, and `CouldNotResolveFreeSpace` keeps
   the path it failed on (GAPS "Low — style / clippy", bridge §7.3).
 - Export `FileSystemError`, `DepotFile` and `Chunk`, so consumers can match on which filesystem
@@ -135,7 +135,7 @@ patch, so this doesn't block it. It should still land before Lumen finishes its 
 - Mark the event enums, `FileSystemError` and the download, Proton and saves error enums
   `#[non_exhaustive]`, so later patches (`v1.2.3`'s `DownloadEvent::Started`) can add variants
   without breaking a `match`. **Breaking** once, here.
-- Fix the "Max retires reached" typo in `ClientError`'s `Display` (Lumen D7).
+- Fix the "Max retires reached" typo in `ClientError`'s `Display` (Lumen D7). *Shipped early in `v1.1.6`.*
 - Document the cancel-safe contract in the rustdoc of `download_game`, `repair_game`,
   `verify_files`, `download_proton_release` and the saves transfers: dropping the future stops the
   work and leaves state `repair_game` can resume. Add a test that drops a `download_files` future
@@ -147,7 +147,7 @@ patch, so this doesn't block it. It should still land before Lumen finishes its 
   then removes and renames. This also fixes the overlay-on-redownload bug (GAPS "Medium — Proton",
   Lumen D6).
 - A cheap per-product size query from build metadata (per-depot `size`/`compressed_size`), without
-  fetching every manifest (bridge §7.10).
+  fetching every manifest (bridge §7.10): `GogDl::get_product_sizes` returning `ProductSize`s.
 - Deterministic secure-link failures (`IncorrectGameId`, `ProductNotOwned`) return at once instead
   of six backoffs. Pull `MAX_ATTEMPTS`, `backoff` and a `retry_or_return` helper into one `retry`
   module, and delete the dead `AuthError` arm (GAPS "Medium — duplication & consistency").

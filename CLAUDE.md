@@ -49,13 +49,15 @@ drains concurrently.
   which caches only the owned-products list and does one uncached `gamesdb` lookup per product.
 - **Downloads:** `download_game` re-transfers everything; `repair_game` is the resume path;
   `get_product_bundles` is not cached. Events: `DownloadStageEvent`, `DownloadEvent`,
-  `VerificationEvent`.
+  `VerificationEvent`. Dropping the future stops the work (no job uses `tokio::spawn`), and
+  `repair_game` completes what a dropped `download_game` left.
 - **Proton:** `download_proton_release` extracts the tarball as it streams, emitting
   `ProtonDownloadEvent`, into a hidden staging directory that then replaces `path/<tag>`, so a
   failure or drop leaves `path` as it was. Not resumable.
 - **Cloud saves:** `download_save_files`/`upload_save_files` take a Wine prefix and the install path
   and expand the game's save locations into it; events are `SavesDownloadEvent` and
-  `SavesUploadEvent`. Nothing is retried.
+  `SavesUploadEvent`. A download replaces an existing save only by renaming a finished
+  `.<name>.gogdl-part` file over it, so a failure or drop leaves the old save. Nothing is retried.
 
 When a method is added, changed or removed on `GogDl`, update this table and `CHANGELOG.md`.
 

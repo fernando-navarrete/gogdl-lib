@@ -1,7 +1,7 @@
 # GAPS.md
 
 Open findings for `gogdl-lib`. Current tree: **`feat/v1.2.0-download-management`**, branched from
-`main` at `a04f0e9`, `Cargo.toml` at `1.1.6`. The newest tag is **`v1.1.6`** (cut on this branch); the `v1.1.x` line
+`main` at `a04f0e9`, `Cargo.toml` at `1.2.0`. The newest tag is **`v1.2.0`** (`v1.1.6` was cut on this branch too); the `v1.1.x` line
 (tests, CI/CD and five patches) is merged into `main` and its decisions are in
 `devlog/v1.1.0-foundation.md`. `v1.1.6` and `v1.2.0`–`v1.2.3` are cut on this branch
 (`v1.2.0-DOWNLOAD-MANAGEMENT.md`), which fast-forwards into `main` after `v1.2.3`. `v1.0.11` (`d5b43e6`) includes the owned-products

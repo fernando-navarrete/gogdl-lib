@@ -4,6 +4,44 @@ One section per tag, newest first. Consumers pin this crate by git tag. A change
 behind an unchanged signature is called out as **Behavior change**, and a signature change as
 **Breaking**. The `v0.x` and `-restart` tags predate this file and aren't covered.
 
+## 1.2.0
+
+Download management: what the bridge's `v1.3.0` and Lumen's `v1.3.0` ask of this crate. **Breaking**
+(see below), so consumers adopt it together with the change that fixes their `match`es.
+
+* **Breaking:** the free-space errors carry detail. `DownloadError::NotEnoughFreeSpace` and
+  `ProtonError::NotEnoughFreeSpace` are `{ required: u64, available: u64 }`, and both
+  `CouldNotResolveFreeSpace` variants are `{ path: PathBuf }` (they were unit variants).
+* **Breaking:** the eight event enums (`DownloadEvent`, `DownloadStageEvent`, `VerificationEvent`,
+  `FileAllocationEvent`, `FileSizeVerificationEvent`, `ProtonDownloadEvent`, `SavesDownloadEvent`,
+  `SavesUploadEvent`), `FileSystemError`, `DownloadError`, `ProtonError` and `SavesError` are
+  `#[non_exhaustive]`. A `match` on them outside the crate needs a `_ =>` arm. This is done once, so
+  later patches can add variants (`v1.2.3`'s `DownloadEvent::Started`) without breaking anyone.
+* **Behavior change:** a download of an unowned product fails at once. `IncorrectGameId` and
+  `ProductNotOwned` from the secure-link lookup are returned without invalidating or backing off,
+  where each chunk used to retry six times (~8s).
+* **Behavior change:** `download_save_files` no longer truncates a good local save first. It writes a
+  sibling `.<name>.gogdl-part` file, sets the modification time, syncs and renames it over the
+  destination, so that file can be seen briefly in the save directory. The write completes even if
+  the future is dropped: the old file or the complete new one, never a partial one. A leftover
+  `.gogdl-part` file is never uploaded.
+* **Behavior change:** `download_proton_release` extracts into a hidden
+  `.gogdl-staging-<tag>-<random>` directory under `path`, then replaces `path/<tag>` wholesale. A
+  re-download no longer overlays files the new release dropped, and a failure or a dropped future
+  leaves `path` as it was. Staging directories left by a crashed run are removed at the start of the
+  next download into the same `path`. A tag that sanitizes to nothing now fails before the transfer.
+  The free-space check stays on the compressed size (the asset has no extracted size).
+* `GogDl::get_product_sizes(game_id, build_name)` returns a `ProductSize { product_id, size,
+  compressed_size }` per product of a build, summed from the build metadata's depots (after the
+  download's language filter), with no manifest fetches. It equals what `get_product_bundles` sums.
+* `FileSystemError`, `DepotFile` and `Chunk` are exported. `DownloadUnit` stays internal.
+* The cancel-safe contract is documented: `download_game`, `repair_game`, `verify_files`,
+  `download_proton_release`, `download_save_files` and `upload_save_files` each have a
+  `# Cancelling` section. Dropping the future stops the work, and `repair_game` completes an install
+  whose download was dropped mid-batch (tested).
+* Internal: `MAX_ATTEMPTS`, `MAX_HASH_ATTEMPTS`, `backoff` and the retry helpers live in one module,
+  and the unreachable `ClientError::AuthError` arm in `download_files` is gone.
+
 ## 1.1.6
 
 Additive, plus a fix that changes what the free-space pre-flight check reads.
