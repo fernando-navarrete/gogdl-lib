@@ -229,7 +229,7 @@ The paragraph below is the baseline it started from.)* `cargo build --lib` showe
 
 ## Medium — Proton
 
-- [ ] **Re-downloading a Proton release whose tarball root already matches its tag extracts over the
+- [x] **Re-downloading a Proton release whose tarball root already matches its tag extracts over the
   old tree instead of replacing it.** `download_proton_release` removes an existing `path/<tag>`
   only when it has to rename a differently-named root onto it (`if source != target`,
   `src/proton/proton_downloader.rs:208-213`). When the archive's root already *is*
@@ -239,6 +239,8 @@ The paragraph below is the baseline it started from.)* `cargo build --lib` showe
   `GogDl::download_proton_release`). A leftover `<root>` from an earlier failed attempt is overlaid
   the same way when names differ. Extract into a fresh staging directory under `path`, then remove
   and rename.
+  *(Fixed in `v1.2.0`: extraction goes into `.gogdl-staging-<tag>-<random>` and the root replaces
+  `path/<tag>` by rename; a failure or drop leaves `path` as it was.)*
 
 - [ ] **Proton tarballs are extracted without any integrity check.** Every Proton-GE release ships a
   detached `.sha512sum` asset per tarball, and GitHub's asset object carries a `sha256:` `digest`,
@@ -484,9 +486,10 @@ The paragraph below is the baseline it started from.)* `cargo build --lib` showe
     `saves` game).
   - **`refresh_auth` persisting `valid_until`, and concurrent refreshes collapsing.** Blocked on
     `REFRESH_URL` being hardcoded; needs injectable hosts (an API change, so a minor).
-  - **`download_proton_release` end to end:** error attribution (`is_pipe_closed_by_reader`
+  - ~~**`download_proton_release` end to end:** error attribution (`is_pipe_closed_by_reader`
     preferring the extraction error) against a truncated gzip stream, and the re-download overlay in
-    the Proton item above.
+    the Proton item above.~~ *(Fixed in `v1.2.0`: a clean install, a re-download, a truncated
+    stream, a non-gzip body larger than the pipe, a dropped future and the stale sweep are tested.)*
 
 - [ ] **The event enums and Proton types can't be compared or printed from outside the crate.**
   `DownloadEvent`, `DownloadStageEvent`, `FileAllocationEvent`, `FileSizeVerificationEvent`,

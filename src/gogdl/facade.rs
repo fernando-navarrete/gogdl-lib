@@ -129,45 +129,48 @@ impl GogDl {
     /// The release's tarball is never written to disk as a `.tar.gz` — the
     /// network response is decompressed and extracted directly as it
     /// arrives, bounded by a fixed-size in-memory buffer regardless of the
-    /// tarball's size. `path` is the *parent* directory the release's own
-    /// top-level directory is extracted into and is created (and
-    /// canonicalized) if missing.
+    /// tarball's size. `path` is the *parent* directory the release is
+    /// installed into and is created (and canonicalized) if missing.
     ///
-    /// Once extraction finishes, the extracted directory is renamed to
-    /// `release.tag_name` (sanitized for the filesystem) regardless of what
-    /// it was named inside the tarball — some Proton-GE releases ship
-    /// theirs with an architecture suffix, e.g. `GE-Proton10-4-x86_64` for
-    /// tag `GE-Proton10-4`, which breaks frontends expecting the directory
-    /// to match the release tag. The returned [`PathBuf`] is
-    /// `path/<tag_name>`; if a directory with that name already exists
-    /// there, it's replaced.
+    /// The archive is extracted into a hidden staging directory,
+    /// `path/.gogdl-staging-<tag>-<random>`, and its top-level directory
+    /// then replaces `path/<tag_name>` (sanitized for the filesystem)
+    /// regardless of what it was named inside the tarball — some Proton-GE
+    /// releases ship theirs with an architecture suffix, e.g.
+    /// `GE-Proton10-4-x86_64` for tag `GE-Proton10-4`, which breaks
+    /// frontends expecting the directory to match the release tag. The
+    /// returned [`PathBuf`] is `path/<tag_name>`; an existing directory with
+    /// that name is replaced wholesale, so nothing of the old tree survives.
     ///
     /// The transfer is gated on the destination disk having at least the
     /// tarball's compressed size free before a single byte is read — a
-    /// lower bound only, since the extracted tree is considerably larger
-    /// than the tarball.
-    ///
+    /// lower bound only, since the asset doesn't report its extracted size
+    /// and the extracted tree is considerably larger. A re-download keeps the
+    /// old tree on disk until the swap.
     /// Reports progress on `tx` as [`ProtonDownloadEvent`]: one `Downloading`
     /// with the compressed total size, then a `Progress` delta per network
     /// read, interleaved with an `Extracted` event per file/directory/symlink
     /// written to disk. `Extracted` paths reflect the archive's own layout,
-    /// i.e. *before* the tag-directory rename above. Resolves only once the
+    /// i.e. *before* the swap above. Resolves only once the
     /// whole operation finishes or fails — drain `tx`'s paired receiver
     /// concurrently on another task.
     ///
     /// **Not resumable** — there is no retry loop here, unlike
-    /// [`download_game`](Self::download_game). A failure partway through
-    /// leaves a partial tree under `path` that you're responsible for
-    /// removing before trying again.
+    /// [`download_game`](Self::download_game). On failure `path` is left as
+    /// it was: the staging directory is removed and an existing
+    /// `path/<tag_name>` is untouched. Staging directories of the same tag
+    /// left by a crashed process are removed at the start of the next call,
+    /// so don't run two downloads of the same tag into the same `path` at
+    /// once.
     ///
     /// # Cancelling
     /// Dropping the future stops the transfer and closes the pipe into the
     /// extractor. Extraction runs on a blocking thread that the drop cannot
     /// interrupt: it hits the end of the stream, fails on the entry it was
-    /// reading and exits, shortly after the drop. What it has already
-    /// extracted stays, so a dropped call leaves a partial tree under `path`,
-    /// exactly like a failed one, and the rename to `release.tag_name` never
-    /// happens.
+    /// reading, removes the staging directory itself and exits, shortly
+    /// after the drop. `path` is left as it was. Once the swap onto
+    /// `path/<tag_name>` has started it completes, so the result is the old
+    /// install or the new one, never a mix.
     ///
     /// # Errors
     /// [`GogDlError::ProtonError`], notably

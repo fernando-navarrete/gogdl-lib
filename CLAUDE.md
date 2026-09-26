@@ -51,7 +51,8 @@ drains concurrently.
   `get_product_bundles` is not cached. Events: `DownloadStageEvent`, `DownloadEvent`,
   `VerificationEvent`.
 - **Proton:** `download_proton_release` extracts the tarball as it streams, emitting
-  `ProtonDownloadEvent`. Not resumable.
+  `ProtonDownloadEvent`, into a hidden staging directory that then replaces `path/<tag>`, so a
+  failure or drop leaves `path` as it was. Not resumable.
 - **Cloud saves:** `download_save_files`/`upload_save_files` take a Wine prefix and the install path
   and expand the game's save locations into it; events are `SavesDownloadEvent` and
   `SavesUploadEvent`. Nothing is retried.

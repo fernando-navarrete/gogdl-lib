@@ -61,7 +61,8 @@ pub enum ProtonError {
     /// destination disk. Note this is a *lower bound* — the extracted tree
     /// is considerably larger than the tarball, so a download that clears
     /// this check can still run the disk out of space mid-extraction and
-    /// fail with [`Io`](ProtonError::Io).
+    /// fail with [`Io`](ProtonError::Io), which leaves the destination as it
+    /// was. A re-download keeps the old install until the new one is ready.
     #[error("Not enough free space: {required} bytes required, {available} available")]
     NotEnoughFreeSpace {
         /// The compressed tarball's size in bytes.
