@@ -4,6 +4,20 @@ One section per tag, newest first. Consumers pin this crate by git tag. A change
 behind an unchanged signature is called out as **Behavior change**, and a signature change as
 **Breaking**. The `v0.x` and `-restart` tags predate this file and aren't covered.
 
+## 1.1.6
+
+Additive, plus a fix that changes what the free-space pre-flight check reads.
+
+* `GogDl::get_free_space(path)` returns the available bytes on the disk that would hold an install
+  at `path`: the same figure the download, repair and Proton pre-flight checks compare against.
+  `path` needn't exist and is never created.
+* **Behavior change:** the free-space check picks the disk with the **longest** mount point that
+  prefixes the path, not the first. Before, `/` (listed first) won for an install on another mount,
+  so the check read the root filesystem's free space. It now reads the right disk, and can fail
+  where it used to pass.
+* **Behavior change** (`Display` text only): `ClientError::MaxRetriesReached` now reads "Max retries
+  reached" (was "Max retires reached"). It only matters to a consumer that compares strings.
+
 ## 1.1.5
 
 No API or behavior change. Docs only: rustdoc that no longer matched the code, and a `CLAUDE.md`.

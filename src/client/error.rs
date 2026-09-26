@@ -42,7 +42,7 @@ pub enum ClientError {
 
     /// Every retry attempt was exhausted without success or a definitive
     /// failure.
-    #[error("Max retires reached")]
+    #[error("Max retries reached")]
     MaxRetriesReached,
 
     /// The auth layer failed — see [`AuthError`].
