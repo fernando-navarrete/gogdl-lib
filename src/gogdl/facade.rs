@@ -5,7 +5,9 @@ use tokio::sync::mpsc;
 
 use crate::client::{HttpClient, TokenObserver};
 use crate::depot::{DepotManager, ProductDetails};
+use crate::downloader::DownloadError;
 use crate::downloader::{DownloadManager, DownloadableProduct, ProductBundle, VerificationEvent};
+use crate::fs::free_space_at;
 use crate::games::{
     GameBuilds, GameDetails, GameLinks, GameScreenshots, GameSummary, GamesManager, OwnedGames,
 };
@@ -417,6 +419,28 @@ impl GogDl {
         self.downloader.download_game(bundles, path, tx).await?;
         Ok(())
     }
+    /// Available bytes on the disk that would hold an install at `path`: the
+    /// figure [`download_game`](Self::download_game),
+    /// [`repair_game`](Self::repair_game) and
+    /// [`download_proton_release`](Self::download_proton_release) compare
+    /// their required size against before writing anything, so a caller's own
+    /// "does it fit" check agrees with theirs.
+    ///
+    /// The disk is the one with the longest mount point that prefixes `path`.
+    /// `path` needn't exist, and is never created: its nearest existing
+    /// ancestor stands in for it, since an install directory usually doesn't
+    /// exist yet. Local only: no network, no auth, not cached.
+    ///
+    /// # Errors
+    /// [`GogDlError::DownloadError`] wrapping
+    /// [`crate::DownloadError::FileSystemError`], when no ancestor of `path`
+    /// can be resolved (e.g. permission denied) or no disk matches it.
+    pub async fn get_free_space(&self, path: &Path) -> Result<u64, GogDlError> {
+        free_space_at(path)
+            .await
+            .map_err(|e| GogDlError::DownloadError(DownloadError::FileSystemError(e)))
+    }
+
     /// Verifies `bundles` against what's on disk under `path`, then
     /// downloads only the chunks that are missing or fail their checksum.
     ///

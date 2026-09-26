@@ -42,14 +42,7 @@ impl PathResolver {
     }
 
     pub fn get_free_space(&self) -> Result<u64, FileSystemError> {
-        let disks = Disks::new_with_refreshed_list();
-        let entries = disks
-            .list()
-            .iter()
-            .map(|disk| (disk.mount_point(), disk.available_space()));
-
-        pick_disk(&self.canonical_base, entries)
-            .ok_or_else(|| FileSystemError::NoDiskMatchingPath(self.canonical_base.clone()))
+        free_space_of(&self.canonical_base)
     }
 
     pub async fn allocate_file(
@@ -229,6 +222,45 @@ impl PathResolver {
     }
 }
 
+/// Available bytes on the disk holding `path`, which needn't exist and is never created: the
+/// nearest existing ancestor stands in for it. The same lookup as
+/// [`PathResolver::get_free_space`], so a caller's pre-check and the download's own agree.
+pub async fn free_space_at(path: &Path) -> Result<u64, FileSystemError> {
+    free_space_of(&nearest_existing_ancestor(path).await?)
+}
+
+fn free_space_of(canonical: &Path) -> Result<u64, FileSystemError> {
+    let disks = Disks::new_with_refreshed_list();
+    let entries = disks
+        .list()
+        .iter()
+        .map(|disk| (disk.mount_point(), disk.available_space()));
+
+    pick_disk(canonical, entries)
+        .ok_or_else(|| FileSystemError::NoDiskMatchingPath(canonical.to_path_buf()))
+}
+
+/// The canonical form of the longest prefix of `path` that exists. A relative path that runs out
+/// of components resolves against the working directory, as `PathResolver::new` does.
+async fn nearest_existing_ancestor(path: &Path) -> Result<PathBuf, FileSystemError> {
+    for ancestor in path.ancestors() {
+        let candidate = if ancestor.as_os_str().is_empty() {
+            Path::new(".")
+        } else {
+            ancestor
+        };
+        match fs::canonicalize(candidate).await {
+            Ok(canonical) => return Ok(canonical),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(FileSystemError::PathResolutionError(e)),
+        }
+    }
+    Err(FileSystemError::PathResolutionError(io::Error::new(
+        io::ErrorKind::NotFound,
+        format!("no existing ancestor of {path:?}"),
+    )))
+}
+
 /// Available bytes of the disk holding `base`: the one with the longest mount point that is a
 /// prefix of it. `/` prefixes every path, so taking the first match reads the wrong disk.
 fn pick_disk<'a>(base: &Path, disks: impl IntoIterator<Item = (&'a Path, u64)>) -> Option<u64> {
@@ -294,6 +326,7 @@ pub fn sanitize_filename(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::TempDir;
 
     /// In `/proc/mounts` order, as `sysinfo` lists them: `/` comes first.
     fn mounts() -> Vec<(&'static Path, u64)> {
@@ -334,5 +367,28 @@ mod tests {
             (Path::new("/mnt"), 6),
         ];
         assert_eq!(pick_disk(Path::new("/mnt/x"), disks), Some(6));
+    }
+
+    #[tokio::test]
+    async fn nearest_existing_ancestor_skips_missing_components() {
+        let tmp = TempDir::new();
+        let canonical_tmp = std::fs::canonicalize(tmp.path()).unwrap();
+        let missing = tmp.path().join("a/b/c");
+        assert_eq!(
+            nearest_existing_ancestor(&missing).await.unwrap(),
+            canonical_tmp
+        );
+        assert_eq!(
+            nearest_existing_ancestor(tmp.path()).await.unwrap(),
+            canonical_tmp
+        );
+    }
+
+    #[tokio::test]
+    async fn free_space_at_creates_nothing() {
+        let tmp = TempDir::new();
+        let target = tmp.path().join("a/b");
+        free_space_at(&target).await.unwrap();
+        assert!(!tmp.path().join("a").exists());
     }
 }

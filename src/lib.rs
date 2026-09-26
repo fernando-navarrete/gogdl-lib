@@ -50,6 +50,9 @@
 //! two lookups send their own `User-Agent`, so the client needs no
 //! configuration, but they share GitHub's unauthenticated rate limit. See
 //! [`GogDl::get_proton_releases`] for details.
+//!
+//! [`GogDl::get_free_space`] doesn't talk to GOG either: it reads the local disk, with the same
+//! lookup the download pre-flight checks use.
 
 #![warn(missing_docs)]
 
