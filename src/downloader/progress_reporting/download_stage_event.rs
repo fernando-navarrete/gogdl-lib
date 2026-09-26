@@ -48,6 +48,13 @@ pub enum DownloadStageEvent {
     /// `repair_game` only: an on-disk chunk was checksummed against the
     /// manifest to decide whether it needs re-downloading. See
     /// [`VerificationEvent`].
+    ///
+    /// There is one event per chunk. A chunk lying past the end of a file's
+    /// previous on-disk contents (all of a file that didn't exist yet) was
+    /// just allocated as zeros, so it is reported as
+    /// [`ChecksumMismatch`](VerificationEvent::ChecksumMismatch) without
+    /// being read. A chunk whose real content is all zeros is therefore
+    /// downloaded rather than reported `Verified`.
     VerificationStage(VerificationEvent),
     /// At least one file failed allocation; the operation is aborting with
     /// [`DownloadError::FileAllocationError`](crate::DownloadError::FileAllocationError)

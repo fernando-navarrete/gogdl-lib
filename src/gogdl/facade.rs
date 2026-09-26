@@ -518,7 +518,10 @@ impl GogDl {
     /// Reports the same stages as [`download_game`](Self::download_game),
     /// plus an extra [`DownloadStageEvent::VerificationStage`] pass (one
     /// [`VerificationEvent`] per chunk) between file allocation and the
-    /// download stage. Same retry policy as `download_game`.
+    /// download stage. Chunks that file allocation just created as zeros are
+    /// reported without being read; see
+    /// [`DownloadStageEvent::VerificationStage`]. Same retry policy as
+    /// `download_game`.
     ///
     /// Resolves only once the whole operation finishes or fails — drain
     /// `tx`'s paired receiver concurrently on another task.

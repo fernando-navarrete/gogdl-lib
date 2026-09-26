@@ -1,7 +1,7 @@
 # GAPS.md
 
 Open findings for `gogdl-lib`. Current tree: **`feat/v1.2.0-download-management`**, branched from
-`main` at `a04f0e9`, `Cargo.toml` at `1.2.0`. The newest tag is **`v1.2.0`** (`v1.1.6` was cut on this branch too); the `v1.1.x` line
+`main` at `a04f0e9`, `Cargo.toml` at `1.2.1`. The newest tag is **`v1.2.0`** (`v1.1.6` was cut on this branch too); the `v1.1.x` line
 (tests, CI/CD and five patches) is merged into `main` and its decisions are in
 `devlog/v1.1.0-foundation.md`. `v1.1.6` and `v1.2.0`–`v1.2.3` are cut on this branch
 (`v1.2.0-DOWNLOAD-MANAGEMENT.md`), which fast-forwards into `main` after `v1.2.3`. `v1.0.11` (`d5b43e6`) includes the owned-products
@@ -370,11 +370,16 @@ The paragraph below is the baseline it started from.)* `cargo build --lib` showe
   list covers every chunk of every file, including files that just verified as complete. Behavior
   is unchanged. The rustdoc on `GogDl::download_game`/`repair_game` says which one resumes.
 
-- [ ] **`repair` checksums the chunks of files it has just allocated.** Stage 2 allocates every file
+- [x] **`repair` checksums the chunks of files it has just allocated.** Stage 2 allocates every file
   that failed size verification (`set_len`, `src/fs/path_resolver.rs:81`). Stage 3 then MD5s
   **every** unit of **every** file (`src/downloader/engine.rs:107-119`), including all-zero
   ranges that cannot match. Filter `missing_files`' units out of verification and add them straight
   to the download list.
+
+  Fixed in `v1.2.1`: stage 1 records each failed file's old length (0 if absent), and stage 3 sends
+  the units at or past it straight to the download list with a `ChecksumMismatch` event and no MD5,
+  so the event count is unchanged. Chunks below the old length of a resized file are still hashed,
+  since `set_len` keeps those bytes. An all-zero chunk that used to verify is now re-fetched.
 
 - [ ] **Secure-link fetches aren't collapsed across concurrent chunk downloads.**
   `SecureLinksManager::get_secure_links` (`src/secure_links/links_manager.rs`, cache at `:27`) has

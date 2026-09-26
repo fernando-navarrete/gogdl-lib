@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use async_compression::tokio::write::ZlibDecoder;
 use bytes::Bytes;
@@ -28,6 +28,9 @@ pub struct Downloader {
     pub client: HttpClient,
     pub secure_links: SecureLinksManager,
     threads: usize,
+    /// Test-only: how many chunk checksums `verify_download_units` computed.
+    #[cfg(test)]
+    checksums: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl Downloader {
@@ -40,6 +43,8 @@ impl Downloader {
             client,
             secure_links,
             threads,
+            #[cfg(test)]
+            checksums: Arc::default(),
         }
     }
     pub async fn repair(
@@ -67,7 +72,17 @@ impl Downloader {
                     .ok();
             }
         };
-        let (missing_files, _) = tokio::join!(missing_files_fut, progress_future);
+        let (failed_files, _) = tokio::join!(missing_files_fut, progress_future);
+
+        // Where each failed file's old bytes end. `set_len` in stage 2 keeps
+        // them and zero-fills everything past, so only that tail is known to
+        // need no checksum.
+        let old_lengths: HashMap<String, u64> = failed_files
+            .iter()
+            .filter_map(|(file, old_len)| Some((file.path.clone(), (*old_len)?)))
+            .collect();
+        let missing_files: Vec<DepotFile> =
+            failed_files.into_iter().map(|(file, _)| file).collect();
 
         // Check if there is space available on disk
         let required_space = missing_files
@@ -98,8 +113,29 @@ impl Downloader {
         }
         drop(files_allocation_error);
 
-        let download_units = DownloadUnit::from_product_bundles(bundles);
+        // Units in a range stage 2 just allocated hold zeros and can't match,
+        // so they go straight to the download list without an MD5. They still
+        // get the `ChecksumMismatch` that hashing the zeros used to produce,
+        // so a consumer counting verification events sees the same number.
+        // (A chunk whose real content is all zeros used to come out `Verified`
+        // here, and is now re-fetched.)
+        let (fresh_units, download_units): (Vec<_>, Vec<_>) =
+            DownloadUnit::from_product_bundles(bundles)
+                .into_iter()
+                .partition(|unit| {
+                    old_lengths
+                        .get(&unit.path)
+                        .is_some_and(|&old_len| unit.offset >= old_len)
+                });
         let (verification_tx, mut verification_rx) = mpsc::unbounded_channel();
+        for unit in &fresh_units {
+            verification_tx
+                .send(VerificationEvent::ChecksumMismatch(
+                    unit.path.clone(),
+                    unit.size,
+                ))
+                .ok();
+        }
         let missing_units_fut =
             self.verify_download_units(download_units, path_resolver.clone(), verification_tx);
         let tx_stage3 = tx.clone();
@@ -110,7 +146,8 @@ impl Downloader {
                     .ok();
             }
         };
-        let (missing_units, _) = tokio::join!(missing_units_fut, progress_future);
+        let (unverified_units, _) = tokio::join!(missing_units_fut, progress_future);
+        let missing_units = [fresh_units, unverified_units].concat();
 
         if missing_units.is_empty() {
             // All units verified, no missing chunks
@@ -158,7 +195,9 @@ impl Downloader {
                     .ok();
             }
         };
-        let (missing_files, _) = tokio::join!(missing_files_fut, progress_future);
+        let (failed_files, _) = tokio::join!(missing_files_fut, progress_future);
+        let missing_files: Vec<DepotFile> =
+            failed_files.into_iter().map(|(file, _)| file).collect();
 
         // Check if there is space available on disk
         let required_space = missing_files
@@ -432,12 +471,14 @@ impl Downloader {
             .collect::<Vec<_>>()
     }
 
+    /// Returns the files that failed, each with the length it had on disk
+    /// (`Some(0)` if absent, `None` if that couldn't be read).
     async fn verify_files_size(
         &self,
         files: Vec<DepotFile>,
         path_resolver: Arc<PathResolver>,
         tx: mpsc::UnboundedSender<FileSizeVerificationEvent>,
-    ) -> Vec<DepotFile> {
+    ) -> Vec<(DepotFile, Option<u64>)> {
         let missing_files = stream::iter(files)
             .map(|file| {
                 let path_resolver = path_resolver.clone();
@@ -462,7 +503,7 @@ impl Downloader {
                                 expected_file_size,
                             ))
                             .ok();
-                            return Some(file);
+                            return Some((file, None));
                         }
                     };
 
@@ -474,7 +515,7 @@ impl Downloader {
                                 expected_file_size,
                             ))
                             .ok();
-                            return Some(file);
+                            return Some((file, Some(0)));
                         }
                     };
 
@@ -487,7 +528,7 @@ impl Downloader {
                                 expected_file_size,
                             ))
                             .ok();
-                            return Some(file);
+                            return Some((file, None));
                         }
                     };
 
@@ -497,7 +538,7 @@ impl Downloader {
                             expected_file_size,
                         ))
                         .ok();
-                        return Some(file);
+                        return Some((file, Some(file_size)));
                     }
 
                     tx.send(FileSizeVerificationEvent::FileSizeVerificationSuccess(
@@ -512,12 +553,7 @@ impl Downloader {
             .collect::<Vec<_>>()
             .await;
 
-        missing_files
-            .iter()
-            .filter(|&unit| unit.is_some())
-            // Unwrap is safe here because we know the unit is Some
-            .map(|unit| unit.clone().unwrap().clone())
-            .collect::<Vec<_>>()
+        missing_files.into_iter().flatten().collect()
     }
 
     async fn verify_download_units(
@@ -558,6 +594,9 @@ impl Downloader {
                         }
                     };
 
+                    #[cfg(test)]
+                    self.checksums
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     let actual_checksum = match compute_chunk_checksum(
                         final_path,
                         download_unit.offset,
@@ -979,5 +1018,120 @@ mod tests {
             }
         }
         assert_eq!((verified, mismatched), (1, 1));
+    }
+
+    fn chunk_of(n: u8, raw: &[u8]) -> Chunk {
+        Chunk {
+            md5: md5_hex(raw),
+            size: raw.len() as u64,
+            compressed_md5: format!("{n:02x}{}", "ab".repeat(15)),
+            compressed_size: zlib(raw).len() as u64,
+        }
+    }
+
+    fn bundle_of(files: Vec<(&str, Vec<Chunk>)>) -> ProductBundle {
+        ProductBundle {
+            product_id: PRODUCT.to_string(),
+            product_files: files
+                .into_iter()
+                .map(|(path, chunks)| DepotFile {
+                    md5: None,
+                    path: path.to_string(),
+                    chunks: Some(chunks),
+                    file_type: "DepotFile".to_string(),
+                })
+                .collect(),
+        }
+    }
+
+    /// Runs `repair` and returns the `(verified, mismatched)` counts of its
+    /// verification events.
+    async fn repair_counts(h: &Harness, bundle: ProductBundle) -> (usize, usize) {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        h.downloader
+            .repair(vec![bundle], h.dir.path().to_str().unwrap(), tx)
+            .await
+            .unwrap();
+        let (mut verified, mut mismatched) = (0, 0);
+        while let Ok(event) = rx.try_recv() {
+            match event {
+                DownloadStageEvent::VerificationStage(VerificationEvent::Verified(..)) => {
+                    verified += 1
+                }
+                DownloadStageEvent::VerificationStage(VerificationEvent::ChecksumMismatch(..)) => {
+                    mismatched += 1
+                }
+                _ => {}
+            }
+        }
+        (verified, mismatched)
+    }
+
+    #[tokio::test]
+    async fn repair_over_an_empty_directory_hashes_nothing() {
+        let h = harness(2).await;
+        let (a, b, c) = (b"first chunk", b"second chunk", b"another file");
+        let chunks = [chunk_of(1, a), chunk_of(2, b), chunk_of(3, c)];
+        for (chunk, raw) in chunks.iter().zip([a.as_slice(), b, c]) {
+            h.server.script(
+                &chunk_path(&chunk.compressed_md5),
+                vec![Reply::Body(zlib(raw))],
+            );
+        }
+        let bundle = bundle_of(vec![
+            ("game.bin", vec![chunks[0].clone(), chunks[1].clone()]),
+            ("data/other.bin", vec![chunks[2].clone()]),
+        ]);
+
+        let counts = repair_counts(&h, bundle).await;
+
+        assert_eq!(
+            counts,
+            (0, 3),
+            "one event per unit, as when they were hashed"
+        );
+        assert_eq!(
+            h.downloader
+                .checksums
+                .load(std::sync::atomic::Ordering::Relaxed),
+            0
+        );
+        assert_eq!(
+            std::fs::read(h.dir.path().join("game.bin")).unwrap(),
+            [a.as_slice(), b].concat()
+        );
+        assert_eq!(
+            std::fs::read(h.dir.path().join("data/other.bin")).unwrap(),
+            c
+        );
+    }
+
+    #[tokio::test]
+    async fn repair_hashes_only_below_a_files_old_length() {
+        let h = harness(1).await;
+        let (a, b) = (
+            b"the chunk that is already on disk",
+            b"the chunk past the end",
+        );
+        let (chunk_a, chunk_b) = (chunk_of(1, a), chunk_of(2, b));
+        let path_a = chunk_path(&chunk_a.compressed_md5);
+        let path_b = chunk_path(&chunk_b.compressed_md5);
+        h.server.script(&path_b, vec![Reply::Body(zlib(b))]);
+        // A shorter file: its size mismatches, but its first chunk is good.
+        let file = h.dir.path().join("game.bin");
+        std::fs::write(&file, a).unwrap();
+
+        let counts = repair_counts(&h, bundle_of(vec![("game.bin", vec![chunk_a, chunk_b])])).await;
+
+        assert_eq!(counts, (1, 1));
+        assert_eq!(
+            h.downloader
+                .checksums
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1
+        );
+        assert_eq!(h.server.requests(&path_a), 0);
+        assert_eq!(h.server.requests(&path_b), 1);
+        assert_eq!(std::fs::read(&file).unwrap(), [a.as_slice(), b].concat());
     }
 }

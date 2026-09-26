@@ -4,6 +4,15 @@ One section per tag, newest first. Consumers pin this crate by git tag. A change
 behind an unchanged signature is called out as **Behavior change**, and a signature change as
 **Breaking**. The `v0.x` and `-restart` tags predate this file and aren't covered.
 
+## 1.2.1
+
+* **Behavior change:** `repair_game` no longer checksums chunks that file allocation just created
+  as zeros: a file that was missing, or the part of a resized file past its old length. It goes
+  straight to the download list, so resuming an interrupted install reads far less disk. The
+  `VerificationStage` stream is unchanged in shape: each such chunk still gets one
+  `VerificationEvent::ChecksumMismatch`. The one visible difference is a chunk whose real content is
+  all zeros: it used to be reported `Verified` over the zero-filled file, and is now re-fetched.
+
 ## 1.2.0
 
 Download management: what the bridge's `v1.3.0` and Lumen's `v1.3.0` ask of this crate. **Breaking**
