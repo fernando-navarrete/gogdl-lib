@@ -15,7 +15,8 @@ pub struct DownloadableProduct {
     pub product_id: String,
     /// The product's raw depots. `Depot` is not exported from this crate, so
     /// it can only be held opaquely (e.g. `.len()`, passing the `Vec` back
-    /// through), not named in a signature or `let` binding.
+    /// through), not named in a signature or `let` binding. For sizes, use
+    /// [`GogDl::get_product_sizes`](crate::GogDl::get_product_sizes).
     pub depots: Vec<Depot>,
 }
 
@@ -38,20 +39,9 @@ impl DownloadableProduct {
                 return Ok(downloadable_products.clone());
             }
         }
-        let game_builds = {
-            let inner = download_manager.inner.lock().await;
-            inner.games.get_game_builds(game_id).await?
-        };
-        let build = game_builds
-            .items
-            .iter()
-            .find(|b| b.version_name == build_name)
-            .ok_or(DownloadError::BuildNotFound)?;
-
-        let build_metadata = {
-            let inner = download_manager.inner.lock().await;
-            inner.depot.get_build_metadata(&build.link).await?
-        };
+        let build_metadata = download_manager
+            .get_build_metadata(game_id, build_name)
+            .await?;
 
         let depots = build_metadata.depots.iter().collect::<Vec<_>>();
         let mut products: HashMap<&str, Vec<Depot>> = HashMap::new();

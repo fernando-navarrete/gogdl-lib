@@ -6,7 +6,9 @@ use tokio::sync::mpsc;
 use crate::client::{HttpClient, TokenObserver};
 use crate::depot::{DepotManager, ProductDetails};
 use crate::downloader::DownloadError;
-use crate::downloader::{DownloadManager, DownloadableProduct, ProductBundle, VerificationEvent};
+use crate::downloader::{
+    DownloadManager, DownloadableProduct, ProductBundle, ProductSize, VerificationEvent,
+};
 use crate::fs::free_space_at;
 use crate::games::{
     GameBuilds, GameDetails, GameLinks, GameScreenshots, GameSummary, GamesManager, OwnedGames,
@@ -362,6 +364,36 @@ impl GogDl {
             .get_downloadable_files(game_id, build_name, selected_products)
             .await?;
         Ok(downloadable_files)
+    }
+    /// The size of every product (the base game and its DLCs) in `build_name` of `game_id`, from
+    /// one build-metadata request: no depot manifest is fetched, so it is far cheaper than
+    /// [`get_product_bundles`](Self::get_product_bundles). The result is ordered by
+    /// `product_id`.
+    ///
+    /// Each [`ProductSize`] sums the product's depots after the same language filter the download
+    /// uses (`en-US`, `en` and language-neutral depots), so its `size` is the on-disk size that
+    /// the free-space pre-flight check compares against, and its `compressed_size` is what
+    /// crosses the wire. They equal the sums over the depot manifests that
+    /// [`get_product_bundles`](Self::get_product_bundles) fetches (files' sizes and chunks'
+    /// compressed sizes). Sum the entries of the products you selected for an install total.
+    ///
+    /// Every product in the build is listed, owned or not; intersect the result with
+    /// [`get_downloadable_products`](Self::get_downloadable_products) to keep the owned ones.
+    /// **Not cached**: every call is a fresh round-trip for the build metadata.
+    ///
+    /// # Errors
+    /// [`GogDlError::DownloadError`] wrapping [`crate::DownloadError::BuildNotFound`] if no build
+    /// named `build_name` exists.
+    pub async fn get_product_sizes(
+        &self,
+        game_id: i32,
+        build_name: &str,
+    ) -> Result<Vec<ProductSize>, GogDlError> {
+        let sizes = self
+            .downloader
+            .get_product_sizes(game_id, build_name)
+            .await?;
+        Ok(sizes)
     }
     /// Checksums every chunk of `bundles` already on disk under `path` and
     /// reports the result of each on `tx`, without downloading anything.

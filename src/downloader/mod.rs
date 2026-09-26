@@ -4,6 +4,7 @@ mod downloadable_product;
 mod engine;
 mod error;
 mod product_bundle;
+mod product_size;
 mod progress_reporting;
 mod util;
 
@@ -13,6 +14,7 @@ pub use download_unit::FileType;
 pub use downloadable_product::DownloadableProduct;
 pub use error::DownloadError;
 pub use product_bundle::ProductBundle;
+pub use product_size::ProductSize;
 pub use progress_reporting::DownloadEvent;
 pub use progress_reporting::DownloadStageEvent;
 pub use progress_reporting::FileAllocationEvent;

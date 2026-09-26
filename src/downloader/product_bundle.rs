@@ -32,20 +32,9 @@ impl ProductBundle {
         build_name: &str,
         selected_products: &[i32],
     ) -> Result<Vec<ProductBundle>, DownloadError> {
-        let game_builds = {
-            let inner = download_manager.inner.lock().await;
-            inner.games.get_game_builds(game_id).await?
-        };
-        let build = game_builds
-            .items
-            .iter()
-            .find(|b| b.version_name == build_name)
-            .ok_or(DownloadError::BuildNotFound)?;
-
-        let build_metadata = {
-            let inner = download_manager.inner.lock().await;
-            inner.depot.get_build_metadata(&build.link).await?
-        };
+        let build_metadata = download_manager
+            .get_build_metadata(game_id, build_name)
+            .await?;
 
         let depots = build_metadata.depots.iter().collect::<Vec<_>>();
         let products = {

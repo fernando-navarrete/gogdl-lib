@@ -82,6 +82,7 @@ pub use downloader::DownloadableProduct;
 pub use downloader::FileAllocationEvent;
 pub use downloader::FileSizeVerificationEvent;
 pub use downloader::ProductBundle;
+pub use downloader::ProductSize;
 pub use downloader::VerificationEvent;
 pub use games::GameBuild;
 pub use games::GameBuilds;

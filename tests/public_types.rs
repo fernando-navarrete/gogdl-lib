@@ -8,7 +8,7 @@
 
 use gogdl_lib::{
     Chunk, DepotFile, DownloadError, DownloadEvent, DownloadStageEvent, FileAllocationEvent,
-    FileSizeVerificationEvent, FileSystemError, GameBuild, GameBuilds, ProductDetails,
+    FileSizeVerificationEvent, FileSystemError, GameBuild, GameBuilds, ProductDetails, ProductSize,
     ProtonDownloadEvent, ProtonError, ProtonGeRelease, ProtonGeReleasesPage, SavesDownloadEvent,
     SavesError, SavesUploadEvent, VerificationEvent,
 };
@@ -309,4 +309,23 @@ fn file_system_errors_can_be_built_and_matched() {
         SavesError::from(FileSystemError::PathResolutionError(io::Error::other("x"))),
         SavesError::FileSystemError(FileSystemError::PathResolutionError(_))
     ));
+}
+
+#[test]
+fn product_sizes_can_be_built_and_summed() {
+    let sizes = [
+        ProductSize {
+            product_id: "1".to_string(),
+            size: 10,
+            compressed_size: 4,
+        },
+        ProductSize {
+            product_id: "2".to_string(),
+            size: 5,
+            compressed_size: 3,
+        },
+    ];
+    assert_eq!(sizes.iter().map(|s| s.size).sum::<u64>(), 15);
+    assert_eq!(sizes.iter().map(|s| s.compressed_size).sum::<u64>(), 7);
+    assert_eq!(sizes[0].clone(), sizes[0]);
 }

@@ -38,7 +38,7 @@ drains concurrently.
 | Construction | `new_from_client` |
 | Auth | `get_login_url`, `login_with_code`, `restore_auth`, `set_token_observer`, `remove_token_observer` |
 | Library | `get_owned_games`, `get_game_details`, `get_game_builds`, `get_game_links`, `get_game_summary`, `get_game_screenshots`, `get_product_details` |
-| Downloads, repair, verify | `get_downloadable_products`, `get_product_bundles`, `verify_files`, `download_game`, `repair_game`, `get_free_space` |
+| Downloads, repair, verify | `get_downloadable_products`, `get_product_sizes`, `get_product_bundles`, `verify_files`, `download_game`, `repair_game`, `get_free_space` |
 | Proton-GE (GitHub, no GOG auth) | `get_proton_releases`, `get_proton_release_by_tag`, `download_proton_release` |
 | Cloud saves | `get_save_files`, `get_remote_config`, `download_save_files`, `upload_save_files` |
 

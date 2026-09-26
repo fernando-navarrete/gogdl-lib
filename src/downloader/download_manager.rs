@@ -4,10 +4,14 @@ use tokio::sync::{Mutex, mpsc};
 
 use crate::{
     client::HttpClient,
-    depot::DepotManager,
+    depot::{BuildMetadata, DepotManager},
     downloader::{
-        DownloadStageEvent, ProductBundle, downloadable_product::DownloadableProduct,
-        engine::Downloader, error::DownloadError, progress_reporting::VerificationEvent,
+        DownloadStageEvent, ProductBundle,
+        downloadable_product::DownloadableProduct,
+        engine::Downloader,
+        error::DownloadError,
+        product_size::{ProductSize, sum_by_product},
+        progress_reporting::VerificationEvent,
     },
     games::GamesManager,
     secure_links::SecureLinksManager,
@@ -42,6 +46,33 @@ impl DownloadManager {
             })),
             client,
         }
+    }
+    /// The language-filtered metadata of `build_name`, the one place a build is looked up by name.
+    pub async fn get_build_metadata(
+        &self,
+        game_id: i32,
+        build_name: &str,
+    ) -> Result<BuildMetadata, DownloadError> {
+        let game_builds = {
+            let inner = self.inner.lock().await;
+            inner.games.get_game_builds(game_id).await?
+        };
+        let build = game_builds
+            .items
+            .iter()
+            .find(|b| b.version_name == build_name)
+            .ok_or(DownloadError::BuildNotFound)?;
+
+        let inner = self.inner.lock().await;
+        Ok(inner.depot.get_build_metadata(&build.link).await?)
+    }
+    pub async fn get_product_sizes(
+        &self,
+        game_id: i32,
+        build_name: &str,
+    ) -> Result<Vec<ProductSize>, DownloadError> {
+        let build_metadata = self.get_build_metadata(game_id, build_name).await?;
+        Ok(sum_by_product(&build_metadata.depots))
     }
     pub async fn get_downloadable_products(
         &self,
