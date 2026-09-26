@@ -7,9 +7,9 @@ use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::sync::{Mutex, mpsc};
 
 use crate::ClientError;
-use crate::constants::MAX_ATTEMPTS;
+use crate::client::retry::{MAX_ATTEMPTS, MAX_HASH_ATTEMPTS, retry_now_or_return, retry_or_return};
 use crate::downloader::FileType;
-use crate::downloader::util::backoff;
+use crate::secure_links::SecureLinksError;
 use crate::{
     client::HttpClient,
     depot::DepotFile,
@@ -265,13 +265,15 @@ impl Downloader {
 
                         let links = match secure_links_manager.get_secure_links(&download_unit.product_id).await {
                             Ok(links) => links,
+                            // Retrying can't change these.
+                            Err(
+                                err @ (SecureLinksError::IncorrectGameId(..)
+                                | SecureLinksError::ProductNotOwned(_)),
+                            ) => return Err(DownloadError::SecureLinksError(err)),
                             Err(err) => {
                                 secure_links_manager.invalidate_secure_links(&download_unit.product_id).await;
-                                if attempt != MAX_ATTEMPTS - 1 {
-                                    backoff(attempt).await;
-                                    continue;
-                                }
-                                return Err(DownloadError::SecureLinksError(err));
+                                retry_or_return(attempt, MAX_ATTEMPTS, DownloadError::SecureLinksError(err)).await?;
+                                continue;
                             },
                         };
 
@@ -279,11 +281,8 @@ impl Downloader {
                             Ok(url_format) => url_format,
                             Err(err) => {
                                 secure_links_manager.invalidate_secure_links(&download_unit.product_id).await;
-                                if attempt != MAX_ATTEMPTS - 1 {
-                                    backoff(attempt).await;
-                                    continue;
-                                }
-                                return Err(DownloadError::SecureLinksError(err));
+                                retry_or_return(attempt, MAX_ATTEMPTS, DownloadError::SecureLinksError(err)).await?;
+                                continue;
                             },
                         };
 
@@ -302,26 +301,15 @@ impl Downloader {
                             .await;
                         match stream_result {
                                 Ok(_) => {},
-                                Err(ClientError::AuthError(err)) => {
-                                    secure_links_manager.invalidate_secure_links(&download_unit.product_id).await;
-                                    if attempt != MAX_ATTEMPTS - 1 {
-                                        backoff(attempt).await;
-                                        continue;
-                                    }
-                                    return Err(DownloadError::ClientError(ClientError::AuthError(err)));
-                                }
                                 Err(ClientError::HttpError { status, body }) => {
+                                    let err = DownloadError::ClientError(ClientError::HttpError { status, body });
                                     if status == reqwest::StatusCode::UNAUTHORIZED {
                                         secure_links_manager.invalidate_secure_links(&download_unit.product_id).await;
+                                        retry_now_or_return(attempt, MAX_ATTEMPTS, err)?;
+                                    } else {
+                                        retry_or_return(attempt, MAX_ATTEMPTS, err).await?;
                                     }
-                                    if attempt != MAX_ATTEMPTS - 1 {
-                                        if status == reqwest::StatusCode::UNAUTHORIZED {
-                                            continue;
-                                        }
-                                        backoff(attempt).await;
-                                        continue;
-                                    }
-                                    return Err(DownloadError::ClientError(ClientError::HttpError { status, body }));
+                                    continue;
                                 }
                                 Err(ClientError::ChunkStreamCallbackError(err)) => {
                                     return Err(DownloadError::ClientError(ClientError::ChunkStreamCallbackError(err)))
@@ -330,11 +318,8 @@ impl Downloader {
                                     return Err(DownloadError::ClientError(ClientError::UrlParseError(err)))
                                 }
                                 Err(err) => {
-                                    if attempt != MAX_ATTEMPTS - 1 {
-                                        backoff(attempt).await;
-                                        continue;
-                                    }
-                                    return Err(DownloadError::ClientError(err))
+                                    retry_or_return(attempt, MAX_ATTEMPTS, DownloadError::ClientError(err)).await?;
+                                    continue;
                                 }
                             };
 
@@ -347,26 +332,19 @@ impl Downloader {
                         let writer = buf_writer.into_inner();
 
                         if actual_md5 != download_unit.md5 {
-                            if attempt < MAX_ATTEMPTS - 4 {
-                                secure_links_manager.invalidate_secure_links(&download_unit.product_id).await;
-                                backoff(attempt).await;
-                                continue;
-                            }
-                            return Err(DownloadError::ChunkHashMismatch {
-                                path: download_unit.path,
+                            secure_links_manager.invalidate_secure_links(&download_unit.product_id).await;
+                            retry_or_return(attempt, MAX_HASH_ATTEMPTS, DownloadError::ChunkHashMismatch {
+                                path: download_unit.path.clone(),
                                 offset: download_unit.offset,
-                                expected: download_unit.md5,
+                                expected: download_unit.md5.clone(),
                                 actual: actual_md5,
-                            })
+                            }).await?;
+                            continue;
                         }
 
                         if writer.remaining() != 0 {
-                            if attempt != MAX_ATTEMPTS - 1 {
-                                secure_links_manager.invalidate_secure_links(&download_unit.product_id).await;
-                                backoff(attempt).await;
-                                continue;
-                            }
-                            return Err(DownloadError::DeflateError(std::io::Error::new(
+                            secure_links_manager.invalidate_secure_links(&download_unit.product_id).await;
+                            retry_or_return(attempt, MAX_ATTEMPTS, DownloadError::DeflateError(std::io::Error::new(
                                 std::io::ErrorKind::InvalidData,
                                 format!(
                                     "chunk verification failed for '{}' at offset {} (short by {} byte(s), checksum {})",
@@ -375,7 +353,8 @@ impl Downloader {
                                     writer.remaining(),
                                     actual_md5
                                 ),
-                            )));
+                            ))).await?;
+                            continue;
                         }
                         progress.commit();
                         break;
@@ -628,7 +607,7 @@ mod tests {
     use super::*;
     use crate::{
         games::GamesManager,
-        secure_links::{CdnUrlParams, SecureLinks, SecureLinksError, UrlFormat},
+        secure_links::{CdnUrlParams, SecureLinks, UrlFormat},
         test_support::{ChunkServer, Reply, TempDir, md5_hex, zlib},
     };
 
@@ -756,7 +735,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn bad_md5_is_only_retried_on_the_first_two_attempts() {
-        // Pins `attempt < MAX_ATTEMPTS - 4`: a mismatch on the third attempt
+        // Pins `MAX_HASH_ATTEMPTS`: a mismatch on the third attempt
         // is terminal even though attempts remain.
         let (h, u) = one_unit(1, b"the right bytes").await;
         let path = chunk_path(&u.compressed_md5);
@@ -867,12 +846,10 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn product_not_owned_is_retried_like_any_other_secure_link_failure() {
-        // Characterizes today's behavior: an unowned product burns all six
-        // attempts (with backoff). v1.2.0 makes it return at once, which
-        // flips this to `lookups() == 1`.
+    async fn product_not_owned_returns_without_retrying() {
         let h = harness(1).await;
         let u = unit(&h.dir, 1, b"whatever", "2");
+        let start = tokio::time::Instant::now();
 
         let (result, net, _) = run(&h, vec![u]).await;
 
@@ -885,7 +862,30 @@ mod tests {
             ),
             "{result:?}"
         );
-        assert_eq!(h.downloader.secure_links.lookups(), MAX_ATTEMPTS as usize);
+        assert_eq!(h.downloader.secure_links.lookups(), 1);
+        assert_eq!(start.elapsed(), Duration::ZERO, "no backoff");
+        assert_eq!(net, 0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn incorrect_game_id_returns_without_retrying() {
+        let h = harness(1).await;
+        let u = unit(&h.dir, 1, b"whatever", "not-a-number");
+        let start = tokio::time::Instant::now();
+
+        let (result, net, _) = run(&h, vec![u]).await;
+
+        assert!(
+            matches!(
+                result,
+                Err(DownloadError::SecureLinksError(
+                    SecureLinksError::IncorrectGameId(..)
+                ))
+            ),
+            "{result:?}"
+        );
+        assert_eq!(h.downloader.secure_links.lookups(), 1);
+        assert_eq!(start.elapsed(), Duration::ZERO, "no backoff");
         assert_eq!(net, 0);
     }
 }

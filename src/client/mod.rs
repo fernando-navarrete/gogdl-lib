@@ -1,6 +1,7 @@
 mod auth;
 mod error;
 mod http;
+pub(crate) mod retry;
 
 pub use auth::Auth;
 pub use auth::AuthError;

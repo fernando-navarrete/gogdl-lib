@@ -63,10 +63,11 @@ When a method is added, changed or removed on `GogDl`, update this table and `CH
 - `src/lib.rs`: crate docs and every public re-export.
 - `src/gogdl/`: the `GogDl` facade and `GogDlError`.
 - `src/client/`: `HttpClient` (`http.rs`: fetch, retry, streaming, token POSTs) and `auth/` (`Auth`,
-  refresh, the `Expiring` trait that gives all three `is_valid`s one margin, `TokenObserver`).
+  refresh, the `Expiring` trait that gives all three `is_valid`s one margin, `TokenObserver`), and
+  `retry.rs` (`MAX_ATTEMPTS`, `MAX_HASH_ATTEMPTS`, `backoff` and the retry helpers).
 - `src/games/`, `src/depot/`: catalog and build/product metadata.
 - `src/secure_links/`: CDN secure-link cache, the seam offline download tests use.
-- `src/downloader/`: the engine (`engine.rs`), bundles, progress events, `util/` (backoff, MD5,
+- `src/downloader/`: the engine (`engine.rs`), bundles, progress events, `util/` (MD5,
   `ProgressGuard`, offset writer).
 - `src/proton/`: GitHub release fetchers and the download/extract pipeline.
 - `src/saves/`: listing, remote config, save-location expansion, the downloader and uploader.

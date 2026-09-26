@@ -289,7 +289,7 @@ The paragraph below is the baseline it started from.)* `cargo build --lib` showe
 
 ## Medium — duplication & consistency
 
-- [ ] **`MAX_ATTEMPTS` is one constant, but the retry primitives are still split across two modules
+- [x] **`MAX_ATTEMPTS` is one constant, but the retry primitives are still split across two modules
   and two import paths.** `src/constants/mod.rs:5` holds `pub const MAX_ATTEMPTS: u32 = 6;`. There
   are seven `attempt != MAX_ATTEMPTS - 1` sentinels (`engine.rs:282,294,319,329,345,376`,
   `http.rs:66`), plus the MD5 arm's `attempt < MAX_ATTEMPTS - 4` (`engine.rs:362`). Three
@@ -310,7 +310,11 @@ The paragraph below is the baseline it started from.)* `cargo build --lib` showe
     `attempt` it sees is 4, so the largest reachable ceiling is 8s. Nothing records the de-facto
     per-chunk timeout against a dead CDN (five backoffs, ~7.75s average, 15.5s worst case).
 
-- [ ] **The retry loops are hand-copied rather than shared, and `download_files` still carries a dead
+  Fixed in `v1.2.0`: `src/client/retry.rs` owns `MAX_ATTEMPTS`, `MAX_HASH_ATTEMPTS` (3, read as
+  `attempt + 1 < bound`) and `backoff`, with one import path, and its module doc states the policy
+  and the de-facto per-chunk budget against a dead CDN (15.5s worst case, ~7.75s average).
+
+- [x] **The retry loops are hand-copied rather than shared, and `download_files` still carries a dead
   arm.** `download_files`' `Err(ClientError::AuthError(err))` arm
   (`src/downloader/engine.rs:317-324`) is unreachable. `stream_chunk` takes a bare, pre-signed
   URL and never touches `AuthManager`, and secure-link auth failures arrive earlier as
@@ -327,7 +331,10 @@ The paragraph below is the baseline it started from.)* `cargo build --lib` showe
   sentinel in exactly one place. The silent-success regression got in the last time a copy's
   *guard* was touched.
 
-- [ ] **Deterministic secure-link failures are retried six times with backoff, and since they are
+  Fixed in `v1.2.0`: `retry_or_return` / `retry_now_or_return` hold the last-attempt test, and all
+  eight sites use them. The dead `AuthError` arm and the double `UNAUTHORIZED` test are gone.
+
+- [x] **Deterministic secure-link failures are retried six times with backoff, and since they are
   structured, this is fixable.** `SecureLinksManager::get_secure_links` can fail with
   `IncorrectGameId` (unparseable ID) or `ProductNotOwned` (`links_manager.rs:69,73`). Neither will
   change on retry, but `download_files`' secure-link arm (`engine.rs:278-288`) invalidates,
@@ -336,6 +343,9 @@ The paragraph below is the baseline it started from.)* `cargo build --lib` showe
   every in-flight chunk paying the full budget. But the first failure still takes the whole
   schedule. A `match` can return immediately on the two deterministic variants, as `7eb5d5e` did for
   local I/O errors.
+
+  Fixed in `v1.2.0`: `IncorrectGameId` and `ProductNotOwned` return at once, with no invalidation
+  or backoff. The characterization test is flipped to one lookup and no elapsed time.
 
 - [ ] **`Downloader::repair` is a near-verbatim copy of `Downloader::download`.** `repair`
   (`src/downloader/engine.rs:45-141`) and `download` (`:142-221`) are the same function apart

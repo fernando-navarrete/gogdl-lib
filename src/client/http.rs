@@ -8,13 +8,12 @@ use reqwest::header::HeaderMap;
 use serde::de::DeserializeOwned;
 
 use crate::{
+    client::retry::{MAX_ATTEMPTS, retry_or_return},
     client::{
         TokenObserver,
         auth::{AuthError, AuthManager},
         error::ClientError,
     },
-    constants::MAX_ATTEMPTS,
-    downloader::backoff,
 };
 
 #[derive(Clone)]
@@ -60,11 +59,7 @@ impl HttpClient {
                     self.auth_manager.refresh_auth(self).await?;
                 }
                 Err(ClientError::NetworkError(err)) => {
-                    if attempt != MAX_ATTEMPTS - 1 {
-                        backoff(attempt).await;
-                        continue;
-                    }
-                    return Err(ClientError::NetworkError(err));
+                    retry_or_return(attempt, MAX_ATTEMPTS, ClientError::NetworkError(err)).await?;
                 }
                 Err(err) => {
                     return Err(err);
