@@ -1,9 +1,8 @@
 # GAPS.md
 
 Open findings for `gogdl-lib`. Current tree: **`main`**, `Cargo.toml` at `1.2.3`. The newest tag is **`v1.2.3`**. `v1.1.6` and
-`v1.2.0`–`v1.2.3` were cut on `feat/v1.2.0-download-management` (`v1.2.0-DOWNLOAD-MANAGEMENT.md`),
-which has been fast-forwarded into `main`; the `v1.1.x` line (tests, CI/CD and five patches) is also in
-`main`, and its decisions are in `devlog/v1.1.0-foundation.md`. `v1.0.11` (`d5b43e6`) includes the owned-products
+`v1.2.0`–`v1.2.3` were cut on `feat/v1.2.0-download-management`, which has been fast-forwarded into
+`main`. Their decisions are in `devlog/v1.2.0-download-management.md` (`v1.1.x`: `devlog/v1.1.0-foundation.md`). `v1.0.11` (`d5b43e6`) includes the owned-products
 rename (`d6dbdc5`) and the owned-games filter (`e032b7d`). `feature/saves` was merged into `main`, so
 every tag is reachable from `main`. Consumer pins: the bridge (`gogdl_flutter`) is on `v1.0.11`, and
 **`lumen-cli`** is on **`v1.0.10`** (`Cargo.toml:12`), so its next bump picks up the

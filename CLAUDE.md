@@ -120,4 +120,5 @@ One tag per release, on the working branch (not `main`), as `ROADMAP.md`'s versi
    `Cargo.toml`, `Cargo.lock` and a non-empty `CHANGELOG.md` section agree, then creates the GitLab
    release with that section. Check it is green.
 
-`devlog/v1.1.0-foundation.md` records the decisions and pitfalls of the `v1.1.x` line.
+`devlog/v1.1.0-foundation.md` and `devlog/v1.2.0-download-management.md` record the decisions and
+pitfalls of the `v1.1.x` and `v1.2.x` lines.
