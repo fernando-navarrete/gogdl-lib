@@ -43,21 +43,13 @@ impl PathResolver {
 
     pub fn get_free_space(&self) -> Result<u64, FileSystemError> {
         let disks = Disks::new_with_refreshed_list();
-
-        let disk = disks
+        let entries = disks
             .list()
             .iter()
-            .find(|&disk| self.canonical_base.starts_with(disk.mount_point()));
+            .map(|disk| (disk.mount_point(), disk.available_space()));
 
-        match disk {
-            None => Err(FileSystemError::NoDiskMatchingPath(
-                self.canonical_base.clone(),
-            )),
-            Some(disk) => {
-                let free_space = disk.available_space();
-                Ok(free_space)
-            }
-        }
+        pick_disk(&self.canonical_base, entries)
+            .ok_or_else(|| FileSystemError::NoDiskMatchingPath(self.canonical_base.clone()))
     }
 
     pub async fn allocate_file(
@@ -237,6 +229,18 @@ impl PathResolver {
     }
 }
 
+/// Available bytes of the disk holding `base`: the one with the longest mount point that is a
+/// prefix of it. `/` prefixes every path, so taking the first match reads the wrong disk.
+fn pick_disk<'a>(base: &Path, disks: impl IntoIterator<Item = (&'a Path, u64)>) -> Option<u64> {
+    disks
+        .into_iter()
+        // `starts_with` compares components, so `/media/game` doesn't match `/media/gamedisk`.
+        .filter(|(mount, _)| base.starts_with(mount))
+        // On equal lengths `max_by_key` keeps the last, the later mount of an over-mounted path.
+        .max_by_key(|(mount, _)| mount.components().count())
+        .map(|(_, available)| available)
+}
+
 fn normalize_separators(input: &str) -> std::borrow::Cow<'_, str> {
     if input.contains('\\') {
         std::borrow::Cow::Owned(input.replace('\\', "/"))
@@ -285,4 +289,50 @@ pub fn sanitize_filename(name: &str) -> String {
     }
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// In `/proc/mounts` order, as `sysinfo` lists them: `/` comes first.
+    fn mounts() -> Vec<(&'static Path, u64)> {
+        vec![
+            (Path::new("/"), 1),
+            (Path::new("/home"), 2),
+            (Path::new("/media/gamedisk"), 3),
+            (Path::new("/media/game"), 4),
+        ]
+    }
+
+    #[test]
+    fn picks_the_longest_matching_mount() {
+        let table = [
+            ("/media/gamedisk/Games/Foo", Some(3)),
+            ("/media/gamedisk", Some(3)),
+            ("/media/game/Foo", Some(4)),
+            ("/home/user/Games", Some(2)),
+            ("/opt/games", Some(1)),
+        ];
+        for (base, expected) in table {
+            assert_eq!(pick_disk(Path::new(base), mounts()), expected, "{base}");
+        }
+    }
+
+    #[test]
+    fn no_matching_mount_is_none() {
+        let without_root = mounts().into_iter().skip(1);
+        assert_eq!(pick_disk(Path::new("/opt/games"), without_root), None);
+        assert_eq!(pick_disk(Path::new("relative/dir"), mounts()), None);
+    }
+
+    #[test]
+    fn an_over_mount_takes_the_later_entry() {
+        let disks = [
+            (Path::new("/"), 1),
+            (Path::new("/mnt"), 5),
+            (Path::new("/mnt"), 6),
+        ];
+        assert_eq!(pick_disk(Path::new("/mnt/x"), disks), Some(6));
+    }
 }
