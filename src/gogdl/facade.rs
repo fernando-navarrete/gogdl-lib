@@ -160,6 +160,15 @@ impl GogDl {
     /// leaves a partial tree under `path` that you're responsible for
     /// removing before trying again.
     ///
+    /// # Cancelling
+    /// Dropping the future stops the transfer and closes the pipe into the
+    /// extractor. Extraction runs on a blocking thread that the drop cannot
+    /// interrupt: it hits the end of the stream, fails on the entry it was
+    /// reading and exits, shortly after the drop. What it has already
+    /// extracted stays, so a dropped call leaves a partial tree under `path`,
+    /// exactly like a failed one, and the rename to `release.tag_name` never
+    /// happens.
+    ///
     /// # Errors
     /// [`GogDlError::ProtonError`], notably
     /// [`crate::ProtonError::NoSuitableAsset`] if `release` has no Linux
@@ -360,6 +369,12 @@ impl GogDl {
     /// another task, since events accumulate in the unbounded channel
     /// otherwise.
     ///
+    /// # Cancelling
+    /// Dropping the future stops the verification and leaves the disk
+    /// untouched, since nothing is written. Chunk checksums already running on
+    /// tokio's blocking pool (one per worker at most) finish reading their
+    /// chunk and their results are discarded.
+    ///
     /// # Errors
     /// [`GogDlError::DownloadError`] wrapping
     /// [`crate::DownloadError::ChunkIntegrityCheckFailed`] with the count of units
@@ -405,6 +420,19 @@ impl GogDl {
     ///
     /// Resolves only once the whole transfer finishes or fails — drain `tx`'s
     /// paired receiver concurrently on another task.
+    ///
+    /// # Cancelling
+    /// Dropping the future is how to cancel, and it is safe: every transfer
+    /// runs inside the future (no task is spawned), so the drop stops all of
+    /// them, no new chunk starts, and each in-flight chunk's reported bytes
+    /// are taken back with
+    /// [`DownloadEvent::ProgressRegression`](crate::DownloadEvent::ProgressRegression).
+    /// Nothing is cleaned up: files stay allocated at full size, chunks
+    /// already written stay, and a chunk that was mid-transfer may be
+    /// partially written. Call [`repair_game`](Self::repair_game) to continue;
+    /// it checksums every chunk and fetches only the ones that are wrong. A
+    /// disk write already handed to tokio's blocking pool may complete just
+    /// after the drop, and nothing else outlives it.
     ///
     /// # Errors
     /// [`GogDlError::DownloadError`], notably
@@ -459,6 +487,13 @@ impl GogDl {
     ///
     /// Resolves only once the whole operation finishes or fails — drain
     /// `tx`'s paired receiver concurrently on another task.
+    ///
+    /// # Cancelling
+    /// Same as [`download_game`](Self::download_game): drop the future to
+    /// cancel it, and call this method again to continue. During the
+    /// verification pass a drop also discards the results of the chunk
+    /// checksums already running on tokio's blocking pool (one per worker at
+    /// most), which finish reading their chunk first.
     ///
     /// # Errors
     /// Same [`GogDlError::DownloadError`] variants as
@@ -647,6 +682,12 @@ impl GogDl {
     ///
     /// **Nothing is retried**, including on network errors. The first
     /// failure aborts the call, and files downloaded before it stay on disk.
+    ///
+    /// # Cancelling
+    /// Dropping the future stops the call between or during files. Files
+    /// downloaded before the drop stay. The file being written at that moment
+    /// is written in place over any existing save, so it can be left
+    /// truncated or incomplete; the remaining files are not touched.
     /// Authentication, caching and the need for a still-valid session access
     /// token are as for [`get_save_files`](Self::get_save_files).
     ///
@@ -724,6 +765,12 @@ impl GogDl {
     ///
     /// **Nothing is retried**, including on network errors. The first
     /// failure aborts the call, and files uploaded before it stay uploaded.
+    ///
+    /// # Cancelling
+    /// Dropping the future abandons the transfer in progress. Local files are
+    /// only ever read, so they are untouched. Files uploaded before the drop
+    /// stay uploaded; whether GOG stored the one in flight is up to its
+    /// storage, so upload again to be sure.
     /// Authentication, caching and the need for a still-valid session access
     /// token are as for [`get_save_files`](Self::get_save_files).
     ///

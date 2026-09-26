@@ -38,6 +38,9 @@ pub enum Reply {
     },
     /// Wait for `notify`, then send the inner reply.
     After(Arc<Notify>, Box<Reply>),
+    /// Read the request, signal `notify`, answer nothing and hold the
+    /// connection open until the client drops it.
+    Stall(Arc<Notify>),
     /// Wait this long (real time), then send the inner reply.
     Delay(std::time::Duration, Box<Reply>),
 }
@@ -126,7 +129,14 @@ async fn serve(mut stream: TcpStream, routes: Arc<Mutex<HashMap<String, Route>>>
 
     let reply = {
         let mut routes = routes.lock().unwrap();
-        match routes.get_mut(&path) {
+        // A route scripted with a query matches exactly; otherwise the query
+        // (e.g. a random request id) is ignored.
+        let key = if routes.contains_key(&path) {
+            &path
+        } else {
+            path.split('?').next().unwrap_or(&path)
+        };
+        match routes.get_mut(key) {
             None => Reply::Status(404),
             Some(route) => {
                 route.requests += 1;
@@ -177,6 +187,12 @@ async fn send(stream: &mut TcpStream, reply: Reply) {
                 notify.notify_one();
                 // Hold the connection until the client goes away.
                 let mut sink = [0u8; 64];
+                while matches!(stream.read(&mut sink).await, Ok(n) if n > 0) {}
+                return;
+            }
+            Reply::Stall(notify) => {
+                notify.notify_one();
+                let mut sink = [0u8; 1024];
                 while matches!(stream.read(&mut sink).await, Ok(n) if n > 0) {}
                 return;
             }

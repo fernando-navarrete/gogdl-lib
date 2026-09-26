@@ -10,6 +10,7 @@ use tokio::sync::mpsc;
 use crate::{
     SavesError,
     client::HttpClient,
+    constants::CLOUD_STORAGE_URL,
     saves::{
         checksum::md5_hex, save_location::ResolvedSaveLocation, saves_auth::SavesAuth,
         saves_upload_event::SavesUploadEvent,
@@ -23,6 +24,8 @@ pub struct SavesUploader {
     pub client: HttpClient,
     pub auth: SavesAuth,
     pub client_id: String,
+    /// Where objects live; [`CLOUD_STORAGE_URL`] outside tests.
+    pub storage_url: String,
 }
 
 impl SavesUploader {
@@ -31,6 +34,7 @@ impl SavesUploader {
             client,
             auth,
             client_id,
+            storage_url: CLOUD_STORAGE_URL.to_string(),
         }
     }
 
@@ -86,7 +90,9 @@ impl SavesUploader {
         let compressed = encoder.finish()?;
         let etag = md5_hex(&compressed);
 
-        let mut url = self.auth.object_url(&self.client_id, name)?;
+        let mut url = self
+            .auth
+            .object_url(&self.storage_url, &self.client_id, name)?;
         url.query_pairs_mut().append_pair(
             "_gog_request_id",
             &format!("{:032x}", rand::random::<u128>()),
@@ -182,8 +188,15 @@ async fn list_files(base: &Path) -> Result<Vec<(PathBuf, String)>, SavesError> {
 
 #[cfg(test)]
 mod tests {
+    use std::{sync::Arc, time::Duration};
+
+    use tokio::sync::Notify;
+
     use super::*;
-    use crate::{CloudStorageLocation, SaveFile};
+    use crate::{
+        CloudStorageLocation, SaveFile,
+        test_support::{ChunkServer, Reply, TempDir},
+    };
 
     fn round_trip(location_name: &str, relative: &str) -> (String, String) {
         let name = remote_name(location_name, relative);
@@ -245,5 +258,78 @@ mod tests {
             assert_eq!(matched.unwrap().name, locations[index].name);
             assert_eq!(relative, "slot/data.sav");
         }
+    }
+
+    #[tokio::test]
+    async fn dropping_an_upload_mid_transfer_leaves_the_local_files_untouched() {
+        let server = ChunkServer::start().await;
+        let dir = TempDir::new();
+        let files = [
+            ("a.sav", b"first save".as_slice()),
+            ("b.sav", b"second save"),
+        ];
+        for (name, contents) in files {
+            std::fs::write(dir.path().join(name), contents).unwrap();
+        }
+        let modified = |name: &str| {
+            std::fs::metadata(dir.path().join(name))
+                .unwrap()
+                .modified()
+                .unwrap()
+        };
+        let before = (modified("a.sav"), modified("b.sav"));
+
+        let object = |name: &str| format!("/v1/42/client/__default/{name}");
+        let reached_b = Arc::new(Notify::new());
+        server.script(&object("a.sav"), vec![Reply::Status(200)]);
+        server.script(&object("b.sav"), vec![Reply::Stall(reached_b.clone())]);
+
+        let mut uploader = SavesUploader::new(
+            HttpClient::new_with_client(reqwest::Client::new()),
+            SavesAuth {
+                access_token: "token".into(),
+                refresh_token: String::new(),
+                expires_in: 3600,
+                token_type: "bearer".into(),
+                session_id: String::new(),
+                scope: None,
+                user_id: "42".into(),
+                valid_until: None,
+            },
+            "client".into(),
+        );
+        uploader.storage_url = format!("{}/v1/", server.base_url());
+        let locations = [ResolvedSaveLocation {
+            name: "__default".into(),
+            path: dir.path().to_path_buf(),
+        }];
+
+        // Drop the upload once the server has b.sav and won't answer.
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let upload = uploader.upload_files(&locations, tx);
+        tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::select! {
+                result = upload => panic!("the upload finished: {result:?}"),
+                _ = reached_b.notified() => {}
+            }
+        })
+        .await
+        .expect("b.sav was never sent");
+
+        for (name, contents) in files {
+            assert_eq!(std::fs::read(dir.path().join(name)).unwrap(), contents);
+        }
+        assert_eq!((modified("a.sav"), modified("b.sav")), before);
+        assert_eq!(server.requests(&object("a.sav")), 1);
+        let (mut started, mut finished) = (Vec::new(), Vec::new());
+        while let Ok(event) = rx.try_recv() {
+            match event {
+                SavesUploadEvent::FileStarted { name, .. } => started.push(name),
+                SavesUploadEvent::FileFinished { name } => finished.push(name),
+                _ => {}
+            }
+        }
+        assert_eq!(started, ["__default/a.sav", "__default/b.sav"]);
+        assert_eq!(finished, ["__default/a.sav"]);
     }
 }

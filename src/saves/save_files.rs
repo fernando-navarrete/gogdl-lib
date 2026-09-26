@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
-use crate::{CloudStorageLocation, SavesError, saves::SavesManager};
+use crate::{CloudStorageLocation, SavesError, constants::CLOUD_STORAGE_URL, saves::SavesManager};
 
 /// One entry in a game's cloud save listing for the current user, as
 /// returned (in a `Vec`) by
@@ -137,10 +137,7 @@ impl SaveFile {
         let auth = saves_manager.get_saves_auth(game_id, build_name).await?;
         let game_ids = saves_manager.get_game_save_ids(game_id, build_name).await?;
 
-        let url = format!(
-            "https://cloudstorage.gog.com/v1/{}/{}",
-            auth.user_id, game_ids.client_id
-        );
+        let url = format!("{CLOUD_STORAGE_URL}{}/{}", auth.user_id, game_ids.client_id);
 
         let response: Vec<SaveFile> = saves_manager
             .client

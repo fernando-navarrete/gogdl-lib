@@ -112,13 +112,18 @@ impl SavesAuth {
             )
             .await?)
     }
-    /// The `cloudstorage.gog.com` URL of the object called `name` in this
-    /// user's storage area for the game `client_id`. `name` is the full
-    /// cloud-side name, e.g. `saves/AutoSave-0/sav.dat`; each `/`-separated
-    /// segment is percent-encoded, so names with spaces or `#` are safe.
-    pub fn object_url(&self, client_id: &str, name: &str) -> Result<reqwest::Url, SavesError> {
-        let mut url = reqwest::Url::parse("https://cloudstorage.gog.com/v1/")
-            .map_err(ClientError::UrlParseError)?;
+    /// The URL under `base` (in production [`CLOUD_STORAGE_URL`]) of the
+    /// object called `name` in this user's storage area for the game
+    /// `client_id`. `name` is the full cloud-side name, e.g.
+    /// `saves/AutoSave-0/sav.dat`; each `/`-separated segment is
+    /// percent-encoded, so names with spaces or `#` are safe.
+    pub fn object_url(
+        &self,
+        base: &str,
+        client_id: &str,
+        name: &str,
+    ) -> Result<reqwest::Url, SavesError> {
+        let mut url = reqwest::Url::parse(base).map_err(ClientError::UrlParseError)?;
         url.path_segments_mut()
             .map_err(|_| {
                 ClientError::UrlParseError(url::ParseError::RelativeUrlWithCannotBeABaseBase)
@@ -149,7 +154,7 @@ impl Expiring for SavesAuth {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::with_valid_until;
+    use crate::{constants::CLOUD_STORAGE_URL, test_support::with_valid_until};
 
     fn auth() -> SavesAuth {
         SavesAuth {
@@ -191,7 +196,11 @@ mod tests {
     #[test]
     fn object_url_addresses_the_object_in_the_users_storage_area() {
         let url = auth()
-            .object_url("client", "saves/__default/profile/slot1.sav")
+            .object_url(
+                CLOUD_STORAGE_URL,
+                "client",
+                "saves/__default/profile/slot1.sav",
+            )
             .unwrap();
         assert_eq!(
             url.as_str(),
@@ -202,7 +211,11 @@ mod tests {
     #[test]
     fn object_url_escapes_characters_that_would_end_the_path() {
         let url = auth()
-            .object_url("client", "saves/__default/my save #1?.sav")
+            .object_url(
+                CLOUD_STORAGE_URL,
+                "client",
+                "saves/__default/my save #1?.sav",
+            )
             .unwrap();
         assert_eq!(
             url.path(),

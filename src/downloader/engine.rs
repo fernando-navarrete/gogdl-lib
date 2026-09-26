@@ -232,6 +232,13 @@ impl Downloader {
         Ok(())
     }
 
+    /// Transfers `download_units`, `self.threads` at a time.
+    ///
+    /// Every unit runs inside this future (`try_for_each_concurrent`), never
+    /// under `tokio::spawn`. That is what makes dropping `download_game` or
+    /// `repair_game` cancel the whole transfer: a spawned task would outlive
+    /// the drop and keep writing into the install. The cancel contract in
+    /// those methods' rustdoc depends on it, so keep it that way.
     async fn download_files(
         &self,
         download_units: Vec<DownloadUnit>,
@@ -606,6 +613,7 @@ mod tests {
 
     use super::*;
     use crate::{
+        depot::Chunk,
         games::GamesManager,
         secure_links::{CdnUrlParams, SecureLinks, UrlFormat},
         test_support::{ChunkServer, Reply, TempDir, md5_hex, zlib},
@@ -887,5 +895,89 @@ mod tests {
         assert_eq!(h.downloader.secure_links.lookups(), 1);
         assert_eq!(start.elapsed(), Duration::ZERO, "no backoff");
         assert_eq!(net, 0);
+    }
+
+    #[tokio::test]
+    async fn repair_after_a_dropped_download_completes_the_install() {
+        let h = harness(1).await;
+        let a = b"the first chunk of the file, done before the drop";
+        let b = b"the second chunk, cut off by the drop";
+        let chunk = |n: u8, raw: &[u8]| Chunk {
+            md5: md5_hex(raw),
+            size: raw.len() as u64,
+            compressed_md5: format!("{n:02x}{}", "ab".repeat(15)),
+            compressed_size: zlib(raw).len() as u64,
+        };
+        let (chunk_a, chunk_b) = (chunk(1, a), chunk(2, b));
+        let (path_a, path_b) = (
+            chunk_path(&chunk_a.compressed_md5),
+            chunk_path(&chunk_b.compressed_md5),
+        );
+        let bundle = || ProductBundle {
+            product_id: PRODUCT.to_string(),
+            product_files: vec![DepotFile {
+                md5: None,
+                path: "game.bin".to_string(),
+                chunks: Some(vec![chunk_a.clone(), chunk_b.clone()]),
+                file_type: "DepotFile".to_string(),
+            }],
+        };
+        let file = h.dir.path().join("game.bin");
+        std::fs::write(&file, vec![0u8; a.len() + b.len()]).unwrap();
+
+        h.server.script(&path_a, vec![Reply::Body(zlib(a))]);
+        let half_sent = Arc::new(Notify::new());
+        let body_b = zlib(b);
+        h.server.script(
+            &path_b,
+            vec![
+                Reply::PartialThenHang {
+                    sent: body_b.len() / 2,
+                    body: body_b.clone(),
+                    notify: half_sent.clone(),
+                },
+                Reply::Body(body_b),
+            ],
+        );
+
+        // Drop the transfer once the second chunk is half received.
+        let resolver = PathResolver::new(h.dir.path().to_path_buf()).await.unwrap();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let download = h.downloader.download_files(
+            DownloadUnit::from_product_bundles(vec![bundle()]),
+            &resolver,
+            tx,
+        );
+        tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::select! {
+                result = download => panic!("the download finished: {result:?}"),
+                _ = half_sent.notified() => {}
+            }
+        })
+        .await
+        .expect("the second chunk never started");
+
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        h.downloader
+            .repair(vec![bundle()], h.dir.path().to_str().unwrap(), tx)
+            .await
+            .unwrap();
+
+        assert_eq!(std::fs::read(&file).unwrap(), [a.as_slice(), b].concat());
+        assert_eq!(h.server.requests(&path_a), 1, "a verified chunk is kept");
+        assert_eq!(h.server.requests(&path_b), 2);
+        let (mut verified, mut mismatched) = (0, 0);
+        while let Ok(event) = rx.try_recv() {
+            match event {
+                DownloadStageEvent::VerificationStage(VerificationEvent::Verified(..)) => {
+                    verified += 1
+                }
+                DownloadStageEvent::VerificationStage(VerificationEvent::ChecksumMismatch(..)) => {
+                    mismatched += 1
+                }
+                _ => {}
+            }
+        }
+        assert_eq!((verified, mismatched), (1, 1));
     }
 }

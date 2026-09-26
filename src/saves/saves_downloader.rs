@@ -10,6 +10,7 @@ use tokio::{
 use crate::{
     SavesError,
     client::HttpClient,
+    constants::CLOUD_STORAGE_URL,
     fs::PathResolver,
     saves::{
         SaveFile, checksum::md5_hex, save_location::ResolvedSaveLocation, saves_auth::SavesAuth,
@@ -39,6 +40,8 @@ pub struct SavesDownloader {
     pub client: HttpClient,
     pub auth: SavesAuth,
     pub client_id: String,
+    /// Where objects live; [`CLOUD_STORAGE_URL`] outside tests.
+    pub storage_url: String,
 }
 
 impl SavesDownloader {
@@ -47,6 +50,7 @@ impl SavesDownloader {
             client,
             auth,
             client_id,
+            storage_url: CLOUD_STORAGE_URL.to_string(),
         }
     }
 
@@ -103,7 +107,9 @@ impl SavesDownloader {
         let (target, relative) = file.split_location(targets, |target| target.name.as_str())?;
         let target = target.unwrap_or(&targets[0]);
         let destination = target.resolver().await?.resolve_path(relative).await?;
-        let url = self.auth.object_url(&self.client_id, &file.name)?;
+        let url = self
+            .auth
+            .object_url(&self.storage_url, &self.client_id, &file.name)?;
         let bearer = format!("Bearer {}", self.auth.access_token);
 
         tx.send(SavesDownloadEvent::FileStarted {
