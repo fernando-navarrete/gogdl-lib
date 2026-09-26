@@ -20,10 +20,42 @@
 #[non_exhaustive]
 pub enum DownloadEvent {
     /// Emitted once, immediately before the transfer stage begins.
+    ///
+    /// Deprecated: it is still sent, back-to-back with `Prepared` and just
+    /// before [`Started`](Self::Started), which carries the same "the transfer
+    /// stage begins" signal plus the compressed total. Removed in `v1.4.0`.
+    #[deprecated(
+        since = "1.2.3",
+        note = "use `DownloadEvent::Started`; removed in 1.4.0"
+    )]
     Preparing,
     /// Emitted once, immediately after `Preparing` with no work in between —
     /// a stage marker, not evidence that any preparation actually happened.
+    ///
+    /// Deprecated: still sent, just before [`Started`](Self::Started). Removed
+    /// in `v1.4.0`.
+    #[deprecated(
+        since = "1.2.3",
+        note = "use `DownloadEvent::Started`; removed in 1.4.0"
+    )]
     Prepared,
+    /// Emitted once per transfer stage, after `Prepared` and before the first
+    /// `Downloading`.
+    ///
+    /// `compressed_total` is the sum of the manifest's compressed chunk sizes
+    /// over the units this stage will transfer: every chunk for
+    /// [`GogDl::download_game`](crate::GogDl::download_game), and only the
+    /// chunks that failed verification for
+    /// [`GogDl::repair_game`](crate::GogDl::repair_game). It is the
+    /// denominator for [`Progress`](Self::Progress): once the stage succeeds,
+    /// the `Progress` deltas minus the
+    /// [`ProgressRegression`](Self::ProgressRegression) deltas add up to it.
+    /// A retried chunk doesn't change that, since each failed attempt is taken
+    /// back.
+    Started {
+        /// Compressed bytes the stage will transfer.
+        compressed_total: u64,
+    },
     /// Emitted once per download unit (chunk), at the moment it is
     /// scheduled — not when it completes. With several units in flight
     /// concurrently, several `Downloading` events can precede the first
@@ -34,8 +66,8 @@ pub enum DownloadEvent {
     /// [`FileSizeVerificationEvent`](crate::FileSizeVerificationEvent)/
     /// [`VerificationEvent`](crate::VerificationEvent) reports. Summing
     /// every `Progress` payload will not converge to the install's on-disk
-    /// size, and there is currently no exposed compressed total to divide
-    /// by for a percentage.
+    /// size; divide the net sum (`Progress` minus `ProgressRegression`) by
+    /// [`Started::compressed_total`](Self::Started) for a percentage.
     ///
     /// **Emitted once per network read, by design.** This crate reports at
     /// the finest granularity it has — one event per `Bytes` chunk yielded

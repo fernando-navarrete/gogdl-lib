@@ -467,12 +467,17 @@ The paragraph below is the baseline it started from.)* `cargo build --lib` showe
   (`src/games/game_screenshots.rs:87`), with no explanation, silently drops the screenshot if fewer
   than 3 formatters exist.
 
-- [ ] **`DownloadEvent::Progress` reports compressed wire bytes while every sizing event reports
+- [x] **`DownloadEvent::Progress` reports compressed wire bytes while every sizing event reports
   uncompressed bytes.** `download_files` reports raw zlib `Bytes` frame lengths into `Progress`
   (`progress.report(chunk.len())`, `src/downloader/engine.rs:310`), while `DownloadUnit.size`
   and every sizing event payload are uncompressed. A percentage built from them never reaches 100%,
   and no compressed total is exposed. This is documented on the variant, and behavior is unchanged.
   `ProtonDownloadEvent` and `SavesDownloadEvent` get this right (both sides compressed).
+
+  Fixed in `v1.2.3`: `DownloadEvent::Started { compressed_total }` is sent once per download stage,
+  summed from the manifest's compressed chunk sizes over the units being transferred (only the
+  missing ones for `repair_game`). `progress_nets_to_the_compressed_total_with_a_retried_chunk` pins
+  that `Progress` minus `ProgressRegression` equals it.
 
 - [ ] **`GameDetails.id` and `GameBuilds.game_title` are `#[serde(skip)]` and never assigned.**
   They are always `0` (`src/games/game_details.rs:14`) and `""` (`src/games/game_build.rs:30`).
@@ -609,8 +614,11 @@ The paragraph below is the baseline it started from.)* `cargo build --lib` showe
   (with `rustix`/`linux-raw-sys`) by default. The crate never reads xattrs, so
   `default-features = false` is worth checking there too.
 
-- [ ] **`DownloadEvent::Preparing`/`Prepared` are emitted back-to-back with no work between them.**
+- [x] **`DownloadEvent::Preparing`/`Prepared` are emitted back-to-back with no work between them.**
   `engine.rs:253-255`. Collapse them, or do real work in between.
+
+  Deprecated in `v1.2.3`, removed in `v1.4.0`: both are `#[deprecated]` and still sent, followed by
+  `DownloadEvent::Started`.
 
 - [x] **`v1.0.1`'s tag doesn't match its `Cargo.toml`, and `main` is ahead of the newest tag.**
   `v1.0.1` (`8682797`) was tagged with `version = "1.0.0"` still in `Cargo.toml`, so a `Cargo.lock`

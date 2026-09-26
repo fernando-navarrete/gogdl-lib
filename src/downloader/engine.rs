@@ -243,9 +243,15 @@ impl Downloader {
         path_resolver: &PathResolver,
         tx: mpsc::UnboundedSender<DownloadEvent>,
     ) -> Result<(), DownloadError> {
-        tx.send(DownloadEvent::Preparing).ok();
-
-        tx.send(DownloadEvent::Prepared).ok();
+        #[allow(deprecated)]
+        {
+            tx.send(DownloadEvent::Preparing).ok();
+            tx.send(DownloadEvent::Prepared).ok();
+        }
+        tx.send(DownloadEvent::Started {
+            compressed_total: download_units.iter().map(|u| u.compressed_size).sum(),
+        })
+        .ok();
         stream::iter(download_units)
             .map(Ok::<DownloadUnit, DownloadError>)
             .try_for_each_concurrent(self.threads, |download_unit| {
@@ -639,7 +645,7 @@ mod tests {
             md5: md5_hex(raw),
             size: raw.len() as u64,
             compressed_md5: format!("{n:02x}{}", "ab".repeat(15)),
-            _compressed_size: 0,
+            compressed_size: zlib(raw).len() as u64,
             path,
             offset: 0,
             file_type: FileType::DepotFile,
@@ -696,10 +702,20 @@ mod tests {
     /// Runs `download_files` and returns its result, the net bytes reported
     /// (`Progress` minus `ProgressRegression`) and the gross `Progress` sum.
     async fn run(h: &Harness, units: Vec<DownloadUnit>) -> (Result<(), DownloadError>, i64, i64) {
+        let (result, net, gross, _) = run_with_total(h, units).await;
+        (result, net, gross)
+    }
+
+    /// Like `run`, plus the `compressed_total` of the one `Started` event.
+    async fn run_with_total(
+        h: &Harness,
+        units: Vec<DownloadUnit>,
+    ) -> (Result<(), DownloadError>, i64, i64, u64) {
         let resolver = PathResolver::new(h.dir.path().to_path_buf()).await.unwrap();
         let (tx, mut rx) = mpsc::unbounded_channel();
         let result = h.downloader.download_files(units, &resolver, tx).await;
         let (mut net, mut gross) = (0i64, 0i64);
+        let mut totals = Vec::new();
         while let Some(event) = rx.recv().await {
             match event {
                 DownloadEvent::Progress(n) => {
@@ -707,10 +723,12 @@ mod tests {
                     gross += n as i64;
                 }
                 DownloadEvent::ProgressRegression(n) => net -= n as i64,
+                DownloadEvent::Started { compressed_total } => totals.push(compressed_total),
                 _ => {}
             }
         }
-        (result, net, gross)
+        assert_eq!(totals.len(), 1, "`Started` is sent exactly once");
+        (result, net, gross, totals[0])
     }
 
     /// Fixture units share one product, so a harness needs the dir before
@@ -801,6 +819,27 @@ mod tests {
         assert_eq!(net, good.len() as i64);
         assert!(gross > net, "the first attempt's bytes were reported too");
         assert_eq!(std::fs::read(file).unwrap(), raw);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn progress_nets_to_the_compressed_total_with_a_retried_chunk() {
+        let h = harness(1).await;
+        let (a, b) = (b"the chunk fetched first time", b"the chunk fetched twice");
+        let (ua, ub) = (unit(&h.dir, 1, a, PRODUCT), unit(&h.dir, 2, b, PRODUCT));
+        h.server
+            .script(&chunk_path(&ua.compressed_md5), vec![Reply::Body(zlib(a))]);
+        h.server.script(
+            &chunk_path(&ub.compressed_md5),
+            vec![Reply::Body(zlib(b"the wrong bytes")), Reply::Body(zlib(b))],
+        );
+        let expected = (zlib(a).len() + zlib(b).len()) as u64;
+
+        let (result, net, gross, total) = run_with_total(&h, vec![ua, ub]).await;
+
+        result.unwrap();
+        assert_eq!(total, expected);
+        assert_eq!(net, expected as i64);
+        assert!(gross > net, "the bad attempt was reported, then taken back");
     }
 
     #[tokio::test]
@@ -1122,8 +1161,11 @@ mod tests {
             },
             DownloadStageEvent::FileAllocationError() => "alloc:Error".to_string(),
             DownloadStageEvent::DownloadStage(e) => match e {
+                #[allow(deprecated)]
                 DownloadEvent::Preparing => "dl:Preparing".to_string(),
+                #[allow(deprecated)]
                 DownloadEvent::Prepared => "dl:Prepared".to_string(),
+                DownloadEvent::Started { .. } => "dl:Started".to_string(),
                 DownloadEvent::Downloading => "dl:Downloading".to_string(),
                 DownloadEvent::Progress(_) => "dl:Progress".to_string(),
                 DownloadEvent::ProgressRegression(_) => "dl:ProgressRegression".to_string(),
@@ -1206,6 +1248,7 @@ mod tests {
                 "alloc:Success c.bin",
                 "dl:Preparing",
                 "dl:Prepared",
+                "dl:Started",
                 "dl:Downloading",
                 "dl:Progress",
                 "dl:Downloading",
@@ -1242,6 +1285,7 @@ mod tests {
                 "verify:Verified c.bin",
                 "dl:Preparing",
                 "dl:Prepared",
+                "dl:Started",
                 "dl:Downloading",
                 "dl:Progress",
                 "dl:Downloading",
@@ -1282,6 +1326,7 @@ mod tests {
                 "size:Success a.bin",
                 "dl:Preparing",
                 "dl:Prepared",
+                "dl:Started",
                 "dl:Downloading",
                 "dl:Progress",
             ])

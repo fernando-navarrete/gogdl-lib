@@ -11,7 +11,7 @@ pub struct DownloadUnit {
     pub md5: String,
     pub size: u64,
     pub compressed_md5: String,
-    pub _compressed_size: u64,
+    pub compressed_size: u64,
     pub path: String,
     pub offset: u64,
     pub file_type: FileType,

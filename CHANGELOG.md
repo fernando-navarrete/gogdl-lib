@@ -4,6 +4,17 @@ One section per tag, newest first. Consumers pin this crate by git tag. A change
 behind an unchanged signature is called out as **Behavior change**, and a signature change as
 **Breaking**. The `v0.x` and `-restart` tags predate this file and aren't covered.
 
+## 1.2.3
+
+* `DownloadEvent::Started { compressed_total: u64 }` is sent once per download stage, after
+  `Prepared` and before the first `Downloading`. It is the sum of the chunks' compressed sizes over
+  the units being transferred (only the missing ones for `repair_game`), so a percentage can reach
+  100%: on success the `Progress` deltas minus the `ProgressRegression` deltas add up to it. Additive
+  (`DownloadEvent` is `#[non_exhaustive]`), and the existing events keep their order.
+* `DownloadEvent::Preparing` and `Prepared` are `#[deprecated]`. They are still sent, back-to-back,
+  and are removed in `v1.4.0`. A consumer that matches them and builds with `-D warnings` gets a
+  deprecation lint until it moves to `Started` or adds `#[allow(deprecated)]`.
+
 ## 1.2.2
 
 * `download_game` and `repair_game` run one shared pipeline (size verification, allocation, and for

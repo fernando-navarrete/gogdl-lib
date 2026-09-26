@@ -159,8 +159,9 @@ Follow-up patches (`v1.2.1+`), one per tag:
    "resume interrupted downloads").
 2. `v1.2.2`: `download` and `repair` share one pipeline instead of two copies (GAPS "Medium —
    duplication & consistency"). "`download` skips chunks that already verify" moved to `v1.3.0`.
-3. `v1.2.3`: `DownloadEvent::Progress` exposes a compressed total so a percentage can reach 100%,
-   and `Preparing`/`Prepared` collapse into one event.
+3. `v1.2.3`: `DownloadEvent::Started { compressed_total }` gives `Progress` a denominator so a
+   percentage can reach 100%, and `Preparing`/`Prepared` are deprecated in its favor (still sent;
+   removed in `v1.4.0`).
 
 ## v1.3.0 — Library and account (for bridge `v1.4.0` / Lumen `v1.4.0`)
 
@@ -199,6 +200,7 @@ the bridge migrates once.
   (bridge §7.3 auth part, GAPS "Medium — duplication & consistency").
 - `GogDlError::SavesError(#[from] SavesError)`, and the four saves methods return `GogDlError`
   (GAPS "Medium — cloud saves").
+- Remove `DownloadEvent::Preparing` and `Prepared`, deprecated in `v1.2.3`.
 - Remove the dead `Http`/`UrlParseError`/`NetworkError`/`DecodeError`/`DeflateError` variants, and
   `FileSystemError`'s `FileMetadataError` and `FileCreationError`, which no public method returns.
 - Remove `SaveFile::relative_path`, and either export or un-`pub` the path sanitizers from

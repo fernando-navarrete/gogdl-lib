@@ -66,7 +66,7 @@ impl DepotFile {
                     md5: chunk.md5.clone(),
                     size: chunk.size,
                     compressed_md5: chunk.compressed_md5.clone(),
-                    _compressed_size: chunk.compressed_size,
+                    compressed_size: chunk.compressed_size,
                     path: self.path.clone(),
                     offset,
                     file_type: match self.file_type.as_ref() {

@@ -440,6 +440,8 @@ impl GogDl {
     /// Each chunk transport failure retries up to 6 times and each MD5
     /// mismatch up to 3 times, both with jittered exponential backoff; see
     /// [`crate::DownloadEvent`] for what the download stage reports as it goes.
+    /// The stage opens with [`DownloadEvent::Started`](crate::DownloadEvent::Started),
+    /// whose `compressed_total` is the denominator for the `Progress` deltas.
     /// A secure-link failure that a retry can't change (an unowned product or
     /// an invalid product id) is returned at once, without retrying.
     ///

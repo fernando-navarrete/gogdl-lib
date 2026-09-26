@@ -80,11 +80,13 @@ fn proton_releases_deserialize_from_captured_responses() {
 }
 
 #[test]
+#[allow(deprecated)]
 fn download_events_can_be_built_and_matched() {
     fn label(event: &DownloadEvent) -> &'static str {
         match event {
             DownloadEvent::Preparing => "preparing",
             DownloadEvent::Prepared => "prepared",
+            DownloadEvent::Started { .. } => "started",
             DownloadEvent::Downloading => "downloading",
             DownloadEvent::Progress(_) => "progress",
             DownloadEvent::ProgressRegression(_) => "regression",
@@ -94,6 +96,9 @@ fn download_events_can_be_built_and_matched() {
     let events = [
         DownloadEvent::Preparing,
         DownloadEvent::Prepared,
+        DownloadEvent::Started {
+            compressed_total: 10,
+        },
         DownloadEvent::Downloading,
         DownloadEvent::Progress(1),
         DownloadEvent::ProgressRegression(1),
@@ -104,6 +109,7 @@ fn download_events_can_be_built_and_matched() {
         [
             "preparing",
             "prepared",
+            "started",
             "downloading",
             "progress",
             "regression"
