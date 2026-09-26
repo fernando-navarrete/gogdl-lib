@@ -10,8 +10,8 @@ numbered.
 - **Patch** (`1.x.y`): one tag per small, self-contained fix or addition.
 - **Minor** (`1.x.0`): a big update, meaning a feature set or cross-cutting refactor. Patches then
   continue from `.1` under that minor.
-- Tags use the existing `vX.Y.Z` format. `v1.1.0`–`v1.1.5` shipped (the foundation line), so the
-  next stage is **`v1.2.0`**. The old `-restart`/`-debug` tags stay, but nothing new is tagged that way.
+- Tags use the existing `vX.Y.Z` format. `v1.1.0`–`v1.1.6` and `v1.2.0`–`v1.2.3` shipped, so the
+  next stage is **`v1.3.0`**. The old `-restart`/`-debug` tags stay, but nothing new is tagged that way.
 - For each release: bump `version` in `Cargo.toml` to match the tag (the `v1.0.1` mismatch in GAPS
   "Low — style / clippy" must not happen again), tick the item(s) in `GAPS.md`, add a
   `CHANGELOG.md` entry, commit, then tag.
@@ -41,7 +41,7 @@ later as its own patch.
 | Lumen stage | Bridge release | Needs from `gogdl-lib` (bridge GAPS §7 / Lumen D#) | `gogdl-lib` release |
 |---|---|---|---|
 | (none, internal) | `v1.2.0` ✅ | Test-constructible types (§7.1) | `v1.1.0` ✅ |
-| `v1.3.0` Download management | `v1.3.0` | Cancel-safe contract (§7.2), download error kinds (§7.3), free-space query and mount fix (§7.4, D4, D5), no save truncation (§7.6 part), per-product sizes (§7.10), Proton cleanup on failure (D6) | `v1.2.0` |
+| `v1.3.0` Download management | `v1.3.0` | Cancel-safe contract (§7.2), download error kinds (§7.3), free-space query and mount fix (§7.4, D4, D5), no save truncation (§7.6 part), per-product sizes (§7.10), Proton cleanup on failure (D6) | `v1.2.0` ✅ |
 | `v1.4.0` Library and account | `v1.4.0` | `logout` (§7.5), owned games that don't silently shrink, cheaper title and DLC lookups | `v1.3.0` |
 | `v1.5.0` UI polish and packaging | `v1.5.0` | Login error kinds (§7.3 auth part), breaking error and API cleanup | `v1.4.0` |
 | `v1.6.0` Extras | — | Nothing | — |
@@ -117,7 +117,7 @@ Follow-up patches (`v1.1.1+`), one per tag:
    `CLAUDE.md` that lists which capabilities exist (GAPS "Medium — Proton", "Medium — missing
    coverage").
 
-## v1.2.0 — Download management (for bridge `v1.3.0` / Lumen `v1.3.0`)
+## v1.2.0 — Download management (for bridge `v1.3.0` / Lumen `v1.3.0`) ✅
 
 Everything the bridge's `v1.3.0` plan asks for in its "Dependencies on `gogdl-lib`" table, plus
 Lumen's D4–D6. The bridge ships fallbacks for all of them, and picks each one up as a `v1.3.x`
