@@ -157,13 +157,16 @@ patch, so this doesn't block it. It should still land before Lumen finishes its 
 Follow-up patches (`v1.2.1+`), one per tag:
 1. `v1.2.1`: `repair` skips checksumming the files it just allocated (resume speed for Lumen's
    "resume interrupted downloads").
-2. `v1.2.2`: `download` reuses `repair`'s pipeline instead of copying it, and skips chunks that
-   already verify (GAPS "Medium — duplication & consistency").
+2. `v1.2.2`: `download` and `repair` share one pipeline instead of two copies (GAPS "Medium —
+   duplication & consistency"). "`download` skips chunks that already verify" moved to `v1.3.0`.
 3. `v1.2.3`: `DownloadEvent::Progress` exposes a compressed total so a percentage can reach 100%,
    and `Preparing`/`Prepared` collapse into one event.
 
 ## v1.3.0 — Library and account (for bridge `v1.4.0` / Lumen `v1.4.0`)
 
+- `download_game` skips chunks that already verify, so it resumes like `repair_game` (GAPS "Medium
+  — duplication & consistency"). A **behavior change**: its events gain a `VerificationStage`. Moved
+  here from `v1.2.2`, since a patch can't change the event stream.
 - `GogDl::logout` (or `clear_auth`), which also drops the token observer (bridge §7.5). Without it
   the bridge falls back to `GogdlApi::reset()`.
 - `get_owned_games` stops silently dropping failed lookups: return the unresolved IDs next to the

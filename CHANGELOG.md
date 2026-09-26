@@ -4,6 +4,12 @@ One section per tag, newest first. Consumers pin this crate by git tag. A change
 behind an unchanged signature is called out as **Behavior change**, and a signature change as
 **Breaking**. The `v0.x` and `-restart` tags predate this file and aren't covered.
 
+## 1.2.2
+
+* `download_game` and `repair_game` run one shared pipeline (size verification, allocation, and for
+  `repair_game` checksum verification, then the transfer) instead of two copies of it. An internal
+  refactor: no signature, event stream or behavior changes.
+
 ## 1.2.1
 
 * **Behavior change:** `repair_game` no longer checksums chunks that file allocation just created

@@ -24,6 +24,14 @@ use crate::{
     secure_links::SecureLinksManager,
 };
 
+/// Which units `Downloader::pipeline` transfers.
+enum Units {
+    /// Every unit (`download`).
+    All,
+    /// Only those that fail checksum verification (`repair`).
+    Verified,
+}
+
 pub struct Downloader {
     pub client: HttpClient,
     pub secure_links: SecureLinksManager,
@@ -47,10 +55,54 @@ impl Downloader {
             checksums: Arc::default(),
         }
     }
+    /// Downloads every unit of `bundles`, whatever is already on disk.
+    pub async fn download(
+        &self,
+        bundles: Vec<ProductBundle>,
+        path: &str,
+        tx: mpsc::UnboundedSender<DownloadStageEvent>,
+    ) -> Result<(), DownloadError> {
+        self.pipeline(bundles, path, Units::All, tx).await
+    }
+
+    /// Downloads only the units that fail verification, and adds a
+    /// `VerificationStage` to the events.
     pub async fn repair(
         &self,
         bundles: Vec<ProductBundle>,
         path: &str,
+        tx: mpsc::UnboundedSender<DownloadStageEvent>,
+    ) -> Result<(), DownloadError> {
+        self.pipeline(bundles, path, Units::Verified, tx).await
+    }
+
+    /// Runs one stage: hands `run` the sending half of a fresh channel and
+    /// forwards what arrives on it to `tx`, wrapped as `wrap`, while `run`
+    /// executes. `run` must consume the sender so the channel closes.
+    async fn staged<E, T, F: Future<Output = T>>(
+        tx: &mpsc::UnboundedSender<DownloadStageEvent>,
+        wrap: fn(E) -> DownloadStageEvent,
+        run: impl FnOnce(mpsc::UnboundedSender<E>) -> F,
+    ) -> T {
+        let (stage_tx, mut stage_rx) = mpsc::unbounded_channel();
+        let stage = run(stage_tx);
+        let forward = async {
+            while let Some(event) = stage_rx.recv().await {
+                tx.send(wrap(event)).ok();
+            }
+        };
+        let (out, _) = tokio::join!(stage, forward);
+        out
+    }
+
+    /// The stages `download` and `repair` share: size verification,
+    /// allocation, then (for `Units::Verified`) checksum verification, and
+    /// the transfer.
+    async fn pipeline(
+        &self,
+        bundles: Vec<ProductBundle>,
+        path: &str,
+        units: Units,
         tx: mpsc::UnboundedSender<DownloadStageEvent>,
     ) -> Result<(), DownloadError> {
         let path_resolver = Arc::new(PathResolver::new(PathBuf::from(path)).await?);
@@ -61,18 +113,12 @@ impl Downloader {
             .collect::<Vec<DepotFile>>();
 
         // File size verification step
-        let (missing_files_tx, mut missing_files_rx) = mpsc::unbounded_channel();
-        let missing_files_fut =
-            self.verify_files_size(depot_files, path_resolver.clone(), missing_files_tx);
-        let tx_stage1 = tx.clone();
-        let progress_future = async move {
-            while let Some(event) = missing_files_rx.recv().await {
-                tx_stage1
-                    .send(DownloadStageEvent::FileSizeVerificationStage(event))
-                    .ok();
-            }
-        };
-        let (failed_files, _) = tokio::join!(missing_files_fut, progress_future);
+        let failed_files = Self::staged(
+            &tx,
+            DownloadStageEvent::FileSizeVerificationStage,
+            |stage_tx| self.verify_files_size(depot_files, path_resolver.clone(), stage_tx),
+        )
+        .await;
 
         // Where each failed file's old bytes end. `set_len` in stage 2 keeps
         // them and zero-fills everything past, so only that tail is known to
@@ -93,18 +139,11 @@ impl Downloader {
         path_resolver.check_free_space(required_space)?;
 
         // File allocation step
-        let (files_allocation_tx, mut files_allocation_rx) = mpsc::unbounded_channel();
-        let files_allocation_fut =
-            self.allocate_missing_files(missing_files, path_resolver.clone(), files_allocation_tx);
-        let tx_stage2 = tx.clone();
-        let progress_future = async move {
-            while let Some(event) = files_allocation_rx.recv().await {
-                tx_stage2
-                    .send(DownloadStageEvent::FileAllocationStage(event))
-                    .ok();
-            }
-        };
-        let (files_allocation_error, _) = tokio::join!(files_allocation_fut, progress_future);
+        let files_allocation_error =
+            Self::staged(&tx, DownloadStageEvent::FileAllocationStage, |stage_tx| {
+                self.allocate_missing_files(missing_files, path_resolver.clone(), stage_tx)
+            })
+            .await;
 
         // Check if all files were allocated successfully, if not, we may have run out of disk space
         if !files_allocation_error.is_empty() {
@@ -113,138 +152,58 @@ impl Downloader {
         }
         drop(files_allocation_error);
 
-        // Units in a range stage 2 just allocated hold zeros and can't match,
-        // so they go straight to the download list without an MD5. They still
-        // get the `ChecksumMismatch` that hashing the zeros used to produce,
-        // so a consumer counting verification events sees the same number.
-        // (A chunk whose real content is all zeros used to come out `Verified`
-        // here, and is now re-fetched.)
-        let (fresh_units, download_units): (Vec<_>, Vec<_>) =
-            DownloadUnit::from_product_bundles(bundles)
-                .into_iter()
-                .partition(|unit| {
-                    old_lengths
-                        .get(&unit.path)
-                        .is_some_and(|&old_len| unit.offset >= old_len)
-                });
-        let (verification_tx, mut verification_rx) = mpsc::unbounded_channel();
-        for unit in &fresh_units {
-            verification_tx
-                .send(VerificationEvent::ChecksumMismatch(
-                    unit.path.clone(),
-                    unit.size,
-                ))
-                .ok();
-        }
-        let missing_units_fut =
-            self.verify_download_units(download_units, path_resolver.clone(), verification_tx);
-        let tx_stage3 = tx.clone();
-        let progress_future = async move {
-            while let Some(event) = verification_rx.recv().await {
-                tx_stage3
-                    .send(DownloadStageEvent::VerificationStage(event))
-                    .ok();
+        let download_units = match units {
+            Units::All => DownloadUnit::from_product_bundles(bundles),
+            Units::Verified => {
+                // Units in a range stage 2 just allocated hold zeros and can't
+                // match, so they go straight to the download list without an
+                // MD5. They still get the `ChecksumMismatch` that hashing the
+                // zeros used to produce, so a consumer counting verification
+                // events sees the same number. (A chunk whose real content is
+                // all zeros used to come out `Verified` here, and is now
+                // re-fetched.)
+                let (fresh_units, to_verify): (Vec<_>, Vec<_>) =
+                    DownloadUnit::from_product_bundles(bundles)
+                        .into_iter()
+                        .partition(|unit| {
+                            old_lengths
+                                .get(&unit.path)
+                                .is_some_and(|&old_len| unit.offset >= old_len)
+                        });
+                let fresh = &fresh_units;
+                let resolver = path_resolver.clone();
+                let unverified_units = Self::staged(
+                    &tx,
+                    DownloadStageEvent::VerificationStage,
+                    |stage_tx| async move {
+                        for unit in fresh {
+                            stage_tx
+                                .send(VerificationEvent::ChecksumMismatch(
+                                    unit.path.clone(),
+                                    unit.size,
+                                ))
+                                .ok();
+                        }
+                        self.verify_download_units(to_verify, resolver, stage_tx)
+                            .await
+                    },
+                )
+                .await;
+                let missing_units = [fresh_units, unverified_units].concat();
+
+                if missing_units.is_empty() {
+                    // All units verified, no missing chunks
+                    return Ok(());
+                }
+                missing_units
             }
         };
-        let (unverified_units, _) = tokio::join!(missing_units_fut, progress_future);
-        let missing_units = [fresh_units, unverified_units].concat();
-
-        if missing_units.is_empty() {
-            // All units verified, no missing chunks
-            return Ok(());
-        }
 
         // Download step
-        let (files_download_tx, mut files_download_rx) = mpsc::unbounded_channel();
-        let downloader_future =
-            self.download_files(missing_units, &path_resolver, files_download_tx);
-        let tx_stage4 = tx.clone();
-        let progress_future = async move {
-            while let Some(event) = files_download_rx.recv().await {
-                tx_stage4
-                    .send(DownloadStageEvent::DownloadStage(event))
-                    .ok();
-            }
-        };
-        let (res, _) = tokio::join!(downloader_future, progress_future);
-        res?;
-        Ok(())
-    }
-    pub async fn download(
-        &self,
-        bundles: Vec<ProductBundle>,
-        path: &str,
-        tx: mpsc::UnboundedSender<DownloadStageEvent>,
-    ) -> Result<(), DownloadError> {
-        let path_resolver = Arc::new(PathResolver::new(PathBuf::from(path)).await?);
-
-        let depot_files = bundles
-            .iter()
-            .flat_map(|bundle| bundle.product_files.clone())
-            .collect::<Vec<DepotFile>>();
-
-        // File size verification step
-        let (missing_files_tx, mut missing_files_rx) = mpsc::unbounded_channel();
-        let missing_files_fut =
-            self.verify_files_size(depot_files, path_resolver.clone(), missing_files_tx);
-        let tx_stage1 = tx.clone();
-        let progress_future = async move {
-            while let Some(event) = missing_files_rx.recv().await {
-                tx_stage1
-                    .send(DownloadStageEvent::FileSizeVerificationStage(event))
-                    .ok();
-            }
-        };
-        let (failed_files, _) = tokio::join!(missing_files_fut, progress_future);
-        let missing_files: Vec<DepotFile> =
-            failed_files.into_iter().map(|(file, _)| file).collect();
-
-        // Check if there is space available on disk
-        let required_space = missing_files
-            .iter()
-            .map(|depot_file| depot_file.size().unwrap_or(0))
-            .sum::<u64>();
-
-        path_resolver.check_free_space(required_space)?;
-
-        // File allocation step
-        let (files_allocation_tx, mut files_allocation_rx) = mpsc::unbounded_channel();
-        let files_allocation_fut =
-            self.allocate_missing_files(missing_files, path_resolver.clone(), files_allocation_tx);
-        let tx_stage2 = tx.clone();
-        let progress_future = async move {
-            while let Some(event) = files_allocation_rx.recv().await {
-                tx_stage2
-                    .send(DownloadStageEvent::FileAllocationStage(event))
-                    .ok();
-            }
-        };
-        let (files_allocation_error, _) = tokio::join!(files_allocation_fut, progress_future);
-
-        // Check if all files were allocated successfully, if not, we may have run out of disk space
-        if !files_allocation_error.is_empty() {
-            tx.send(DownloadStageEvent::FileAllocationError()).ok();
-            return Err(DownloadError::FileAllocationError);
-        }
-        drop(files_allocation_error);
-
-        // Download step
-
-        let (files_download_tx, mut files_download_rx) = mpsc::unbounded_channel();
-        let download_units = DownloadUnit::from_product_bundles(bundles);
-        let downloader_future =
-            self.download_files(download_units, &path_resolver, files_download_tx);
-        let tx_stage3 = tx.clone();
-        let progress_future = async move {
-            while let Some(event) = files_download_rx.recv().await {
-                tx_stage3
-                    .send(DownloadStageEvent::DownloadStage(event))
-                    .ok();
-            }
-        };
-        let (res, _) = tokio::join!(downloader_future, progress_future);
-        res?;
-        Ok(())
+        Self::staged(&tx, DownloadStageEvent::DownloadStage, |stage_tx| {
+            self.download_files(download_units, &path_resolver, stage_tx)
+        })
+        .await
     }
     pub async fn verify(
         &self,

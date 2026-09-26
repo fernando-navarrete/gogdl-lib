@@ -1,7 +1,7 @@
 # GAPS.md
 
 Open findings for `gogdl-lib`. Current tree: **`feat/v1.2.0-download-management`**, branched from
-`main` at `a04f0e9`, `Cargo.toml` at `1.2.1`. The newest tag is **`v1.2.0`** (`v1.1.6` was cut on this branch too); the `v1.1.x` line
+`main` at `a04f0e9`, `Cargo.toml` at `1.2.2`. The newest tag is **`v1.2.0`** (`v1.1.6` was cut on this branch too); the `v1.1.x` line
 (tests, CI/CD and five patches) is merged into `main` and its decisions are in
 `devlog/v1.1.0-foundation.md`. `v1.1.6` and `v1.2.0`–`v1.2.3` are cut on this branch
 (`v1.2.0-DOWNLOAD-MANAGEMENT.md`), which fast-forwards into `main` after `v1.2.3`. `v1.0.11` (`d5b43e6`) includes the owned-products
@@ -354,7 +354,7 @@ The paragraph below is the baseline it started from.)* `cargo build --lib` showe
   Fixed in `v1.2.0`: `IncorrectGameId` and `ProductNotOwned` return at once, with no invalidation
   or backoff. The characterization test is flipped to one lookup and no elapsed time.
 
-- [ ] **`Downloader::repair` is a near-verbatim copy of `Downloader::download`.** `repair`
+- [x] **`Downloader::repair` is a near-verbatim copy of `Downloader::download`.** `repair`
   (`src/downloader/engine.rs:45-141`) and `download` (`:142-221`) are the same function apart
   from one inserted stage. Lines `51-105` of `repair` and `148-202` of `download` are identical:
   path resolver, the `depot_files` flat_map, size verification with its
@@ -364,11 +364,20 @@ The paragraph below is the baseline it started from.)* `cargo build --lib` showe
   unit (`:207`). `download` is expressible as `repair` with verification skipped, or both as a
   shared helper taking a "which units" closure.
 
+  Fixed in `v1.2.2`: both call `Downloader::pipeline`, which takes a `Units` (`All` or `Verified`)
+  and runs each stage through one `staged` helper, so stages 1-2 exist once. Tests pin each method's
+  stage sequence (`download_stage_sequence`, `repair_stage_sequence`, and the complete-install pair),
+  written before the refactor and unchanged after it.
+
 - [ ] **`download` re-downloads every chunk regardless of what's already correct on disk, so `repair`
   is the crate's only resume path.** `download` computes `missing_files`, then builds the transfer
   list from `DownloadUnit::from_product_bundles(bundles)` (`src/downloader/engine.rs:207`). That
   list covers every chunk of every file, including files that just verified as complete. Behavior
   is unchanged. The rustdoc on `GogDl::download_game`/`repair_game` says which one resumes.
+
+  Deferred to `v1.3.0` (ROADMAP): skipping verified chunks adds a `VerificationStage` to
+  `download_game`'s events, a behavior change, so it can't ship in a `v1.2.x` patch. Until then
+  `repair_game` is the resume path.
 
 - [x] **`repair` checksums the chunks of files it has just allocated.** Stage 2 allocates every file
   that failed size verification (`set_len`, `src/fs/path_resolver.rs:81`). Stage 3 then MD5s
