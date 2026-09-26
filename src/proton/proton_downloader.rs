@@ -101,13 +101,7 @@ impl ProtonDownloader {
 
         let path_resolver = PathResolver::new(path.to_path_buf()).await?;
 
-        let available_space = match path_resolver.get_free_space() {
-            Ok(space) => space,
-            Err(_) => return Err(ProtonError::CouldNotResolveFreeSpace),
-        };
-        if asset.size > available_space {
-            return Err(ProtonError::NotEnoughFreeSpace);
-        }
+        path_resolver.check_free_space(asset.size)?;
 
         let dest = path_resolver.base().to_path_buf();
 

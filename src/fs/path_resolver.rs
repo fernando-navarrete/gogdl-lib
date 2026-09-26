@@ -41,8 +41,11 @@ impl PathResolver {
         Ok(metadata.len())
     }
 
-    pub fn get_free_space(&self) -> Result<u64, FileSystemError> {
-        free_space_of(&self.canonical_base)
+    /// Checks that `required` bytes fit on the disk holding the base directory, with the same
+    /// lookup as [`free_space_at`].
+    pub fn check_free_space(&self, required: u64) -> Result<(), FreeSpaceShortfall> {
+        let disks = Disks::new_with_refreshed_list();
+        check_fits(&self.canonical_base, required, disk_entries(&disks))
     }
 
     pub async fn allocate_file(
@@ -224,20 +227,48 @@ impl PathResolver {
 
 /// Available bytes on the disk holding `path`, which needn't exist and is never created: the
 /// nearest existing ancestor stands in for it. The same lookup as
-/// [`PathResolver::get_free_space`], so a caller's pre-check and the download's own agree.
+/// [`PathResolver::check_free_space`], so a caller's pre-check and the download's own agree.
 pub async fn free_space_at(path: &Path) -> Result<u64, FileSystemError> {
     free_space_of(&nearest_existing_ancestor(path).await?)
 }
 
 fn free_space_of(canonical: &Path) -> Result<u64, FileSystemError> {
     let disks = Disks::new_with_refreshed_list();
-    let entries = disks
+    pick_disk(canonical, disk_entries(&disks))
+        .ok_or_else(|| FileSystemError::NoDiskMatchingPath(canonical.to_path_buf()))
+}
+
+/// `(mount point, available bytes)` per disk, in `sysinfo`'s order.
+fn disk_entries(disks: &Disks) -> impl Iterator<Item = (&Path, u64)> {
+    disks
         .list()
         .iter()
-        .map(|disk| (disk.mount_point(), disk.available_space()));
+        .map(|disk| (disk.mount_point(), disk.available_space()))
+}
 
-    pick_disk(canonical, entries)
-        .ok_or_else(|| FileSystemError::NoDiskMatchingPath(canonical.to_path_buf()))
+/// Why a free-space pre-flight check failed, with the numbers the caller reports.
+#[derive(Debug, PartialEq, Eq)]
+pub enum FreeSpaceShortfall {
+    /// No disk matches the path.
+    Unresolved(PathBuf),
+    /// The disk holding the path has less than `required` bytes available.
+    NotEnough { required: u64, available: u64 },
+}
+
+/// [`pick_disk`] and the comparison against `required`, over any disk list.
+fn check_fits<'a>(
+    base: &Path,
+    required: u64,
+    disks: impl IntoIterator<Item = (&'a Path, u64)>,
+) -> Result<(), FreeSpaceShortfall> {
+    match pick_disk(base, disks) {
+        None => Err(FreeSpaceShortfall::Unresolved(base.to_path_buf())),
+        Some(available) if required > available => Err(FreeSpaceShortfall::NotEnough {
+            required,
+            available,
+        }),
+        Some(_) => Ok(()),
+    }
 }
 
 /// The canonical form of the longest prefix of `path` that exists. A relative path that runs out
@@ -367,6 +398,35 @@ mod tests {
             (Path::new("/mnt"), 6),
         ];
         assert_eq!(pick_disk(Path::new("/mnt/x"), disks), Some(6));
+    }
+
+    #[test]
+    fn a_shortfall_reports_both_numbers() {
+        let base = Path::new("/media/gamedisk/Games");
+        assert_eq!(
+            check_fits(base, 10, mounts()),
+            Err(FreeSpaceShortfall::NotEnough {
+                required: 10,
+                available: 3
+            })
+        );
+    }
+
+    #[test]
+    fn an_exact_fit_passes() {
+        assert_eq!(
+            check_fits(Path::new("/media/gamedisk/Games"), 3, mounts()),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn no_matching_disk_reports_the_path() {
+        let base = Path::new("relative/dir");
+        assert_eq!(
+            check_fits(base, 1, mounts()),
+            Err(FreeSpaceShortfall::Unresolved(base.to_path_buf()))
+        );
     }
 
     #[tokio::test]

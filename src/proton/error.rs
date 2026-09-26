@@ -1,7 +1,9 @@
+use std::path::PathBuf;
+
 use thiserror::Error;
 
 use crate::ClientError;
-use crate::fs::FileSystemError;
+use crate::fs::{FileSystemError, FreeSpaceShortfall};
 
 /// Errors from listing ([`GogDl::get_proton_releases`](crate::GogDl::get_proton_releases)),
 /// fetching one ([`GogDl::get_proton_release_by_tag`](crate::GogDl::get_proton_release_by_tag))
@@ -47,14 +49,62 @@ pub enum ProtonError {
 
     /// Free space on the destination disk couldn't be determined (e.g. no
     /// mounted disk matches the resolved destination path).
-    #[error("Could not resolve free space")]
-    CouldNotResolveFreeSpace,
+    #[error("Could not resolve free space for {}", path.display())]
+    CouldNotResolveFreeSpace {
+        /// The resolved destination path no disk matched.
+        path: PathBuf,
+    },
 
     /// The compressed tarball is larger than the free space on the
     /// destination disk. Note this is a *lower bound* — the extracted tree
     /// is considerably larger than the tarball, so a download that clears
     /// this check can still run the disk out of space mid-extraction and
     /// fail with [`Io`](ProtonError::Io).
-    #[error("Not enough free space")]
-    NotEnoughFreeSpace,
+    #[error("Not enough free space: {required} bytes required, {available} available")]
+    NotEnoughFreeSpace {
+        /// The compressed tarball's size in bytes.
+        required: u64,
+        /// Bytes available on the destination disk.
+        available: u64,
+    },
+}
+
+impl From<FreeSpaceShortfall> for ProtonError {
+    fn from(shortfall: FreeSpaceShortfall) -> Self {
+        match shortfall {
+            FreeSpaceShortfall::Unresolved(path) => Self::CouldNotResolveFreeSpace { path },
+            FreeSpaceShortfall::NotEnough {
+                required,
+                available,
+            } => Self::NotEnoughFreeSpace {
+                required,
+                available,
+            },
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_shortfall_keeps_its_numbers_and_path() {
+        let err = ProtonError::from(FreeSpaceShortfall::NotEnough {
+            required: 10,
+            available: 3,
+        });
+        assert!(matches!(
+            err,
+            ProtonError::NotEnoughFreeSpace {
+                required: 10,
+                available: 3
+            }
+        ));
+        let err = ProtonError::from(FreeSpaceShortfall::Unresolved(PathBuf::from("/x")));
+        assert!(matches!(
+            err,
+            ProtonError::CouldNotResolveFreeSpace { ref path } if path == "/x"
+        ));
+    }
 }

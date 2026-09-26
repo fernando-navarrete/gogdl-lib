@@ -1,10 +1,14 @@
 use std::io;
+use std::path::PathBuf;
 
 use reqwest::StatusCode;
 use thiserror::Error;
 
 use crate::{
-    client::ClientError, depot::DepotError, fs::FileSystemError, games::GamesError,
+    client::ClientError,
+    depot::DepotError,
+    fs::{FileSystemError, FreeSpaceShortfall},
+    games::GamesError,
     secure_links::SecureLinksError,
 };
 
@@ -91,13 +95,21 @@ pub enum DownloadError {
 
     /// Free space on the destination disk couldn't be determined (e.g. no
     /// mounted disk matches the resolved install path).
-    #[error("Could not resolve free space")]
-    CouldNotResolveFreeSpace,
+    #[error("Could not resolve free space for {}", path.display())]
+    CouldNotResolveFreeSpace {
+        /// The resolved install path no disk matched.
+        path: PathBuf,
+    },
 
     /// The transfer needs more free space than is available on the
     /// destination disk.
-    #[error("Not enough free space")]
-    NotEnoughFreeSpace,
+    #[error("Not enough free space: {required} bytes required, {available} available")]
+    NotEnoughFreeSpace {
+        /// Bytes the transfer needs.
+        required: u64,
+        /// Bytes available on the destination disk.
+        available: u64,
+    },
 
     /// A chunk's decompressed MD5 didn't match the manifest after every
     /// retry was exhausted.
@@ -124,4 +136,44 @@ pub enum DownloadError {
         /// The actual MD5 hash of the chunk.
         actual: String,
     },
+}
+
+impl From<FreeSpaceShortfall> for DownloadError {
+    fn from(shortfall: FreeSpaceShortfall) -> Self {
+        match shortfall {
+            FreeSpaceShortfall::Unresolved(path) => Self::CouldNotResolveFreeSpace { path },
+            FreeSpaceShortfall::NotEnough {
+                required,
+                available,
+            } => Self::NotEnoughFreeSpace {
+                required,
+                available,
+            },
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_shortfall_keeps_its_numbers_and_path() {
+        let err = DownloadError::from(FreeSpaceShortfall::NotEnough {
+            required: 10,
+            available: 3,
+        });
+        assert!(matches!(
+            err,
+            DownloadError::NotEnoughFreeSpace {
+                required: 10,
+                available: 3
+            }
+        ));
+        let err = DownloadError::from(FreeSpaceShortfall::Unresolved(PathBuf::from("/x")));
+        assert!(matches!(
+            err,
+            DownloadError::CouldNotResolveFreeSpace { ref path } if path == "/x"
+        ));
+    }
 }

@@ -75,13 +75,7 @@ impl Downloader {
             .map(|depot_file| depot_file.size().unwrap_or(0))
             .sum::<u64>();
 
-        let available_space = match path_resolver.get_free_space() {
-            Ok(space) => space,
-            Err(_) => return Err(DownloadError::CouldNotResolveFreeSpace),
-        };
-        if required_space > available_space {
-            return Err(DownloadError::NotEnoughFreeSpace);
-        }
+        path_resolver.check_free_space(required_space)?;
 
         // File allocation step
         let (files_allocation_tx, mut files_allocation_rx) = mpsc::unbounded_channel();
@@ -172,13 +166,7 @@ impl Downloader {
             .map(|depot_file| depot_file.size().unwrap_or(0))
             .sum::<u64>();
 
-        let available_space = match path_resolver.get_free_space() {
-            Ok(space) => space,
-            Err(_) => return Err(DownloadError::CouldNotResolveFreeSpace),
-        };
-        if required_space > available_space {
-            return Err(DownloadError::NotEnoughFreeSpace);
-        }
+        path_resolver.check_free_space(required_space)?;
 
         // File allocation step
         let (files_allocation_tx, mut files_allocation_rx) = mpsc::unbounded_channel();

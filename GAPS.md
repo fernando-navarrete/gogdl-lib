@@ -555,7 +555,8 @@ The paragraph below is the baseline it started from.)* `cargo build --lib` showe
 - [ ] **Vestigial `let _ = body;` in `HttpClient::fetch`.** `http.rs:53` discards a `body` that
   `:59` then returns as `body: body`.
 
-- [ ] **The free-space check discards its own error detail, in three places.**
+- [x] **The free-space check discards its own error detail, in three places.** Fixed on this branch
+  for `v1.2.0`: the errors carry `required`/`available` and the path.
   `Downloader::download` (`engine.rs:177`), `repair` (`:80`) and
   `ProtonDownloader::download_proton_release` (`proton_downloader.rs:106`) each map
   `get_free_space()`'s `Err(_)` to a unit `CouldNotResolveFreeSpace`. That throws away the
