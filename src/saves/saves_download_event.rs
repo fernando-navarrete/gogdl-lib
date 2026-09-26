@@ -14,8 +14,10 @@ use std::path::PathBuf;
 ///
 /// # Constructing in tests
 ///
-/// Every variant is public, so build them directly. The type does not implement
-/// `Debug` or `PartialEq`; match with `matches!` instead of `assert_eq!`.
+/// Every variant is public, so build them directly. The enum is `#[non_exhaustive]`, so a
+/// `match` outside the crate needs a wildcard arm (new variants can arrive in a patch). The type
+/// does not implement `Debug` or
+/// `PartialEq`; match with `matches!` instead of `assert_eq!`.
 ///
 /// ```
 /// use gogdl_lib::SavesDownloadEvent;
@@ -23,6 +25,7 @@ use std::path::PathBuf;
 /// let event = SavesDownloadEvent::Preparing { total_files: 1, total_bytes: 9 };
 /// assert!(matches!(event, SavesDownloadEvent::Preparing { total_files: 1, .. }));
 /// ```
+#[non_exhaustive]
 pub enum SavesDownloadEvent {
     /// Emitted once, before the first file. Describes the whole job; both
     /// fields are `0` when the game has no cloud saves.

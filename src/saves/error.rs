@@ -10,6 +10,9 @@ use crate::{ClientError, DepotError, GamesError};
 /// [`GogDl::get_remote_config`](crate::GogDl::get_remote_config),
 /// [`GogDl::download_save_files`](crate::GogDl::download_save_files) and
 /// [`GogDl::upload_save_files`](crate::GogDl::upload_save_files).
+///
+/// `#[non_exhaustive]`: a `match` outside the crate needs a wildcard arm.
+#[non_exhaustive]
 #[derive(Debug, Error)]
 pub enum SavesError {
     /// Reading the session's refresh token, the token exchange with
@@ -56,8 +59,7 @@ pub enum SavesError {
 
     /// Creating or resolving a path under the caller's save directory
     /// failed, including a cloud file name that would resolve outside it.
-    /// The inner `FileSystemError` type is crate-private; only its `Display`
-    /// output (via this variant's own message) is visible here.
+    /// The cause is a [`FileSystemError`](crate::FileSystemError).
     #[error("File system error: {0}")]
     FileSystemError(#[from] FileSystemError),
 

@@ -2,15 +2,17 @@
 //! so this file sees only the public API. The structs come from captured
 //! responses through `serde_json`; the event enums through their variants.
 //!
-//! Each enum helper matches exhaustively on purpose: a new variant is a
-//! public API change, and this stops compiling until it is looked at.
+//! The event and error enums are `#[non_exhaustive]`, so a `match` from outside the crate needs a
+//! wildcard arm. The guard that a new variant is looked at lives in the crate (`variant_guard`),
+//! which matches every variant with no wildcard.
 
 use gogdl_lib::{
-    DownloadEvent, DownloadStageEvent, FileAllocationEvent, FileSizeVerificationEvent, GameBuild,
-    GameBuilds, ProductDetails, ProtonDownloadEvent, ProtonGeRelease, ProtonGeReleasesPage,
-    SavesDownloadEvent, SavesUploadEvent, VerificationEvent,
+    Chunk, DepotFile, DownloadError, DownloadEvent, DownloadStageEvent, FileAllocationEvent,
+    FileSizeVerificationEvent, FileSystemError, GameBuild, GameBuilds, ProductDetails,
+    ProtonDownloadEvent, ProtonError, ProtonGeRelease, ProtonGeReleasesPage, SavesDownloadEvent,
+    SavesError, SavesUploadEvent, VerificationEvent,
 };
-use std::path::PathBuf;
+use std::{io, path::PathBuf};
 
 #[test]
 fn game_builds_deserialize_from_a_captured_listing() {
@@ -86,6 +88,7 @@ fn download_events_can_be_built_and_matched() {
             DownloadEvent::Downloading => "downloading",
             DownloadEvent::Progress(_) => "progress",
             DownloadEvent::ProgressRegression(_) => "regression",
+            _ => "other",
         }
     }
     let events = [
@@ -119,20 +122,24 @@ fn stage_events_can_wrap_every_inner_event() {
                 FileSizeVerificationEvent::FileSizeVerificationFailed(..) => "size/failed",
                 FileSizeVerificationEvent::FileSizeMismatch(..) => "size/mismatch",
                 FileSizeVerificationEvent::FileSizeVerificationSuccess(..) => "size/ok",
+                _ => "size/other",
             },
             DownloadStageEvent::FileAllocationStage(inner) => match inner {
                 FileAllocationEvent::FileWithNoChunks(..) => "alloc/no-chunks",
                 FileAllocationEvent::CouldNotResolvePath(..) => "alloc/no-path",
                 FileAllocationEvent::FileAllocationSuccess(..) => "alloc/ok",
+                _ => "alloc/other",
             },
             DownloadStageEvent::VerificationStage(inner) => match inner {
                 VerificationEvent::CouldNotResolvePath(..) => "verify/no-path",
                 VerificationEvent::FileNotFound(..) => "verify/not-found",
                 VerificationEvent::ChecksumMismatch(..) => "verify/mismatch",
                 VerificationEvent::Verified(..) => "verify/ok",
+                _ => "verify/other",
             },
             DownloadStageEvent::FileAllocationError() => "alloc-error",
             DownloadStageEvent::DownloadStage(_) => "download",
+            _ => "other",
         }
     }
     let p = || "a/b".to_string();
@@ -187,6 +194,7 @@ fn proton_download_events_can_be_built_and_matched() {
             ProtonDownloadEvent::Downloading { total_bytes } => assert_eq!(*total_bytes, 10),
             ProtonDownloadEvent::Progress(n) => assert_eq!(*n, 4),
             ProtonDownloadEvent::Extracted(path) => assert_eq!(path, "bin/proton"),
+            _ => unreachable!("built above"),
         }
     }
 }
@@ -215,6 +223,7 @@ fn saves_download_events_can_be_built_and_matched() {
             SavesDownloadEvent::FileStarted { .. } => "started",
             SavesDownloadEvent::Progress(_) => "progress",
             SavesDownloadEvent::FileFinished { .. } => "finished",
+            _ => "other",
         })
         .collect();
     assert_eq!(labels, ["preparing", "started", "progress", "finished"]);
@@ -241,7 +250,63 @@ fn saves_upload_events_can_be_built_and_matched() {
             SavesUploadEvent::FileStarted { .. } => "started",
             SavesUploadEvent::Progress(_) => "progress",
             SavesUploadEvent::FileFinished { .. } => "finished",
+            _ => "other",
         })
         .collect();
     assert_eq!(labels, ["preparing", "started", "progress", "finished"]);
+}
+
+#[test]
+fn depot_files_and_chunks_can_be_named_and_summed() {
+    // Shaped like GOG's manifest: camelCase chunk keys and a `type` field.
+    let files: Vec<DepotFile> = serde_json::from_str(
+        r#"[
+            {"path": "bin\\game.exe", "type": "DepotFile", "md5": "ff", "chunks": [
+                {"md5": "a", "size": 10, "compressedMd5": "ca", "compressedSize": 4},
+                {"md5": "b", "size": 5, "compressedMd5": "cb", "compressedSize": 3}]},
+            {"path": "empty", "type": "DepotDirectory"}
+        ]"#,
+    )
+    .unwrap();
+
+    fn compressed(chunks: &[Chunk]) -> u64 {
+        chunks.iter().map(|c| c.compressed_size).sum()
+    }
+
+    assert_eq!(files[0].size(), Some(15));
+    assert_eq!(files[0].file_type, "DepotFile");
+    assert_eq!(compressed(files[0].chunks.as_deref().unwrap()), 7);
+    assert_eq!(files[0].chunks.as_ref().unwrap()[1].compressed_md5, "cb");
+    assert_eq!(files[1].size(), None);
+    assert!(files[1].chunks.is_none());
+}
+
+#[test]
+fn file_system_errors_can_be_built_and_matched() {
+    fn which(e: &FileSystemError) -> &'static str {
+        match e {
+            FileSystemError::PathResolutionError(_) => "resolution",
+            FileSystemError::NoDiskMatchingPath(_) => "no-disk",
+            _ => "other",
+        }
+    }
+    let resolution = FileSystemError::PathResolutionError(io::Error::other("escapes the base"));
+    let no_disk = FileSystemError::NoDiskMatchingPath(PathBuf::from("/x"));
+    assert_eq!(which(&resolution), "resolution");
+    assert_eq!(which(&no_disk), "no-disk");
+
+    // Each public payload carries the same type, so the caller can look inside it.
+    let download = DownloadError::FileSystemError(no_disk);
+    match &download {
+        DownloadError::FileSystemError(inner) => assert_eq!(which(inner), "no-disk"),
+        _ => panic!("wrong variant"),
+    }
+    assert!(matches!(
+        ProtonError::from(FileSystemError::FileOpenError(io::Error::other("x"))),
+        ProtonError::FileSystemError(FileSystemError::FileOpenError(_))
+    ));
+    assert!(matches!(
+        SavesError::from(FileSystemError::PathResolutionError(io::Error::other("x"))),
+        SavesError::FileSystemError(FileSystemError::PathResolutionError(_))
+    ));
 }

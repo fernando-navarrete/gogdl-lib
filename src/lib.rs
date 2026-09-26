@@ -30,7 +30,7 @@
 //!
 //! Every fallible [`GogDl`] method returns [`GogDlError`], which wraps the
 //! per-layer error enum it failed in ([`AuthError`], [`ClientError`],
-//! [`DepotError`], [`DownloadError`], [`GamesError`], [`SecureLinksError`],
+//! [`DepotError`], [`DownloadError`], [`FileSystemError`], [`GamesError`], [`SecureLinksError`],
 //! [`ProtonError`] — all re-exported here so you can match on them). Auth
 //! failures usually arrive nested, e.g.
 //! `GogDlError::ClientError(ClientError::AuthError(_))`, since there is no
@@ -68,9 +68,13 @@ mod saves;
 mod secure_links;
 #[cfg(test)]
 mod test_support;
+#[cfg(test)]
+mod variant_guard;
 
 pub use client::Auth;
 pub use client::TokenObserver;
+pub use depot::Chunk;
+pub use depot::DepotFile;
 pub use depot::ProductDetails;
 pub use downloader::DownloadEvent;
 pub use downloader::DownloadStageEvent;
@@ -100,6 +104,7 @@ pub use client::AuthError;
 pub use client::ClientError;
 pub use depot::DepotError;
 pub use downloader::DownloadError;
+pub use fs::FileSystemError;
 pub use games::GamesError;
 pub use proton::ProtonError;
 pub use secure_links::SecureLinksError;

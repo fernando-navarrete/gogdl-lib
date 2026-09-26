@@ -10,8 +10,10 @@
 ///
 /// # Constructing in tests
 ///
-/// Every variant is public, so build them directly. The type does not implement
-/// `Debug` or `PartialEq`; match with `matches!` instead of `assert_eq!`.
+/// Every variant is public, so build them directly. The enum is `#[non_exhaustive]`, so a
+/// `match` outside the crate needs a wildcard arm (new variants can arrive in a patch). The type
+/// does not implement `Debug` or
+/// `PartialEq`; match with `matches!` instead of `assert_eq!`.
 ///
 /// ```
 /// use gogdl_lib::FileSizeVerificationEvent;
@@ -19,6 +21,7 @@
 /// let event = FileSizeVerificationEvent::FileNotFound("game.exe".into(), 10);
 /// assert!(matches!(event, FileSizeVerificationEvent::FileNotFound(_, 10)));
 /// ```
+#[non_exhaustive]
 pub enum FileSizeVerificationEvent {
     /// The manifest lists this file with no chunks; it was skipped. Size is
     /// always `0`.

@@ -14,6 +14,9 @@ use crate::fs::{FileSystemError, FreeSpaceShortfall};
 /// failure there (network, a non-2xx status, or a JSON decode error) arrives
 /// as [`ClientError`]. Downloading a release can additionally fail with any
 /// of the other variants here.
+///
+/// `#[non_exhaustive]`: a `match` outside the crate needs a wildcard arm.
+#[non_exhaustive]
 #[derive(Debug, Error)]
 pub enum ProtonError {
     /// The underlying HTTP request to GitHub failed — see [`ClientError`].
@@ -42,8 +45,7 @@ pub enum ProtonError {
     ExtractionError(String),
 
     /// Creating or canonicalizing the destination directory failed. The
-    /// inner `FileSystemError` type is crate-private; only its `Display`
-    /// output (via this variant's own message) is visible here.
+    /// cause is a [`FileSystemError`](crate::FileSystemError).
     #[error("File system error: {0}")]
     FileSystemError(#[from] FileSystemError),
 

@@ -14,8 +14,10 @@ use std::path::PathBuf;
 ///
 /// # Constructing in tests
 ///
-/// Every variant is public, so build them directly. The type does not implement
-/// `Debug` or `PartialEq`; match with `matches!` instead of `assert_eq!`.
+/// Every variant is public, so build them directly. The enum is `#[non_exhaustive]`, so a
+/// `match` outside the crate needs a wildcard arm (new variants can arrive in a patch). The type
+/// does not implement `Debug` or
+/// `PartialEq`; match with `matches!` instead of `assert_eq!`.
 ///
 /// ```
 /// use gogdl_lib::SavesUploadEvent;
@@ -23,6 +25,7 @@ use std::path::PathBuf;
 /// let event = SavesUploadEvent::FileFinished { name: "slot".into() };
 /// assert!(matches!(event, SavesUploadEvent::FileFinished { .. }));
 /// ```
+#[non_exhaustive]
 pub enum SavesUploadEvent {
     /// Emitted once, before the first file. `total_files` is `0` if the
     /// directory holds no files.

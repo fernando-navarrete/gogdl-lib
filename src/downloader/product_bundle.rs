@@ -17,9 +17,7 @@ use crate::{
 pub struct ProductBundle {
     /// The product's ID, as a string.
     pub product_id: String,
-    /// Every file this product's depot manifest lists. `DepotFile` is not
-    /// exported from this crate — you can hold, index and pass along this
-    /// `Vec`, but cannot name the element type in your own signatures.
+    /// Every file this product's depot manifest lists.
     pub product_files: Vec<DepotFile>,
 }
 

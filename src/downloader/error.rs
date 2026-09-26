@@ -24,6 +24,9 @@ use crate::{
 /// them. `DeflateError` *is* constructed directly by this layer (zlib
 /// decode/shutdown failures during a chunk download), unlike its
 /// same-named, unconstructible siblings on the other error enums.
+///
+/// `#[non_exhaustive]`: a `match` outside the crate needs a wildcard arm.
+#[non_exhaustive]
 #[derive(Error, Debug)]
 pub enum DownloadError {
     /// Unconstructible — see the enum-level note.
@@ -77,8 +80,7 @@ pub enum DownloadError {
     SecureLinksError(#[from] SecureLinksError),
 
     /// Path resolution or a filesystem operation under the install directory
-    /// failed. The inner `FileSystemError` type is crate-private; only its
-    /// `Display` output (via this variant's own message) is visible here.
+    /// failed; the cause is a [`FileSystemError`](crate::FileSystemError).
     #[error("File system error: {0}")]
     FileSystemError(#[from] FileSystemError),
 

@@ -129,8 +129,12 @@ patch, so this doesn't block it. It should still land before Lumen finishes its 
   confirmed that `/` wins over `/media/gamedisk` today (Lumen D5). Needs a test with a fake disk list.
 - `NotEnoughFreeSpace` carries required and available bytes, and `CouldNotResolveFreeSpace` keeps
   the path it failed on (GAPS "Low — style / clippy", bridge §7.3).
-- Export `FileSystemError`, `DepotFile`, `Chunk` and `DownloadUnit`, so consumers can match on which
-  filesystem failure happened (GAPS "Medium — duplication & consistency", bridge §7.3).
+- Export `FileSystemError`, `DepotFile` and `Chunk`, so consumers can match on which filesystem
+  failure happened (GAPS "Medium — duplication & consistency", bridge §7.3). `DownloadUnit` stays
+  internal: no public signature exposes it.
+- Mark the event enums, `FileSystemError` and the download, Proton and saves error enums
+  `#[non_exhaustive]`, so later patches (`v1.2.3`'s `DownloadEvent::Started`) can add variants
+  without breaking a `match`. **Breaking** once, here.
 - Fix the "Max retires reached" typo in `ClientError`'s `Display` (Lumen D7).
 - Document the cancel-safe contract in the rustdoc of `download_game`, `repair_game`,
   `verify_files`, `download_proton_release` and the saves transfers: dropping the future stops the
@@ -192,7 +196,8 @@ the bridge migrates once.
   (bridge §7.3 auth part, GAPS "Medium — duplication & consistency").
 - `GogDlError::SavesError(#[from] SavesError)`, and the four saves methods return `GogDlError`
   (GAPS "Medium — cloud saves").
-- Remove the dead `Http`/`UrlParseError`/`NetworkError`/`DecodeError`/`DeflateError` variants.
+- Remove the dead `Http`/`UrlParseError`/`NetworkError`/`DecodeError`/`DeflateError` variants, and
+  `FileSystemError`'s `FileMetadataError` and `FileCreationError`, which no public method returns.
 - Remove `SaveFile::relative_path`, and either export or un-`pub` the path sanitizers from
   `a813975` (GAPS "Low — style / clippy").
 - **Breaking** for bridge `v1.5.0`: the error enums and the removed items.

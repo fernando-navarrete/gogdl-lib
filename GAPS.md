@@ -373,7 +373,7 @@ The paragraph below is the baseline it started from.)* `cargo build --lib` showe
   An in-flight dedup (a per-`game_id` `OnceCell`/shared future, the shape `PathResolver::dir_cache`
   uses at `src/fs/path_resolver.rs:13,93`) fixes both halves.
 
-- [ ] **Types a consumer must be able to name are not exported: `DepotFile`, `Chunk`,
+- [x] **Types a consumer must be able to name are not exported: `DepotFile`, `Chunk`,
   `DownloadUnit` and `FileSystemError`.** The exported `ProductBundle` declares
   `pub product_files: Vec<DepotFile>` (`src/downloader/product_bundle.rs:23`), and `DepotFile.chunks`
   is `Option<Vec<Chunk>>`. None of the three is re-exported from `src/lib.rs`. `FileSystemError` is
@@ -383,6 +383,14 @@ The paragraph below is the baseline it started from.)* `cargo build --lib` showe
   (`saves/error.rs:58-59`). A consumer can't match on *which* filesystem failure happened (for
   example, a save file name that would escape its directory), only format it. All three variants'
   doc comments say so. Re-export them, or narrow the public fields and payloads that leak them.
+
+  Fixed in `v1.2.0`: `FileSystemError`, `DepotFile` and `Chunk` are exported and documented.
+  `DownloadUnit` is **not**: no public signature exposes it (only `DepotFile::to_download_units` and
+  `DownloadUnit::from_product_bundles` touched it, now `pub(crate)`), so exporting it would only
+  have published `FileType` and `_compressed_size`. `FileMetadataError` and `FileCreationError` are
+  never returned by a public method; they're documented as such and removed in `v1.4.0`. The event
+  enums, `FileSystemError` and the download, Proton and saves error enums are now
+  `#[non_exhaustive]`; `src/variant_guard.rs` keeps the "a new variant is looked at" guard in-crate.
 
 - [ ] **A dead refresh token and a routine expiry both surface as the same opaque, unstructured
   error.** `login_with_code` (`src/client/auth/auth_manager.rs:50-58`) and `refresh_auth`
