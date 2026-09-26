@@ -4,7 +4,7 @@ mod game_save_ids;
 mod remote_config;
 mod save_files;
 mod save_location;
-mod saves_auth;
+pub(crate) mod saves_auth;
 mod saves_download_event;
 mod saves_downloader;
 mod saves_manager;

@@ -75,7 +75,7 @@ The paragraph below is the baseline it started from.)* `cargo build --lib` showe
 
 ## Medium — cloud saves
 
-- [ ] **`download_save_files` truncates a good local save before it has the new one on disk.**
+- [x] **`download_save_files` truncates a good local save before it has the new one on disk.**
   `SavesDownloader::download_file` verifies and gunzips in memory, then calls
   `tokio::fs::File::create(&destination)` and `write_all`s over the existing file
   (`src/saves/saves_downloader.rs:162-166`). A failure between truncate and flush leaves a
@@ -83,6 +83,11 @@ The paragraph below is the baseline it started from.)* `cargo build --lib` showe
   dropping the future mid-write. Nothing is retried, so the call just returns `Io`. For save games
   that is the worst failure mode available. Write to a sibling temp file, `set_modified`, `fsync`,
   then `rename` over the destination.
+
+  Fixed in `v1.2.0`: the write is one blocking task that creates `.<name>.gogdl-part` beside the
+  destination, sets the mtime, `sync_all`s and renames it into place, with a guard that removes the
+  temp file on any error. A dropped future can't interrupt it, so a save is either the old file or
+  the complete new one. The uploader skips `.gogdl-part` files.
 
 - [ ] **Upload names may not round-trip with the names download accepts.** Depending on which side
   matches GOG, the result could be duplicate cloud objects that collide on one local file.
@@ -472,9 +477,10 @@ The paragraph below is the baseline it started from.)* `cargo build --lib` showe
 - [ ] **Saves transfers, `refresh_auth` and Proton extraction are still untested.** `v1.1.0`
   covered `download_files`, `backoff`, the `is_valid` boundaries, the `Auth` round-trip and
   deserialization of captured responses (see [Closed](#closed)). Still open, first to last:
-  - **Save download/upload against a local server.** A truncated write, an ETag mismatch, a missing
-    `X-Object-Meta-LocalLastModified`, and a listing with two names that resolve to one path (see
-    the round-trip item). Also a captured listing for a `__default` game (the captured one is a
+  - **Save download/upload against a local server.** *(Fixed in `v1.2.0`: a body cut short, a drop
+    mid-transfer, an ETag mismatch, a missing `X-Object-Meta-LocalLastModified` and a failed write
+    are tested. Still open:)* a listing with two names that resolve to one path (see the
+    round-trip item). Also a captured listing for a `__default` game (the captured one is a
     `saves` game).
   - **`refresh_auth` persisting `valid_until`, and concurrent refreshes collapsing.** Blocked on
     `REFRESH_URL` being hardcoded; needs injectable hosts (an API change, so a minor).

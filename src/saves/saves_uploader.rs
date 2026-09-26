@@ -13,7 +13,7 @@ use crate::{
     constants::CLOUD_STORAGE_URL,
     saves::{
         checksum::md5_hex, save_location::ResolvedSaveLocation, saves_auth::SavesAuth,
-        saves_upload_event::SavesUploadEvent,
+        saves_downloader::is_part_file, saves_upload_event::SavesUploadEvent,
     },
 };
 
@@ -164,6 +164,10 @@ async fn list_files(base: &Path) -> Result<Vec<(PathBuf, String)>, SavesError> {
             if file_type.is_dir() {
                 pending.push(path);
             } else if file_type.is_file() {
+                // A leftover of an interrupted download, not a save.
+                if entry.file_name().to_str().is_some_and(is_part_file) {
+                    continue;
+                }
                 let relative = path
                     .strip_prefix(base)
                     .ok()
@@ -195,7 +199,7 @@ mod tests {
     use super::*;
     use crate::{
         CloudStorageLocation, SaveFile,
-        test_support::{ChunkServer, Reply, TempDir},
+        test_support::{ChunkServer, Reply, TempDir, saves_auth},
     };
 
     fn round_trip(location_name: &str, relative: &str) -> (String, String) {
@@ -286,16 +290,7 @@ mod tests {
 
         let mut uploader = SavesUploader::new(
             HttpClient::new_with_client(reqwest::Client::new()),
-            SavesAuth {
-                access_token: "token".into(),
-                refresh_token: String::new(),
-                expires_in: 3600,
-                token_type: "bearer".into(),
-                session_id: String::new(),
-                scope: None,
-                user_id: "42".into(),
-                valid_until: None,
-            },
+            saves_auth(),
             "client".into(),
         );
         uploader.storage_url = format!("{}/v1/", server.base_url());
@@ -331,5 +326,26 @@ mod tests {
         }
         assert_eq!(started, ["__default/a.sav", "__default/b.sav"]);
         assert_eq!(finished, ["__default/a.sav"]);
+    }
+
+    #[tokio::test]
+    async fn list_files_skips_leftover_part_files() {
+        let dir = TempDir::new();
+        std::fs::create_dir(dir.path().join("slot")).unwrap();
+        for name in [
+            "a.sav",
+            ".a.sav.gogdl-part",
+            "slot/b.sav",
+            "slot/.b.sav.gogdl-part",
+        ] {
+            std::fs::write(dir.path().join(name), b"x").unwrap();
+        }
+        let listed: Vec<String> = list_files(dir.path())
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(_, relative)| relative)
+            .collect();
+        assert_eq!(listed, ["a.sav", "slot/b.sav"]);
     }
 }

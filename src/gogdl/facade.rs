@@ -665,12 +665,17 @@ impl GogDl {
     /// removed. Any other directory in the name is kept, so files that differ
     /// only in their directory stay apart. A location's directory is created
     /// when the first file for it arrives; nothing is ever written outside
-    /// it. Existing files are overwritten.
+    /// it. Existing files are overwritten, but only once the new one is
+    /// complete: see below.
     ///
     /// Each file is received in full, verified against the `ETag` GOG sends
     /// with it (an MD5 of the stored bytes; a response without one is
-    /// accepted unchecked), decompressed, written, and given the modification
-    /// time GOG recorded when the file was uploaded.
+    /// accepted unchecked), decompressed, and given the modification time GOG
+    /// recorded when the file was uploaded. It is written to a temporary
+    /// `.<name>.gogdl-part` file beside its destination, flushed to disk, and
+    /// renamed over the destination, so an existing save is replaced only
+    /// once the new one is on disk. A failure at any point leaves it as it
+    /// was.
     ///
     /// # Progress
     ///
@@ -685,9 +690,11 @@ impl GogDl {
     ///
     /// # Cancelling
     /// Dropping the future stops the call between or during files. Files
-    /// downloaded before the drop stay. The file being written at that moment
-    /// is written in place over any existing save, so it can be left
-    /// truncated or incomplete; the remaining files are not touched.
+    /// downloaded before the drop stay. A file still being received is
+    /// discarded, and the save on disk is untouched. The write itself is one
+    /// blocking task that a drop cannot interrupt: it finishes, so each save
+    /// ends up either as it was or fully replaced, never truncated or partial,
+    /// and no `.gogdl-part` file is left. The remaining files are not touched.
     /// Authentication, caching and the need for a still-valid session access
     /// token are as for [`get_save_files`](Self::get_save_files).
     ///
@@ -737,7 +744,8 @@ impl GogDl {
     /// there.
     ///
     /// The directory of each location is walked recursively and every
-    /// regular file in it is uploaded; symlinks are skipped. A location whose
+    /// regular file in it is uploaded; symlinks and the `.gogdl-part` files
+    /// an interrupted download can leave behind are skipped. A location whose
     /// directory does not exist has nothing to upload and is skipped. A file
     /// at `<directory>/profile/slot1.sav` is stored as
     /// `<location>/profile/slot1.sav`, where `<location>` is the

@@ -29,6 +29,11 @@ pub enum Reply {
     StatusBody(u16, Vec<u8>),
     /// Answer `200` with this body.
     Body(Vec<u8>),
+    /// Answer `200` with these extra headers and this body.
+    BodyWithHeaders(Vec<(String, String)>, Vec<u8>),
+    /// Send the headers (with `body`'s full length) and the first `sent`
+    /// bytes of `body`, then close: the client sees a body that ends early.
+    PartialThenClose { body: Vec<u8>, sent: usize },
     /// Send the headers and the first `sent` bytes of `body`, signal
     /// `notify`, then hold the connection open until the client drops it.
     PartialThenHang {
@@ -176,6 +181,29 @@ async fn send(stream: &mut TcpStream, reply: Reply) {
                 stream.write_all(&body).await.ok();
                 return;
             }
+            Reply::BodyWithHeaders(headers, body) => {
+                let extra: String = headers
+                    .iter()
+                    .map(|(name, value)| format!("{name}: {value}\r\n"))
+                    .collect();
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\n{extra}Content-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                stream.write_all(head.as_bytes()).await.ok();
+                stream.write_all(&body).await.ok();
+                return;
+            }
+            Reply::PartialThenClose { body, sent } => {
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                stream.write_all(head.as_bytes()).await.ok();
+                stream.write_all(&body[..sent]).await.ok();
+                stream.flush().await.ok();
+                return;
+            }
             Reply::PartialThenHang { body, sent, notify } => {
                 let head = format!(
                     "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -237,6 +265,27 @@ impl Drop for TempDir {
 /// zlib-compresses `data`, as a chunk body on the wire.
 pub fn zlib(data: &[u8]) -> Vec<u8> {
     let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder.write_all(data).unwrap();
+    encoder.finish().unwrap()
+}
+
+/// A cloud saves grant for user `42` that expires in an hour.
+pub fn saves_auth() -> crate::saves::saves_auth::SavesAuth {
+    crate::saves::saves_auth::SavesAuth {
+        access_token: "token".into(),
+        refresh_token: String::new(),
+        expires_in: 3600,
+        token_type: "bearer".into(),
+        session_id: String::new(),
+        scope: None,
+        user_id: "42".into(),
+        valid_until: None,
+    }
+}
+
+/// gzip-compresses `data`, as a saved file's body on the wire.
+pub fn gzip(data: &[u8]) -> Vec<u8> {
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
     encoder.write_all(data).unwrap();
     encoder.finish().unwrap()
 }
