@@ -1134,4 +1134,199 @@ mod tests {
         assert_eq!(h.server.requests(&path_b), 1);
         assert_eq!(std::fs::read(&file).unwrap(), [a.as_slice(), b].concat());
     }
+
+    /// One short label per stage event, so a test can pin a whole sequence.
+    /// Matched exhaustively on purpose: a new variant must be labelled here.
+    fn label(event: &DownloadStageEvent) -> String {
+        use FileAllocationEvent as A;
+        use FileSizeVerificationEvent as S;
+        use VerificationEvent as V;
+        match event {
+            DownloadStageEvent::FileSizeVerificationStage(e) => match e {
+                S::FileWithNoChunks(p, _) => format!("size:NoChunks {p}"),
+                S::CouldNotResolvePath(p, _) => format!("size:CouldNotResolve {p}"),
+                S::FileNotFound(p, _) => format!("size:NotFound {p}"),
+                S::FileSizeVerificationFailed(p, _) => format!("size:Failed {p}"),
+                S::FileSizeMismatch(p, _) => format!("size:Mismatch {p}"),
+                S::FileSizeVerificationSuccess(p, _) => format!("size:Success {p}"),
+            },
+            DownloadStageEvent::FileAllocationStage(e) => match e {
+                A::FileWithNoChunks(p, _) => format!("alloc:NoChunks {p}"),
+                A::CouldNotResolvePath(p, _) => format!("alloc:CouldNotResolve {p}"),
+                A::FileAllocationSuccess(p, _) => format!("alloc:Success {p}"),
+            },
+            DownloadStageEvent::VerificationStage(e) => match e {
+                V::CouldNotResolvePath(p, _) => format!("verify:CouldNotResolve {p}"),
+                V::FileNotFound(p, _) => format!("verify:NotFound {p}"),
+                V::ChecksumMismatch(p, _) => format!("verify:Mismatch {p}"),
+                V::Verified(p, _) => format!("verify:Verified {p}"),
+            },
+            DownloadStageEvent::FileAllocationError() => "alloc:Error".to_string(),
+            DownloadStageEvent::DownloadStage(e) => match e {
+                DownloadEvent::Preparing => "dl:Preparing".to_string(),
+                DownloadEvent::Prepared => "dl:Prepared".to_string(),
+                DownloadEvent::Downloading => "dl:Downloading".to_string(),
+                DownloadEvent::Progress(_) => "dl:Progress".to_string(),
+                DownloadEvent::ProgressRegression(_) => "dl:ProgressRegression".to_string(),
+            },
+        }
+    }
+
+    /// Runs `download` (or `repair`) and returns its labelled stage events.
+    /// Runs of `dl:Progress` collapse into one, since where a body is split
+    /// into reads isn't deterministic.
+    async fn stages(h: &Harness, repair: bool, bundle: ProductBundle) -> Vec<String> {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let path = h.dir.path().to_str().unwrap();
+        if repair {
+            h.downloader.repair(vec![bundle], path, tx).await.unwrap();
+        } else {
+            h.downloader.download(vec![bundle], path, tx).await.unwrap();
+        }
+        let mut labels: Vec<String> = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            let label = label(&event);
+            if label == "dl:Progress" && labels.last() == Some(&label) {
+                continue;
+            }
+            labels.push(label);
+        }
+        labels
+    }
+
+    /// `a.bin` is complete on disk, `b.bin` is missing and `c.bin` is
+    /// short: it has its first chunk and lacks the second. Every chunk is
+    /// served, so either method can finish.
+    fn stage_fixture(h: &Harness) -> ProductBundle {
+        let raws: [&[u8]; 4] = [
+            b"the complete file",
+            b"the missing file",
+            b"first chunk of the short file",
+            b"second chunk of the short file",
+        ];
+        let chunks: Vec<Chunk> = raws
+            .iter()
+            .enumerate()
+            .map(|(i, raw)| chunk_of(i as u8 + 1, raw))
+            .collect();
+        for (chunk, raw) in chunks.iter().zip(raws) {
+            h.server.script(
+                &chunk_path(&chunk.compressed_md5),
+                vec![Reply::Body(zlib(raw))],
+            );
+        }
+        std::fs::write(h.dir.path().join("a.bin"), raws[0]).unwrap();
+        std::fs::write(h.dir.path().join("c.bin"), raws[2]).unwrap();
+        bundle_of(vec![
+            ("a.bin", vec![chunks[0].clone()]),
+            ("b.bin", vec![chunks[1].clone()]),
+            ("c.bin", vec![chunks[2].clone(), chunks[3].clone()]),
+        ])
+    }
+
+    fn seq(labels: &[&str]) -> Vec<String> {
+        labels.iter().map(|l| l.to_string()).collect()
+    }
+
+    #[tokio::test]
+    async fn download_stage_sequence() {
+        let h = harness(1).await;
+        let bundle = stage_fixture(&h);
+
+        let labels = stages(&h, false, bundle).await;
+
+        // No verification stage, and every chunk is transferred, `a.bin`'s
+        // included.
+        assert_eq!(
+            labels,
+            seq(&[
+                "size:Success a.bin",
+                "size:NotFound b.bin",
+                "size:Mismatch c.bin",
+                "alloc:Success b.bin",
+                "alloc:Success c.bin",
+                "dl:Preparing",
+                "dl:Prepared",
+                "dl:Downloading",
+                "dl:Progress",
+                "dl:Downloading",
+                "dl:Progress",
+                "dl:Downloading",
+                "dl:Progress",
+                "dl:Downloading",
+                "dl:Progress",
+            ])
+        );
+    }
+
+    #[tokio::test]
+    async fn repair_stage_sequence() {
+        let h = harness(1).await;
+        let bundle = stage_fixture(&h);
+
+        let labels = stages(&h, true, bundle).await;
+
+        // The chunks past each file's old length come first (they were just
+        // allocated, so they aren't hashed), then the hashed ones. Only the
+        // two missing chunks are transferred.
+        assert_eq!(
+            labels,
+            seq(&[
+                "size:Success a.bin",
+                "size:NotFound b.bin",
+                "size:Mismatch c.bin",
+                "alloc:Success b.bin",
+                "alloc:Success c.bin",
+                "verify:Mismatch b.bin",
+                "verify:Mismatch c.bin",
+                "verify:Verified a.bin",
+                "verify:Verified c.bin",
+                "dl:Preparing",
+                "dl:Prepared",
+                "dl:Downloading",
+                "dl:Progress",
+                "dl:Downloading",
+                "dl:Progress",
+            ])
+        );
+    }
+
+    #[tokio::test]
+    async fn repair_of_a_complete_install_emits_no_download_stage() {
+        let h = harness(1).await;
+        let raw = b"the complete file";
+        let chunk = chunk_of(1, raw);
+        std::fs::write(h.dir.path().join("a.bin"), raw).unwrap();
+
+        let labels = stages(&h, true, bundle_of(vec![("a.bin", vec![chunk])])).await;
+
+        assert_eq!(
+            labels,
+            seq(&["size:Success a.bin", "verify:Verified a.bin"])
+        );
+    }
+
+    #[tokio::test]
+    async fn download_of_a_complete_install_still_downloads_everything() {
+        let h = harness(1).await;
+        let raw = b"the complete file";
+        let chunk = chunk_of(1, raw);
+        let path = chunk_path(&chunk.compressed_md5);
+        h.server.script(&path, vec![Reply::Body(zlib(raw))]);
+        std::fs::write(h.dir.path().join("a.bin"), raw).unwrap();
+
+        let labels = stages(&h, false, bundle_of(vec![("a.bin", vec![chunk])])).await;
+
+        assert_eq!(
+            labels,
+            seq(&[
+                "size:Success a.bin",
+                "dl:Preparing",
+                "dl:Prepared",
+                "dl:Downloading",
+                "dl:Progress",
+            ])
+        );
+        assert_eq!(h.server.requests(&path), 1);
+    }
 }
