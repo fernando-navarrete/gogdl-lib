@@ -131,7 +131,9 @@ The toolchain is pinned in `rust-toolchain.toml`. CI runs in `gogdl-lib-ci:rust-
 in `.gitlab-ci.yml` when the channel or `ci/Dockerfile` changes, bumping `IMAGE_REVISION` for the latter (the
 `.toolchain` check fails a job on a stale channel). Every image is pinned by `@sha256`, and `rustup-init` by hash.
 Pipelines run on merge requests, `main`, `vX.Y.Z` tags and manual web runs; a branch with no MR runs
-nothing. The manual `downstream` job (play it from any MR pipeline) builds
+nothing. `main` is protected (no direct pushes; merge requests only, fast-forward with squash, pipelines
+must succeed, all threads resolved) and so are the `v*` tags (only a maintainer creates one; none is
+updated or deleted without unprotecting it first). The manual `downstream` job (play it from any MR pipeline) builds
 `lumen-cli` and the bridge's `rust/` against this checkout through a `[patch]`, and is the check for
 a breaking change.
 

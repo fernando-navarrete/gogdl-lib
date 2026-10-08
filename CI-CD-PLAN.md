@@ -22,8 +22,8 @@ done. Writing the devlog and deleting this plan is step 13.
 | **8** | `renovate.json` and its validation | `ci/renovate-config` | 🟦 |
 | **9** | Renovate job and schedule | `ci/renovate-job` | ✅ |
 | **10** | Release flow for a protected `main` | `ci/release-flow` | 🟦 |
-| **11** | GitHub mirror | `ci/github-mirror` | 🟦 |
-| **12** | Protect `main` and the `v*` tags | `ci/protect-main` | ⬜ |
+| **11** | GitHub mirror | `ci/github-mirror` | ✅ |
+| **12** | Protect `main` and the `v*` tags | `ci/protect-main` | 🟦 |
 | **13** | Close-out | `docs/ci-devlog` | ⬜ |
 
 Status: ⬜ not started · 🟦 in progress · ✅ done · ⏸ blocked
@@ -339,16 +339,17 @@ Branch `ci/github-mirror` (the files below; the mirror itself is a setting). Nee
       `description` in `Cargo.toml`; `README.md`: what the crate is, that `GogDl` is the entry point, that
       GitHub is a read-only mirror of the self-hosted GitLab, and how consumers pin it by tag. No crate
       code change, so no release.
-- [ ] GitHub: create the repo (empty, no README), description says "mirror". Disable Issues, Projects,
+- [x] GitHub: create the repo (empty, no README), description says "mirror". Disable Issues, Projects,
       Wiki and Actions (nobody should be able to add a workflow that runs there). Protect `main` and
       `v*` tags against deletion there too.
-- [ ] GitHub fine-grained token (D7), `Contents: read and write` on that repo only, with an expiry and a
+- [x] GitHub fine-grained token (D7), `Contents: read and write` on that repo only, with an expiry and a
       calendar reminder.
-- [ ] GitLab: Settings → Repository → Mirroring repositories: push, `https://github.com/<owner>/gogdl-lib.git`,
+- [x] GitLab: Settings → Repository → Mirroring repositories: push, `https://github.com/<owner>/gogdl-lib.git`,
       password auth with the token, "Mirror only protected branches" on (`main` and the protected `v*`
       tags from step 12; until then `main` is the only protected branch), "Keep divergent refs" off.
-- [ ] "Update now", then check on GitHub: `main` at the same SHA, every `v*` tag present, no other
-      branches.
+- [x] "Update now", then check on GitHub: `main` at the same SHA, every `v*` tag present, no other
+      branches. Observed: the `v*` tags were mirrored even with "Mirror only protected branches" on and the tags
+      still unprotected.
 - [x] `CLAUDE.md` "Consumers and pinning": the mirror exists, consumers keep pinning the GitLab URL.
       `SECURITY.md`: the mirror token in the rotation list (if step 7 didn't name it yet).
 
