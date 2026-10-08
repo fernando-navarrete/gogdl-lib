@@ -22,7 +22,7 @@ done. Writing the devlog and deleting this plan is step 13.
 | **8** | `renovate.json` and its validation | `ci/renovate-config` | 🟦 |
 | **9** | Renovate job and schedule | `ci/renovate-job` | ✅ |
 | **10** | Release flow for a protected `main` | `ci/release-flow` | 🟦 |
-| **11** | GitHub mirror | `ci/github-mirror` | ⬜ |
+| **11** | GitHub mirror | `ci/github-mirror` | 🟦 |
 | **12** | Protect `main` and the `v*` tags | `ci/protect-main` | ⬜ |
 | **13** | Close-out | `docs/ci-devlog` | ⬜ |
 
@@ -335,7 +335,7 @@ squashed commit on `main`.
 
 Branch `ci/github-mirror` (the files below; the mirror itself is a setting). Needs step 6.
 
-- [ ] `repository` (the GitLab URL stays canonical) and
+- [x] `repository` (the GitHub URL, since the GitLab host is LAN-only; GitLab stays canonical) and
       `description` in `Cargo.toml`; `README.md`: what the crate is, that `GogDl` is the entry point, that
       GitHub is a read-only mirror of the self-hosted GitLab, and how consumers pin it by tag. No crate
       code change, so no release.
@@ -349,7 +349,7 @@ Branch `ci/github-mirror` (the files below; the mirror itself is a setting). Nee
       tags from step 12; until then `main` is the only protected branch), "Keep divergent refs" off.
 - [ ] "Update now", then check on GitHub: `main` at the same SHA, every `v*` tag present, no other
       branches.
-- [ ] `CLAUDE.md` "Consumers and pinning": the mirror exists, consumers keep pinning the GitLab URL.
+- [x] `CLAUDE.md` "Consumers and pinning": the mirror exists, consumers keep pinning the GitLab URL.
       `SECURITY.md`: the mirror token in the rotation list (if step 7 didn't name it yet).
 
 **Done when:** a merge into `main` shows up on GitHub within minutes, and a feature branch never does.

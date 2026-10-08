@@ -4,8 +4,8 @@ This file covers the supply chain: what a new crate has to meet, how to keep a d
 building here, and what to do when a crate we use is reported compromised. The checks that enforce most
 of it are in `.gitlab-ci.yml` and described in `CLAUDE.md` ("Gates").
 
-This is a private, single-maintainer project. Report a problem to the maintainer directly, not in a
-public tracker.
+This is a single-maintainer project, published as a read-only GitHub mirror of a self-hosted GitLab.
+Report a problem to the maintainer directly, not in a public issue (issues are off on the mirror).
 
 ## Adding a crate
 
@@ -48,11 +48,10 @@ cargo metadata --locked --format-version 1 \
 1. **Find it.** `cargo tree -i <crate>`, and grep `Cargo.lock` for the bad name and versions on `main`
    and on open branches.
 2. **Did a build run it?** Look at the job logs of every cargo job (`lint`, `test`, `doc`, `audit`,
-   `downstream`, and Renovate once it exists) since the bad version was published, and at local dates
+   `downstream`, and `renovate`) since the bad version was published, and at local dates
    (`ls -l --time-style=full-iso ~/.cargo/registry/src/*/<crate>-<version>`).
 3. **Rotate secrets** if it could have run, for everything the machine or job could reach:
-   `RENOVATE_TOKEN` and `GITHUB_COM_TOKEN` (once Renovate runs), the GitHub mirror token (once the
-   mirror exists), `DOWNSTREAM_DEPLOY_KEY_B64`, and local tokens and SSH keys. The job token expires
+   `RENOVATE_TOKEN` and `GITHUB_COM_TOKEN`, the GitHub mirror token (in GitLab's mirroring settings), `DOWNSTREAM_DEPLOY_KEY_B64`, and local tokens and SSH keys. The job token expires
    with the job.
 4. **Pin a known-good version** with `cargo update -p <crate> --precise <version>`, through an MR as
    usual.

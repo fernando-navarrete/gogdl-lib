@@ -26,6 +26,11 @@ with the consumer change that adopts it. `ROADMAP.md` has the versioning rules a
 serves which consumer stage. The `rust-toolchain.toml` here applies to this repo only; cargo ignores
 a dependency's.
 
+GitLab is canonical. `https://github.com/fernando-navarrete/gogdl-lib` is a public, read-only push
+mirror of `main` and the `v*` tags, set up in GitLab's Settings → Repository → Mirroring repositories
+(the token lives there, not in a CI variable). Consumers keep pinning the GitLab URL; `repository` in
+`Cargo.toml` is the GitHub URL only because that one is reachable by anyone.
+
 ## Capabilities and entry points
 
 All are methods on `GogDl`. Every fallible one returns `GogDlError` **except the four cloud saves
@@ -80,6 +85,7 @@ When a method is added, changed or removed on `GogDl`, update this table and `CH
 - `tests/public_types.rs` and `tests/fixtures/`: an integration test that builds every public type
   from outside the crate, and scrubbed captures of real responses.
 - `ci/`, `tool/`, `.githooks/`, `.gitlab-ci.yml`: see **Gates** and **Releasing**.
+- `README.md`, `LICENSE-MIT`, `LICENSE-APACHE`: what the GitHub mirror shows.
 - `SECURITY.md` (supply-chain policy), `deny.toml`, `.gitleaks.toml`: what the `audit` and `secrets` jobs enforce.
 - `renovate.json`: the dependency-update policy; the `renovate-config` job validates it.
 - `ROADMAP.md`, `GAPS.md`, `CHANGELOG.md`, `devlog/` (decisions and pitfalls per finished line).

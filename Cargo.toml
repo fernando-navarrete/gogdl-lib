@@ -3,6 +3,8 @@ name = "gogdl-lib"
 version = "1.2.3"
 edition = "2024"
 license = "MIT OR Apache-2.0"
+description = "Rust client for GOG's Galaxy backend: auth, library, downloads, cloud saves, Proton-GE"
+repository = "https://github.com/fernando-navarrete/gogdl-lib"
 
 [dependencies]
 chrono = { version = "0.4.45", features = ["serde"] }
