@@ -17,7 +17,7 @@ done. Writing the devlog and deleting this plan is step 13.
 | **3** | Pin every image by digest, check the rustup installer | `ci/pin-images` | 🟦 |
 | **4** | `cargo-deny`: advisories, sources, licenses (`audit` job) | `ci/cargo-deny` | ✅ |
 | **5** | OSV-Scanner on `Cargo.lock` (`scan` job), weekly scan schedule | `ci/osv-scan` | ✅ |
-| **6** | Secret scan (`secrets` job), full-history audit | `ci/secret-scan` | ⬜ |
+| **6** | Secret scan (`secrets` job), full-history audit | `ci/secret-scan` | 🟦 |
 | **7** | `SECURITY.md` | `docs/security-policy` | ⬜ |
 | **8** | `renovate.json` and its validation | `ci/renovate-config` | ⬜ |
 | **9** | Renovate job and schedule | `ci/renovate-job` | ⬜ |
@@ -217,15 +217,14 @@ exactly `audit` and `scan`.
 
 Branch `ci/secret-scan`. Must be done before step 11: a mirror publishes the whole history.
 
-- [ ] Run gitleaks over the whole history locally (`gitleaks git --log-opts="--all"`). Review each
-      finding: the fixtures in `tests/fixtures/` are scrubbed captures and the Galaxy client id/secret are
-      public (D6). A real leak means rotating the secret and deciding whether to rewrite history before
-      any mirror exists (tags would move, so consumers would need re-pinning: stop and decide then).
-- [ ] `.gitleaks.toml`: the default rules, plus an allowlist for the reviewed false positives, each with
-      a comment saying why.
-- [ ] `secrets` job, gitleaks image pinned by digest: on MRs, scans the MR's commits
+- [x] Run gitleaks over the whole history locally (`gitleaks git --log-opts="--all"`, v8.30.1 from its
+      pinned image via `docker run`): 238 commits, all refs, no findings (the Galaxy client secret
+      isn't matched by any default rule), so no allowlist.
+- [x] `.gitleaks.toml`: the default rules, no allowlist entries; the comment says how to add one.
+- [x] `secrets` job, gitleaks image pinned by digest: on MRs, scans the MR's commits
       (`--log-opts="$CI_MERGE_REQUEST_DIFF_BASE_SHA..HEAD"`); on `main` and tags, the whole history.
-- [ ] Bite test in a throwaway MR: a commit with a fake `ghp_…` token turns `secrets` red.
+- [ ] Bite test in a throwaway MR: a commit with a fake `ghp_…` token turns `secrets` red. (Checked
+      locally against the same image and script: exit 1 on the MR range, 0 when clean.)
 
 **Done when:** the full-history scan is clean (or every finding is allowlisted with a reason) and
 `secrets` is red on the bite test.

@@ -110,6 +110,10 @@ CI also runs `scan` (OSV-Scanner on `Cargo.lock`; it fails only on a `MAL-` know
 rest is `audit`'s). The "Weekly scan" schedule (`SCHEDULE=scan`) runs `audit` and `scan` only. Locally,
 `osv-scanner scan --lockfile Cargo.lock` is optional.
 
+CI also runs `secrets` (gitleaks, default rules in `.gitleaks.toml`): an MR's commits on MRs, the whole
+history on `main` and tags. Locally, optional: `docker run --rm -v "$PWD:/repo:ro" <the image in
+`.gitlab-ci.yml`> git /repo --redact`.
+
 Once per clone, `git config core.hooksPath .githooks` enables a pre-commit hook that runs
 `cargo fmt --check` when a `.rs` file is staged. `git commit --no-verify` skips it; CI still checks.
 
