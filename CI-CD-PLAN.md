@@ -13,7 +13,7 @@ done. Writing the devlog and deleting this plan is step 13.
 |---|---|---|---|
 | **0** | Decisions | (none) | ✅ |
 | **1** | Pipelines on MRs and `main`, MR template | `ci/mr-pipelines` | 🟦 |
-| **2** | Pre-commit hook | `ci/pre-commit` | ⬜ |
+| **2** | Pre-commit hook | `ci/pre-commit` | ✅ |
 | **3** | Pin every image by digest, check the rustup installer | `ci/pin-images` | ⬜ |
 | **4** | `cargo-deny`: advisories, sources, licenses (`audit` job) | `ci/cargo-deny` | ⬜ |
 | **5** | OSV-Scanner on `Cargo.lock` (`scan` job), weekly scan schedule | `ci/osv-scan` | ⬜ |
@@ -146,10 +146,10 @@ merged through the MR; a pushed branch without an MR runs nothing.
 
 Branch `ci/pre-commit`.
 
-- [ ] `.githooks/pre-commit`, no dependency: `cargo fmt --check` when a staged file is `*.rs`. Checks,
+- [x] `.githooks/pre-commit`, no dependency: `cargo fmt --check` when a staged file is `*.rs`. Checks,
       never rewrites (a hook that formats and re-stages can commit half of a partly staged file). No
       clippy or tests (CI runs those); `git commit --no-verify` skips it.
-- [ ] `CLAUDE.md`: `git config core.hooksPath .githooks` once per clone.
+- [x] `CLAUDE.md`: `git config core.hooksPath .githooks` once per clone.
 
 **Done when:** a commit with a misformatted `.rs` file is refused locally.
 

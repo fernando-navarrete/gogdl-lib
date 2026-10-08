@@ -79,7 +79,7 @@ When a method is added, changed or removed on `GogDl`, update this table and `CH
   script replies per request and hold a connection open mid-body.
 - `tests/public_types.rs` and `tests/fixtures/`: an integration test that builds every public type
   from outside the crate, and scrubbed captures of real responses.
-- `ci/`, `tool/`, `.gitlab-ci.yml`: see **Gates** and **Releasing**.
+- `ci/`, `tool/`, `.githooks/`, `.gitlab-ci.yml`: see **Gates** and **Releasing**.
 - `ROADMAP.md`, `GAPS.md`, `CHANGELOG.md`, `devlog/` (decisions and pitfalls per finished line).
 
 ## Tests
@@ -100,6 +100,9 @@ cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked                                  # unit tests, tests/, doctests
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked
 ```
+
+Once per clone, `git config core.hooksPath .githooks` enables a pre-commit hook that runs
+`cargo fmt --check` when a `.rs` file is staged. `git commit --no-verify` skips it; CI still checks.
 
 The toolchain is pinned in `rust-toolchain.toml`. CI runs in `gogdl-lib-ci:rust-<version>`
 (`ci/Dockerfile`), built on the runner host with `ci/build-image.sh`; rebuild it and update `image:`

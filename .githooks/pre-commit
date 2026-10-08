@@ -1,0 +1,26 @@
+#!/bin/sh
+# Pre-commit: `cargo fmt --check` when a staged file is *.rs. No dependency: the hook is committed
+# here and enabled once per clone:
+#   git config core.hooksPath .githooks
+# It only checks, it never rewrites: a hook that formats and re-stages could commit half of a partly
+# staged file. It checks the working tree, not the index, and the whole crate (what CI's `lint` runs),
+# so unstaged edits are checked too. No clippy and no tests here; CI runs those. Skip it for a
+# work-in-progress commit with `git commit --no-verify` (CI still checks).
+
+set -f # the pathspec below must reach git unexpanded
+
+if [ -z "$(git diff --cached --name-only -z --diff-filter=ACMR -- '*.rs' | tr -d '\0')" ]; then
+	exit 0
+fi
+
+if ! command -v cargo >/dev/null 2>&1; then
+	echo "pre-commit: cargo is not on PATH." >&2
+	exit 1
+fi
+
+if ! cargo fmt --check; then
+	echo >&2
+	echo "pre-commit: formatting failed. Fix it with: cargo fmt (then git add the files again)" >&2
+	echo "pre-commit: to commit anyway, use: git commit --no-verify (CI still checks)" >&2
+	exit 1
+fi
