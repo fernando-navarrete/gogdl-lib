@@ -8,9 +8,12 @@
 # image directly. --load-into <container> is only for a runner with its own docker-in-docker
 # daemon: it pipes the image in with `docker save | docker exec -i <container> docker load`.
 #
-# Run it again after bumping the Rust channel in rust-toolchain.toml; the tag changes, so
+# Run it again after bumping the Rust channel in rust-toolchain.toml or changing ci/Dockerfile; the tag changes, so
 # .gitlab-ci.yml's `image:` must be updated to the printed name.
 set -eu
+
+# Bump whenever ci/Dockerfile changes; never reset on a channel bump.
+IMAGE_REVISION=2
 
 cd "$(dirname "$0")/.."
 
@@ -27,7 +30,7 @@ esac
 RUST_VERSION=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)
 [ -n "$RUST_VERSION" ] || { echo "error: no channel in rust-toolchain.toml" >&2; exit 1; }
 
-IMAGE="gogdl-lib-ci:rust-$RUST_VERSION"
+IMAGE="gogdl-lib-ci:rust-$RUST_VERSION-r$IMAGE_REVISION"
 docker build -t "$IMAGE" --build-arg "RUST_VERSION=$RUST_VERSION" ci/
 echo "built $IMAGE"
 

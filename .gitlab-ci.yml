@@ -9,7 +9,7 @@
 # so none of them touches apt or rustup: the network is slow and the runner is small. The
 # runner shares the host's docker through its mounted docker.sock, so the image is built on the
 # host with `ci/build-image.sh` and jobs see it directly. Rebuild it after bumping the channel
-# in rust-toolchain.toml (update `image:` below to the printed name; the `.toolchain` check
+# in rust-toolchain.toml or changing ci/Dockerfile (update `image:` below to the printed name; the `.toolchain` check
 # fails a job whose image has a stale Rust). The runner's config.toml (volume
 # `gitlab-runner-config`) must not force pulls, under [runners.docker]:
 #   pull_policy = ["if-not-present"]
@@ -43,7 +43,7 @@ stages:
 default:
   interruptible: true # with "Auto-cancel redundant pipelines" on, a new push cancels the older run
   image:
-    name: gogdl-lib-ci:rust-1.98.1
+    name: gogdl-lib-ci:rust-1.98.1-r2
     pull_policy: if-not-present
 
 # Everything that gets cached must live inside the project dir. The toolchain is in the image
@@ -135,7 +135,7 @@ doc:
 release:
   stage: release
   image:
-    name: registry.gitlab.com/gitlab-org/release-cli:latest
+    name: registry.gitlab.com/gitlab-org/release-cli:v0.24.0@sha256:3f52d526f48e8d10625c722fa6d6423ee82aadeae1b1aa91f07b62551d96dacf
     pull_policy: if-not-present
   rules:
     - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/

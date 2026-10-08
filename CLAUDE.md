@@ -104,9 +104,10 @@ RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked
 Once per clone, `git config core.hooksPath .githooks` enables a pre-commit hook that runs
 `cargo fmt --check` when a `.rs` file is staged. `git commit --no-verify` skips it; CI still checks.
 
-The toolchain is pinned in `rust-toolchain.toml`. CI runs in `gogdl-lib-ci:rust-<version>`
+The toolchain is pinned in `rust-toolchain.toml`. CI runs in `gogdl-lib-ci:rust-<version>-r<revision>`
 (`ci/Dockerfile`), built on the runner host with `ci/build-image.sh`; rebuild it and update `image:`
-in `.gitlab-ci.yml` when the channel changes (the `.toolchain` check fails a job on a stale image).
+in `.gitlab-ci.yml` when the channel or `ci/Dockerfile` changes, bumping `IMAGE_REVISION` for the latter (the
+`.toolchain` check fails a job on a stale channel). Every image is pinned by `@sha256`, and `rustup-init` by hash.
 Pipelines run on merge requests, `main`, `vX.Y.Z` tags and manual web runs; a branch with no MR runs
 nothing. The manual `downstream` job (play it from any MR pipeline) builds
 `lumen-cli` and the bridge's `rust/` against this checkout through a `[patch]`, and is the check for

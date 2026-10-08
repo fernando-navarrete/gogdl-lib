@@ -14,7 +14,7 @@ done. Writing the devlog and deleting this plan is step 13.
 | **0** | Decisions | (none) | ✅ |
 | **1** | Pipelines on MRs and `main`, MR template | `ci/mr-pipelines` | 🟦 |
 | **2** | Pre-commit hook | `ci/pre-commit` | ✅ |
-| **3** | Pin every image by digest, check the rustup installer | `ci/pin-images` | ⬜ |
+| **3** | Pin every image by digest, check the rustup installer | `ci/pin-images` | 🟦 |
 | **4** | `cargo-deny`: advisories, sources, licenses (`audit` job) | `ci/cargo-deny` | ⬜ |
 | **5** | OSV-Scanner on `Cargo.lock` (`scan` job), weekly scan schedule | `ci/osv-scan` | ⬜ |
 | **6** | Secret scan (`secrets` job), full-history audit | `ci/secret-scan` | ⬜ |
@@ -157,12 +157,12 @@ Branch `ci/pre-commit`.
 
 Branch `ci/pin-images`.
 
-- [ ] `release`: `release-cli:latest` → `release-cli:vX.Y.Z@sha256:…` (the multi-arch index digest).
-- [ ] `ci/Dockerfile`: `debian:bookworm-slim@sha256:…`.
-- [ ] `ci/Dockerfile`: replace `curl https://sh.rustup.rs | sh` with a pinned `rustup-init` version
+- [x] `release`: `release-cli:latest` → `release-cli:vX.Y.Z@sha256:…` (release-cli publishes a single-arch manifest, not an index; its digest is pinned).
+- [x] `ci/Dockerfile`: `debian:bookworm-slim@sha256:…`.
+- [x] `ci/Dockerfile`: replace `curl https://sh.rustup.rs | sh` with a pinned `rustup-init` version
       downloaded from `static.rust-lang.org/rustup/archive/<ver>/…` and checked against its published
       `.sha256` before it runs.
-- [ ] The image tag gains a revision (`gogdl-lib-ci:rust-1.98.1-r2`), since the image now changes without
+- [x] The image tag gains a revision (`gogdl-lib-ci:rust-1.98.1-r2`), since the image now changes without
       the channel changing. `ci/build-image.sh` reads it from one place, and the `.toolchain` check
       keeps comparing the channel only.
 - [ ] Rebuild on the runner host, update `image:`.
