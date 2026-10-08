@@ -21,12 +21,19 @@
 #   extra_hosts = ["thinkcentre.home:192.168.8.234"]
 # then restart the runner (`sudo gitlab-runner restart`).
 
-# Pipelines run only for tag pushes (e.g. v1.1.0) and for manual runs from the web UI
-# (Build -> Pipelines -> Run pipeline) on any branch, to keep load off the self-hosted runner.
+# Pipelines run on merge requests, on main, on vX.Y.Z tags and on manual runs from the web UI
+# (Build -> Pipelines -> Run pipeline, any branch). A branch with an open MR runs only the MR
+# pipeline, and a pushed branch without an MR runs nothing. Scheduled pipelines run none of the
+# jobs below (the scheduled jobs come with the scan and renovate steps of CI-CD-PLAN.md).
 workflow:
   rules:
-    - if: $CI_COMMIT_TAG
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_PIPELINE_SOURCE == "web"
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never # the MR pipeline covers it: no duplicate branch pipeline
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
 
 stages:
   - check
@@ -34,6 +41,7 @@ stages:
   - downstream
 
 default:
+  interruptible: true # with "Auto-cancel redundant pipelines" on, a new push cancels the older run
   image:
     name: gogdl-lib-ci:rust-1.98.1
     pull_policy: if-not-present
@@ -59,6 +67,13 @@ variables:
       fi
     - rustc --version
 
+# Rules shared by the check jobs: everything except scheduled pipelines.
+.not-scheduled:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
+    - when: on_success
+
 .cache-cargo: &cache-cargo
   key:
     prefix: cargo
@@ -78,6 +93,7 @@ variables:
 
 lint:
   stage: check
+  rules: !reference [.not-scheduled, rules]
   cache:
     - *cache-cargo
     - *cache-target
@@ -90,6 +106,7 @@ lint:
 # Unit tests, tests/ and doctests, all offline (the HTTP fixture binds 127.0.0.1).
 test:
   stage: check
+  rules: !reference [.not-scheduled, rules]
   cache:
     - *cache-cargo
     - *cache-target
@@ -101,6 +118,7 @@ test:
 # Keeps missing_docs and intra-doc links honest.
 doc:
   stage: check
+  rules: !reference [.not-scheduled, rules]
   variables:
     RUSTDOCFLAGS: "-D warnings"
   cache:
@@ -139,7 +157,7 @@ release:
     name: $CI_COMMIT_TAG
     description: ./release_notes.md
 
-# Manual only, and never part of a tag pipeline's outcome: builds the two consumers against this
+# Manual only, and it never blocks an MR or a tag pipeline (allow_failure): builds the two consumers against this
 # commit, so a breaking change shows up before the tag instead of when a consumer bumps its pin
 # (GAPS "No downstream build check"). Start it from Build -> Pipelines -> Run pipeline, then play
 # the job. It clones each consumer, appends a [patch] that points gogdl-lib at this checkout, and
@@ -163,6 +181,8 @@ release:
 downstream:
   stage: downstream
   rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
     - when: manual
   allow_failure: true
   variables:

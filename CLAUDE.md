@@ -104,7 +104,8 @@ RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked
 The toolchain is pinned in `rust-toolchain.toml`. CI runs in `gogdl-lib-ci:rust-<version>`
 (`ci/Dockerfile`), built on the runner host with `ci/build-image.sh`; rebuild it and update `image:`
 in `.gitlab-ci.yml` when the channel changes (the `.toolchain` check fails a job on a stale image).
-Pipelines run only for tags and manual runs from the web UI. The manual `downstream` job builds
+Pipelines run on merge requests, `main`, `vX.Y.Z` tags and manual web runs; a branch with no MR runs
+nothing. The manual `downstream` job (play it from any MR pipeline) builds
 `lumen-cli` and the bridge's `rust/` against this checkout through a `[patch]`, and is the check for
 a breaking change.
 
