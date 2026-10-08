@@ -208,8 +208,8 @@ secrets:
     expire_in: 30 days
     paths: [gitleaks.json]
 
-# Validates renovate.json whenever it changes (Renovate itself comes with step 9 of CI-CD-PLAN.md).
-# --strict also fails on options Renovate would migrate. The image is the one step 9's job will use.
+# Validates renovate.json whenever it changes. --strict also fails on options Renovate would
+# migrate. The image is the one the `renovate` job uses.
 renovate-config:
   stage: check
   rules:
@@ -224,6 +224,48 @@ renovate-config:
   before_script: []
   script:
     - renovate-config-validator --strict renovate.json
+
+# Opens the dependency MRs per renovate.json. Only on the SCHEDULE=renovate pipeline schedule.
+# RENOVATE_TOKEN (project access token, api + write_repository, role Developer) and GITHUB_COM_TOKEN
+# (no permissions, for changelog lookups) are protected, masked variables scoped to the `renovate`
+# environment, which only this job uses, so no job that runs cargo (and any build.rs) sees them.
+# The image has no cargo: Renovate installs Rust on demand (containerbase, not rustup, so
+# rust-toolchain.toml is ignored) at the version pinned in renovate.json `constraints.rust`, which
+# must equal the channel in rust-toolchain.toml (the toolchain MR bumps both). Its downloads and
+# the crates index are cached under .ci/renovate for the slow network.
+renovate:
+  stage: check
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule" && $SCHEDULE == "renovate"
+  image:
+    name: renovate/renovate:44@sha256:05c512c35c764ef6a179e69c3b30567eca254d67f13a0143479fe3c84852c67a
+    entrypoint: ['']
+    pull_policy: if-not-present
+  # Variables scoped to the `renovate` environment reach only this job. `access` records no deployment.
+  environment:
+    name: renovate
+    action: access
+  cache:
+    - key: renovate
+      paths:
+        - .ci/renovate/
+  before_script: []
+  variables:
+    RENOVATE_PLATFORM: gitlab
+    RENOVATE_ENDPOINT: $CI_API_V4_URL
+    RENOVATE_REPOSITORIES: $CI_PROJECT_PATH
+    RENOVATE_ONBOARDING: 'false'
+    RENOVATE_REQUIRE_CONFIG: required
+    RENOVATE_CACHE_DIR: $CI_PROJECT_DIR/.ci/renovate
+    LOG_LEVEL: info
+  script:
+    - '[ -n "$RENOVATE_TOKEN" ] || { echo "RENOVATE_TOKEN is not set (protected, environment scope renovate)"; exit 1; }'
+    # thinkcentre.home uses a private CA: the runner's tls-ca-file covers Node (Renovate) and git.
+    - |
+      if [ -n "${CI_SERVER_TLS_CA_FILE:-}" ]; then
+        export NODE_EXTRA_CA_CERTS="$CI_SERVER_TLS_CA_FILE" GIT_SSL_CAINFO="$CI_SERVER_TLS_CA_FILE"
+      fi
+      renovate
 
 # Runs after all check jobs, on vX.Y.Z tags only. tool/release_notes.sh fails if Cargo.toml,
 # Cargo.lock and the tag disagree, or if CHANGELOG.md has no section for the version, so a tag

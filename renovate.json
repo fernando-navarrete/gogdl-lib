@@ -10,6 +10,7 @@
   "osvVulnerabilityAlerts": true,
   "vulnerabilityAlerts": { "minimumReleaseAge": null, "enabled": true },
   "ignoreDeps": ["gogdl-lib-ci"],
+  "constraints": { "rust": "1.98.1" },
   "lockFileMaintenance": {
     "description": "Off: it runs a plain `cargo update`, which bypasses the 7-day age check for every transitive crate.",
     "enabled": false
@@ -17,9 +18,12 @@
   "customManagers": [
     {
       "customType": "regex",
-      "description": "The channel pinned in rust-toolchain.toml.",
-      "managerFilePatterns": ["/^rust-toolchain\\.toml$/"],
-      "matchStrings": ["channel\\s*=\\s*\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""],
+      "description": "The channel pinned in rust-toolchain.toml, and the Rust version cargo runs at inside Renovate (constraints.rust above): one MR bumps both.",
+      "managerFilePatterns": ["/^rust-toolchain\\.toml$/", "/^renovate\\.json$/"],
+      "matchStrings": [
+        "channel\\s*=\\s*\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\"",
+        "\"rust\"\\s*:\\s*\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
+      ],
       "depNameTemplate": "rust",
       "packageNameTemplate": "rust-lang/rust",
       "datasourceTemplate": "github-releases"

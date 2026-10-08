@@ -109,7 +109,8 @@ crates.io-only sources, licenses. It is baked into the CI image; to run it local
 `Cargo.lock` entry that no enabled feature pulls in (`ring`, say) can't fail it.
 
 CI also runs `scan` (OSV-Scanner on `Cargo.lock`; it fails only on a `MAL-` known-malicious id, the
-rest is `audit`'s). The "Weekly scan" schedule (`SCHEDULE=scan`) runs `audit` and `scan` only. Locally,
+rest is `audit`'s). The "Weekly scan" schedule (`SCHEDULE=scan`) runs `audit` and `scan` only; the "Renovate" schedule (`SCHEDULE=renovate`, weekly) runs only `renovate`,
+which opens the dependency MRs per `renovate.json`. Locally,
 `osv-scanner scan --lockfile Cargo.lock` is optional.
 
 CI also runs `secrets` (gitleaks, default rules in `.gitleaks.toml`): an MR's commits on MRs, the whole

@@ -20,7 +20,7 @@ done. Writing the devlog and deleting this plan is step 13.
 | **6** | Secret scan (`secrets` job), full-history audit | `ci/secret-scan` | 🟦 |
 | **7** | `SECURITY.md` | `docs/security-policy` | ✅ |
 | **8** | `renovate.json` and its validation | `ci/renovate-config` | 🟦 |
-| **9** | Renovate job and schedule | `ci/renovate-job` | ⬜ |
+| **9** | Renovate job and schedule | `ci/renovate-job` | 🟦 |
 | **10** | Release flow for a protected `main` | `ci/release-flow` | ⬜ |
 | **11** | GitHub mirror | `ci/github-mirror` | ⬜ |
 | **12** | Protect `main` and the `v*` tags | `ci/protect-main` | ⬜ |
@@ -280,14 +280,17 @@ Branch `ci/renovate-config`. Config only; nothing runs Renovate yet.
 
 Branch `ci/renovate-job`.
 
-- [ ] `renovate` job copied from metatrader-dashboard: image pinned by digest, `environment: { name:
+- [x] `renovate` job copied from metatrader-dashboard: image pinned by digest, `environment: { name:
       renovate, action: access }`, `RENOVATE_PLATFORM=gitlab`, `RENOVATE_ENDPOINT=$CI_API_V4_URL`,
       `RENOVATE_REPOSITORIES=$CI_PROJECT_PATH`, onboarding off, config required, fails when
       `RENOVATE_TOKEN` is missing, `NODE_EXTRA_CA_CERTS`/`GIT_SSL_CAINFO` from `CI_SERVER_TLS_CA_FILE`.
       Only on `SCHEDULE=renovate`.
-- [ ] Cargo inside Renovate: the `cargo` manager needs `cargo` to update `Cargo.lock`. Use the image
-      that ships tools, or `binarySource: install`; either way `rust-toolchain.toml` makes rustup want
-      `1.98.1`, so check in the dry run that it resolves without a long download on the slow network.
+- [x] Cargo inside Renovate: the pinned image is the slim one, with no `cargo`. Its default
+      `binarySource: install` has containerbase install Rust on demand (not rustup, so
+      `rust-toolchain.toml` is ignored; without a constraint it takes the latest stable). Pinned with
+      `constraints.rust` in `renovate.json`, which the toolchain regex manager also bumps, so one MR
+      moves both. Downloads cached under `.ci/renovate`. Check in the dry run that the install is
+      tolerable on the slow network and the cache dir is writable (the image runs as uid 12021).
 - [ ] Variables (protected, masked, environment scope `renovate`): `RENOVATE_TOKEN` (project access
       token, `api` + `write_repository`, role Developer) and `GITHUB_COM_TOKEN` (fine-grained, no
       permissions, for changelog lookups and the rate limit). Calendar reminders before both expire.
