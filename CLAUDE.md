@@ -106,6 +106,10 @@ crates.io-only sources, licenses. It is baked into the CI image; to run it local
 `cargo install --locked cargo-deny@0.20.2` first. It checks only crates in the build graph, so a
 `Cargo.lock` entry that no enabled feature pulls in (`ring`, say) can't fail it.
 
+CI also runs `scan` (OSV-Scanner on `Cargo.lock`; it fails only on a `MAL-` known-malicious id, the
+rest is `audit`'s). The "Weekly scan" schedule (`SCHEDULE=scan`) runs `audit` and `scan` only. Locally,
+`osv-scanner scan --lockfile Cargo.lock` is optional.
+
 Once per clone, `git config core.hooksPath .githooks` enables a pre-commit hook that runs
 `cargo fmt --check` when a `.rs` file is staged. `git commit --no-verify` skips it; CI still checks.
 

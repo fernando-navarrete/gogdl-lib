@@ -15,8 +15,8 @@ done. Writing the devlog and deleting this plan is step 13.
 | **1** | Pipelines on MRs and `main`, MR template | `ci/mr-pipelines` | 🟦 |
 | **2** | Pre-commit hook | `ci/pre-commit` | ✅ |
 | **3** | Pin every image by digest, check the rustup installer | `ci/pin-images` | 🟦 |
-| **4** | `cargo-deny`: advisories, sources, licenses (`audit` job) | `ci/cargo-deny` | 🟦 |
-| **5** | OSV-Scanner on `Cargo.lock` (`scan` job), weekly scan schedule | `ci/osv-scan` | ⬜ |
+| **4** | `cargo-deny`: advisories, sources, licenses (`audit` job) | `ci/cargo-deny` | ✅ |
+| **5** | OSV-Scanner on `Cargo.lock` (`scan` job), weekly scan schedule | `ci/osv-scan` | 🟦 |
 | **6** | Secret scan (`secrets` job), full-history audit | `ci/secret-scan` | ⬜ |
 | **7** | `SECURITY.md` | `docs/security-policy` | ⬜ |
 | **8** | `renovate.json` and its validation | `ci/renovate-config` | ⬜ |
@@ -190,8 +190,8 @@ Branch `ci/cargo-deny`.
       step 11, so `deny.toml` needs no exception for this crate).
 - [x] First run found RUSTSEC-2026-0285 in `rustls 0.23.41`; fixed with `cargo update -p rustls --precise
       0.23.45` (also moves `rustls-webpki`, `aws-lc-rs`, `aws-lc-sys`, and adds `pkg-config`).
-- [ ] Rebuild the image on the runner host (`ci/build-image.sh`, now `-r3`).
-- [ ] Bite test in a throwaway MR: restore `main`'s `Cargo.lock` (`git checkout main -- Cargo.lock`, rustls
+- [x] Rebuild the image on the runner host (`ci/build-image.sh`, now `-r3`).
+- [x] Bite test in a throwaway MR: restore `main`'s `Cargo.lock` (`git checkout main -- Cargo.lock`, rustls
       0.23.41) and `audit` goes red on RUSTSEC-2026-0285. (`ring` is no good for this: cargo-deny checks
       only crates in the build graph, and no enabled feature pulls `ring` in.) Close the MR unmerged.
 
@@ -201,7 +201,7 @@ Branch `ci/cargo-deny`.
 
 Branch `ci/osv-scan`.
 
-- [ ] `scan` job: the OSV-Scanner image pinned by digest, entrypoint cleared, no cargo:
+- [x] `scan` job: the OSV-Scanner image pinned by digest, entrypoint cleared, no cargo:
       `/osv-scanner scan --lockfile Cargo.lock --format json --output-file osv-scanner.json`. Exit 0
       clean, 1 findings, anything else fails the job. Fail only on a `MAL-` id; CVE/GHSA/RUSTSEC ids are
       printed but gated by `audit` (one failing gate per finding, as in metatrader). Keep the JSON as a
