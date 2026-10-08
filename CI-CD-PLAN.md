@@ -23,7 +23,7 @@ done. Writing the devlog and deleting this plan is step 13.
 | **9** | Renovate job and schedule | `ci/renovate-job` | ✅ |
 | **10** | Release flow for a protected `main` | `ci/release-flow` | 🟦 |
 | **11** | GitHub mirror | `ci/github-mirror` | ✅ |
-| **12** | Protect `main` and the `v*` tags | `ci/protect-main` | 🟦 |
+| **12** | Protect `main` and the `v*` tags | `ci/protect-main` | ✅ |
 | **13** | Close-out | `docs/ci-devlog` | ⬜ |
 
 Status: ⬜ not started · 🟦 in progress · ✅ done · ⏸ blocked
@@ -135,7 +135,7 @@ Branch `ci/mr-pipelines`. This plan is the branch's first commit.
 - [x] `.gitlab/merge_request_templates/Default.md`: Summary; checklist: the four gates pass locally;
       `CHANGELOG.md` line if consumers see a change; `GogDl` table in `CLAUDE.md` updated if a method
       changed; `Cargo.lock` changed → new crates listed (the bar comes in step 7).
-- [ ] Project settings: merge method per D1 (fast-forward merge, squash required, squash message from the MR title), "Delete source branch" by default, "Auto-cancel redundant
+- [x] Project settings: merge method per D1 (fast-forward merge, squash required, squash message from the MR title), "Delete source branch" by default, "Auto-cancel redundant
       pipelines" on, "Pipelines must succeed" on (enforced from now on, before `main` is protected).
 - [x] `CLAUDE.md` "Gates": pipelines run on MRs, `main` and tags.
 
@@ -361,15 +361,20 @@ Branch `ci/protect-main` (docs only; the rest is settings).
 
 - [x] Protected branch `main` (done in step 9, so the `renovate` variables reach scheduled pipelines): allowed to push and merge "No one" / "Maintainers", force push off,
       code-owner approval off (single maintainer).
-- [ ] Merge request settings: "Pipelines must succeed" (on since step 1), "All threads must be
+- [x] Merge request settings: "Pipelines must succeed" (on since step 1), "All threads must be
       resolved", "Skipped pipelines are considered successful" off, merge method per D1 (fast-forward, squash required).
-- [ ] Protected tags `v*`: create allowed to Maintainers only. Consumers pin by tag, so a moved or
+- [x] Protected tags `v*`: create allowed to Maintainers only. Consumers pin by tag, so a moved or
       re-created tag is a supply-chain change for them: nobody but a maintainer can create, and nobody
       can update or delete without unprotecting first.
-- [ ] `CLAUDE.md`: "`main` is protected: changes go through a merge request (fast-forward with squash, pipelines must
+- [x] `CLAUDE.md` (`497f596`): "`main` is protected: changes go through a merge request (fast-forward with squash, pipelines must
       succeed)", as metatrader-dashboard's says.
-- [ ] Bite tests: a direct `git push origin main` is rejected; an MR with a failing test can't be merged;
+- [x] Bite tests: a direct `git push origin main` is rejected; an MR with a failing test can't be merged;
       `git push --delete origin v1.2.3` is rejected; the mirror still updates after a merge.
+      Observed: the direct push was rejected ("not allowed to push code to protected branches"); MR 22
+      (an `assert!(false)` test) had its merge button blocked, then was closed unmerged. The tag test first
+      ran before `v*` was protected and the delete and a force-move both succeeded; `v1.2.3` was restored
+      to `988011c` within seconds. After protecting `v*`, both were rejected by the pre-receive hook. Check
+      that a tag is listed under Protected tags *before* trying to delete one.
 
 **Done when:** all four bite tests behave as expected.
 
