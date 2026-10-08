@@ -15,7 +15,7 @@ done. Writing the devlog and deleting this plan is step 13.
 | **1** | Pipelines on MRs and `main`, MR template | `ci/mr-pipelines` | 🟦 |
 | **2** | Pre-commit hook | `ci/pre-commit` | ✅ |
 | **3** | Pin every image by digest, check the rustup installer | `ci/pin-images` | 🟦 |
-| **4** | `cargo-deny`: advisories, sources, licenses (`audit` job) | `ci/cargo-deny` | ⬜ |
+| **4** | `cargo-deny`: advisories, sources, licenses (`audit` job) | `ci/cargo-deny` | 🟦 |
 | **5** | OSV-Scanner on `Cargo.lock` (`scan` job), weekly scan schedule | `ci/osv-scan` | ⬜ |
 | **6** | Secret scan (`secrets` job), full-history audit | `ci/secret-scan` | ⬜ |
 | **7** | `SECURITY.md` | `docs/security-policy` | ⬜ |
@@ -173,9 +173,9 @@ Branch `ci/pin-images`.
 
 Branch `ci/cargo-deny`.
 
-- [ ] `cargo-deny` at a pinned version, at least 7 days old, installed in `ci/Dockerfile` with
+- [x] `cargo-deny` at a pinned version, at least 7 days old, installed in `ci/Dockerfile` with
       `cargo install --locked` (another image revision, rebuilt as in step 3), so the job installs nothing.
-- [ ] `deny.toml`:
+- [x] `deny.toml`:
   - `[advisories]`: RustSec database; `yanked = "deny"`; unmaintained and unsound reported. Any
         accepted advisory goes in `ignore` with a reason and a GAPS entry (as metatrader's P-30).
   - `[sources]`: `unknown-registry = "deny"`, `unknown-git = "deny"`, crates.io only. This is the
@@ -184,10 +184,16 @@ Branch `ci/cargo-deny`.
   - `[licenses]`: an allowlist matching what the 243 crates use today (`cargo deny list` to start);
         this crate's own license, `MIT OR Apache-2.0` (D6).
   - `[bans]`: `multiple-versions = "warn"`, nothing denied yet.
-- [ ] `audit` job, stage `check`, runs on MRs, `main`, tags, and the `SCHEDULE=scan` schedule (step 5):
+- [x] `audit` job, stage `check`, runs on MRs, `main`, tags, and the `SCHEDULE=scan` schedule (step 5):
       `cargo deny --locked check`.
-- [ ] Bite test in a throwaway MR: a `Cargo.lock` with a crate at a version that has a RustSec advisory
-      turns `audit` red. Close the MR unmerged.
+- [x] `license = "MIT OR Apache-2.0"` in `Cargo.toml`, `LICENSE-MIT` and `LICENSE-APACHE` (moved here from
+      step 11, so `deny.toml` needs no exception for this crate).
+- [x] First run found RUSTSEC-2026-0285 in `rustls 0.23.41`; fixed with `cargo update -p rustls --precise
+      0.23.45` (also moves `rustls-webpki`, `aws-lc-rs`, `aws-lc-sys`, and adds `pkg-config`).
+- [ ] Rebuild the image on the runner host (`ci/build-image.sh`, now `-r3`).
+- [ ] Bite test in a throwaway MR: restore `main`'s `Cargo.lock` (`git checkout main -- Cargo.lock`, rustls
+      0.23.41) and `audit` goes red on RUSTSEC-2026-0285. (`ring` is no good for this: cargo-deny checks
+      only crates in the build graph, and no enabled feature pulls `ring` in.) Close the MR unmerged.
 
 **Done when:** `audit` is green on `main` and red on the bite test.
 
@@ -318,7 +324,7 @@ squashed commit on `main`.
 
 Branch `ci/github-mirror` (the files below; the mirror itself is a setting). Needs step 6.
 
-- [ ] `LICENSE-MIT` and `LICENSE-APACHE` (D6); `license = "MIT OR Apache-2.0"`, `repository` (the GitLab URL stays canonical) and
+- [ ] `repository` (the GitLab URL stays canonical) and
       `description` in `Cargo.toml`; `README.md`: what the crate is, that `GogDl` is the entry point, that
       GitHub is a read-only mirror of the self-hosted GitLab, and how consumers pin it by tag. No crate
       code change, so no release.

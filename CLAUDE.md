@@ -101,6 +101,11 @@ cargo test --locked                                  # unit tests, tests/, docte
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked
 ```
 
+CI also runs `audit` (`cargo deny --locked check`, configured in `deny.toml`): RustSec advisories,
+crates.io-only sources, licenses. It is baked into the CI image; to run it locally,
+`cargo install --locked cargo-deny@0.20.2` first. It checks only crates in the build graph, so a
+`Cargo.lock` entry that no enabled feature pulls in (`ring`, say) can't fail it.
+
 Once per clone, `git config core.hooksPath .githooks` enables a pre-commit hook that runs
 `cargo fmt --check` when a `.rs` file is staged. `git commit --no-verify` skips it; CI still checks.
 

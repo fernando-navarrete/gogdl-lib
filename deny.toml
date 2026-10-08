@@ -1,0 +1,37 @@
+# cargo-deny config, run by the `audit` job as `cargo deny --locked check`.
+# Docs: https://embarkstudios.github.io/cargo-deny/
+
+# No `targets` filter: consumers build for Android, Windows and macOS through the bridge,
+# so every platform's crates count.
+[graph]
+
+[advisories]
+# An accepted advisory goes in `ignore` with a reason, plus a GAPS entry.
+ignore = []
+yanked = "deny"
+unmaintained = "all"
+unsound = "all"
+
+# crates.io only, no git dependencies (the Rust counterpart of a lockfile integrity check).
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
+
+# One acceptable side of every `OR` in the dependency graph; the license of this crate is
+# MIT OR Apache-2.0 (Cargo.toml).
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Unicode-3.0",         # the unicode data crates (icu_*, unicode-ident)
+    "ISC",                 # rustls-webpki, untrusted, aws-lc-*, ring
+    "BSD-3-Clause",        # subtle, aws-lc-sys
+    "Zlib",                # zlib-rs
+    "CDLA-Permissive-2.0", # webpki-root-certs
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "allow"

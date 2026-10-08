@@ -23,8 +23,9 @@
 
 # Pipelines run on merge requests, on main, on vX.Y.Z tags and on manual runs from the web UI
 # (Build -> Pipelines -> Run pipeline, any branch). A branch with an open MR runs only the MR
-# pipeline, and a pushed branch without an MR runs nothing. Scheduled pipelines run none of the
-# jobs below (the scheduled jobs come with the scan and renovate steps of CI-CD-PLAN.md).
+# pipeline, and a pushed branch without an MR runs nothing. A scheduled pipeline runs only the jobs
+# that name its SCHEDULE (`audit` on SCHEDULE=scan; the rest come with the scan and renovate steps of
+# CI-CD-PLAN.md).
 workflow:
   rules:
     - if: $CI_PIPELINE_SOURCE == "schedule"
@@ -43,7 +44,7 @@ stages:
 default:
   interruptible: true # with "Auto-cancel redundant pipelines" on, a new push cancels the older run
   image:
-    name: gogdl-lib-ci:rust-1.98.1-r2
+    name: gogdl-lib-ci:rust-1.98.1-r3
     pull_policy: if-not-present
 
 # Everything that gets cached must live inside the project dir. The toolchain is in the image
@@ -128,6 +129,26 @@ doc:
     - !reference [.toolchain, script]
   script:
     - cargo doc --no-deps --locked
+
+# RustSec advisories, crates.io-only sources, licenses and duplicate versions, per deny.toml.
+# cargo-deny is baked into the image (ci/Dockerfile). Its advisory database lands under
+# CARGO_HOME, so it is cached; each run then fetches only the new advisories.
+audit:
+  stage: check
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule" && $SCHEDULE == "scan"
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
+    - when: on_success
+  cache:
+    - *cache-cargo
+    - key: advisory-db
+      paths:
+        - .ci/cargo/advisory-dbs/
+  before_script:
+    - !reference [.toolchain, script]
+  script:
+    - cargo deny --locked check
 
 # Runs after all check jobs, on vX.Y.Z tags only. tool/release_notes.sh fails if Cargo.toml,
 # Cargo.lock and the tag disagree, or if CHANGELOG.md has no section for the version, so a tag
