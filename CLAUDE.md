@@ -80,6 +80,7 @@ When a method is added, changed or removed on `GogDl`, update this table and `CH
 - `tests/public_types.rs` and `tests/fixtures/`: an integration test that builds every public type
   from outside the crate, and scrubbed captures of real responses.
 - `ci/`, `tool/`, `.githooks/`, `.gitlab-ci.yml`: see **Gates** and **Releasing**.
+- `SECURITY.md` (supply-chain policy), `deny.toml`, `.gitleaks.toml`: what the `audit` and `secrets` jobs enforce.
 - `ROADMAP.md`, `GAPS.md`, `CHANGELOG.md`, `devlog/` (decisions and pitfalls per finished line).
 
 ## Tests

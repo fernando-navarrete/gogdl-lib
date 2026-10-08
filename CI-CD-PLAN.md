@@ -18,7 +18,7 @@ done. Writing the devlog and deleting this plan is step 13.
 | **4** | `cargo-deny`: advisories, sources, licenses (`audit` job) | `ci/cargo-deny` | ✅ |
 | **5** | OSV-Scanner on `Cargo.lock` (`scan` job), weekly scan schedule | `ci/osv-scan` | ✅ |
 | **6** | Secret scan (`secrets` job), full-history audit | `ci/secret-scan` | 🟦 |
-| **7** | `SECURITY.md` | `docs/security-policy` | ⬜ |
+| **7** | `SECURITY.md` | `docs/security-policy` | 🟦 |
 | **8** | `renovate.json` and its validation | `ci/renovate-config` | ⬜ |
 | **9** | Renovate job and schedule | `ci/renovate-job` | ⬜ |
 | **10** | Release flow for a protected `main` | `ci/release-flow` | ⬜ |
@@ -233,21 +233,21 @@ Branch `ci/secret-scan`. Must be done before step 11: a mirror publishes the who
 
 Branch `docs/security-policy`. Modelled on metatrader-dashboard's.
 
-- [ ] **Adding a crate:** needed (not a few lines of our own); maintained; at least 7 days old (pick the
+- [x] **Adding a crate:** needed (not a few lines of our own); maintained; at least 7 days old (pick the
       version on crates.io's versions page; cargo has no `--before`); few transitive crates
       (`cargo tree -e normal -i <crate>`, and read the `Cargo.lock` diff); prefer `default-features =
       false`. A crate with a `build.rs` or a proc macro runs code at build time on every machine and CI
       job, and there is no `ignore-scripts` for cargo: say in the MR which new crates have one.
-- [ ] **Dev machines:** no long-lived tokens in the environment while building (`GITLAB_TOKEN`,
+- [x] **Dev machines:** no long-lived tokens in the environment while building (`GITLAB_TOKEN`,
       `GITHUB_TOKEN`, cloud keys); `cargo build --locked`; never `cargo install` without `--locked`.
-- [ ] **If a crate we use is reported compromised:** find it (`cargo tree -i`, grep `Cargo.lock` on `main`
+- [x] **If a crate we use is reported compromised:** find it (`cargo tree -i`, grep `Cargo.lock` on `main`
       and open branches); did a build run it (CI logs since the bad version, local `~/.cargo/registry`
       dates); rotate what it could reach (`RENOVATE_TOKEN`, `GITHUB_COM_TOKEN`, the mirror token, the
       `DOWNSTREAM_DEPLOY_KEY_B64` deploy key, local SSH keys); pin a good version with
       `cargo update -p <crate> --precise`; play the weekly scan; cut a patch only if a floor in
       `Cargo.toml` had to change (consumers resolve their own lockfiles, so tell them either way).
-- [ ] MR template: the dependency checkbox points at `SECURITY.md`.
-- [ ] `CLAUDE.md` "Layout": `SECURITY.md`, `deny.toml`, `.gitleaks.toml`, `.githooks/`, `renovate.json`.
+- [x] MR template: the dependency checkbox points at `SECURITY.md`.
+- [x] `CLAUDE.md` "Layout": `SECURITY.md`, `deny.toml`, `.gitleaks.toml` (`renovate.json` is added in step 8).
 
 **Done when:** merged, and the template links it.
 
@@ -270,6 +270,7 @@ Branch `ci/renovate-config`. Config only; nothing runs Renovate yet.
   - Custom regex manager for `rust-toolchain.toml`'s `channel`, its own MR, never grouped (D4).
   - `lockFileMaintenance` off: it runs a plain `cargo update`, which bypasses the 7-day age check
         for every transitive crate.
+- [ ] `CLAUDE.md` "Layout": add `renovate.json` next to `SECURITY.md`.
 - [ ] `renovate-config` job: `renovate-config-validator --strict renovate.json` in the Renovate image
       (pinned by digest), only when `renovate.json` changes (`rules: changes:`).
 
