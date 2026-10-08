@@ -16,7 +16,7 @@ done. Writing the devlog and deleting this plan is step 13.
 | **2** | Pre-commit hook | `ci/pre-commit` | ✅ |
 | **3** | Pin every image by digest, check the rustup installer | `ci/pin-images` | 🟦 |
 | **4** | `cargo-deny`: advisories, sources, licenses (`audit` job) | `ci/cargo-deny` | ✅ |
-| **5** | OSV-Scanner on `Cargo.lock` (`scan` job), weekly scan schedule | `ci/osv-scan` | 🟦 |
+| **5** | OSV-Scanner on `Cargo.lock` (`scan` job), weekly scan schedule | `ci/osv-scan` | ✅ |
 | **6** | Secret scan (`secrets` job), full-history audit | `ci/secret-scan` | ⬜ |
 | **7** | `SECURITY.md` | `docs/security-policy` | ⬜ |
 | **8** | `renovate.json` and its validation | `ci/renovate-config` | ⬜ |
@@ -206,9 +206,9 @@ Branch `ci/osv-scan`.
       clean, 1 findings, anything else fails the job. Fail only on a `MAL-` id; CVE/GHSA/RUSTSEC ids are
       printed but gated by `audit` (one failing gate per finding, as in metatrader). Keep the JSON as a
       30-day artifact.
-- [ ] Schedule "Weekly scan" on `main`, variable `SCHEDULE=scan` and nothing else: runs `audit` and `scan`
+- [x] Schedule "Weekly scan" on `main`, variable `SCHEDULE=scan` and nothing else: runs `audit` and `scan`
       only. A schedule with no or another `SCHEDULE` value runs nothing.
-- [ ] Bite test in a throwaway MR: a lockfile entry for a crate with a `MAL-` advisory turns `scan` red.
+- [x] Bite test in a throwaway MR: a lockfile entry for a crate with a `MAL-` advisory turns `scan` red.
 
 **Done when:** `scan` is green on `main`, red on the bite test, and the schedule played by hand runs
 exactly `audit` and `scan`.
