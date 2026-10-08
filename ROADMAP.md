@@ -12,9 +12,12 @@ numbered.
   continue from `.1` under that minor.
 - Tags use the existing `vX.Y.Z` format. `v1.1.0`–`v1.1.6` and `v1.2.0`–`v1.2.3` shipped, so the
   next stage is **`v1.3.0`**. The old `-restart`/`-debug` tags stay, but nothing new is tagged that way.
-- For each release: bump `version` in `Cargo.toml` to match the tag (the `v1.0.1` mismatch in GAPS
-  "Low — style / clippy" must not happen again), tick the item(s) in `GAPS.md`, add a
-  `CHANGELOG.md` entry, commit, then tag.
+- For each release, on a release branch: bump `version` in `Cargo.toml` to match the tag (the
+  `v1.0.1` mismatch in GAPS "Low — style / clippy" must not happen again), tick the item(s) in
+  `GAPS.md`, add a `CHANGELOG.md` entry. Open an MR titled `vX.Y.Z: ...`, merge it once green, then
+  tag the merged commit on `main`. The `release` job rejects a tag that isn't on `main`.
+- A consumer that needs unreleased work uses the manual `downstream` job, or pins `rev =` on its own
+  feature branch; nothing is tagged on a branch here.
 - Consumers pin this crate by **git tag**, not by semver range, so a breaking API change is allowed
   in a **minor**, never in a patch. It ships together with the bridge change that adopts it, and
   the entry below says so. A change of *behavior* behind an unchanged signature (like `v1.0.11`'s

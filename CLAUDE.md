@@ -131,15 +131,19 @@ a breaking change.
 
 ## Releasing
 
-One tag per release, on the working branch (not `main`), as `ROADMAP.md`'s versioning rules say:
+One tag per release, **on `main`**, after the release MR merges (`main` is protected: changes go
+through a merge request, fast-forward with squash, pipelines must succeed), as `ROADMAP.md`'s
+versioning rules say:
 
-1. Bump `version` in `Cargo.toml` to match the tag, and commit `Cargo.lock` with it.
-2. Add a `## X.Y.Z` section to `CHANGELOG.md`; mark a behavior change or a signature change.
-3. Tick the item(s) in `GAPS.md`.
-4. Commit (`vX.Y.Z: ...`), tag `vX.Y.Z`, push both.
-5. The tag pipeline's `release` job runs `tool/release_notes.sh <tag>`, which fails unless the tag,
-   `Cargo.toml`, `Cargo.lock` and a non-empty `CHANGELOG.md` section agree, then creates the GitLab
-   release with that section. Check it is green.
+1. On a release branch: bump `version` in `Cargo.toml` to match the tag and commit `Cargo.lock` with
+   it; add a `## X.Y.Z` section to `CHANGELOG.md` (mark a behavior change or a signature change);
+   tick the item(s) in `GAPS.md`.
+2. Open an MR titled `vX.Y.Z: ...` (the squash commit takes the title), wait for a green pipeline, merge.
+3. `git fetch`, tag `vX.Y.Z` on the merged commit of `origin/main`, push the tag.
+4. The tag pipeline's `release` job fails unless the tagged commit is on `main`, then runs
+   `tool/release_notes.sh <tag>`, which fails unless the tag, `Cargo.toml`, `Cargo.lock` and a
+   non-empty `CHANGELOG.md` section agree, then creates the GitLab release with that section. Check
+   it is green.
 
 `devlog/v1.1.0-foundation.md` and `devlog/v1.2.0-download-management.md` record the decisions and
 pitfalls of the `v1.1.x` and `v1.2.x` lines.

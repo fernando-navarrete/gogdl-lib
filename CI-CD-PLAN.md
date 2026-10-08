@@ -21,7 +21,7 @@ done. Writing the devlog and deleting this plan is step 13.
 | **7** | `SECURITY.md` | `docs/security-policy` | ✅ |
 | **8** | `renovate.json` and its validation | `ci/renovate-config` | 🟦 |
 | **9** | Renovate job and schedule | `ci/renovate-job` | ✅ |
-| **10** | Release flow for a protected `main` | `ci/release-flow` | ⬜ |
+| **10** | Release flow for a protected `main` | `ci/release-flow` | 🟦 |
 | **11** | GitHub mirror | `ci/github-mirror` | ⬜ |
 | **12** | Protect `main` and the `v*` tags | `ci/protect-main` | ⬜ |
 | **13** | Close-out | `docs/ci-devlog` | ⬜ |
@@ -317,16 +317,16 @@ job, and it merged through the MR like any other.
 Branch `ci/release-flow`. Per D1 and D2: the release MR is titled `vX.Y.Z: ...` and the tag goes on its
 squashed commit on `main`.
 
-- [ ] `CLAUDE.md` "Releasing": (1) a release branch with the bump, `Cargo.lock`, the `CHANGELOG.md`
+- [x] `CLAUDE.md` "Releasing": (1) a release branch with the bump, `Cargo.lock`, the `CHANGELOG.md`
       section and the GAPS tick; (2) MR, green, merged; (3) tag `vX.Y.Z` on the merged commit of `main`
       and push the tag; (4) the tag pipeline's `release` job is green. Drop "on the working branch (not
       `main`)".
-- [ ] `ROADMAP.md` "Versioning rules": the same order; consumers needing unreleased work use
+- [x] `ROADMAP.md` "Versioning rules": the same order; consumers needing unreleased work use
       `downstream` or a `rev =` pin on their own feature branch.
-- [ ] `release` job: `needs: [lint, test, doc, audit, scan, secrets]`, and a rule that the tagged commit
+- [x] `release` job: `needs: [lint, test, doc, audit, scan, secrets]`, and a rule that the tagged commit
       is on `main` (`git merge-base --is-ancestor "$CI_COMMIT_SHA" origin/main`, fetching `main` first),
       so a tag cut on a branch can't produce a release.
-- [ ] Check `tool/release_notes.sh v1.2.3` still passes locally and the pinned release image starts.
+- [x] Check `tool/release_notes.sh v1.2.3` still passes locally and the pinned release image starts.
       The job itself is first exercised by `v1.3.0`.
 
 **Done when:** merged; the next release follows it.
