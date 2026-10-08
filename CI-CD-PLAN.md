@@ -20,7 +20,7 @@ done. Writing the devlog and deleting this plan is step 13.
 | **6** | Secret scan (`secrets` job), full-history audit | `ci/secret-scan` | 🟦 |
 | **7** | `SECURITY.md` | `docs/security-policy` | ✅ |
 | **8** | `renovate.json` and its validation | `ci/renovate-config` | 🟦 |
-| **9** | Renovate job and schedule | `ci/renovate-job` | 🟦 |
+| **9** | Renovate job and schedule | `ci/renovate-job` | ✅ |
 | **10** | Release flow for a protected `main` | `ci/release-flow` | ⬜ |
 | **11** | GitHub mirror | `ci/github-mirror` | ⬜ |
 | **12** | Protect `main` and the `v*` tags | `ci/protect-main` | ⬜ |
@@ -289,17 +289,25 @@ Branch `ci/renovate-job`.
       `binarySource: install` has containerbase install Rust on demand (not rustup, so
       `rust-toolchain.toml` is ignored; without a constraint it takes the latest stable). Pinned with
       `constraints.rust` in `renovate.json`, which the toolchain regex manager also bumps, so one MR
-      moves both. Downloads cached under `.ci/renovate`. Check in the dry run that the install is
-      tolerable on the slow network and the cache dir is writable (the image runs as uid 12021).
-- [ ] Variables (protected, masked, environment scope `renovate`): `RENOVATE_TOKEN` (project access
+      moves both. Downloads cached under `.ci/renovate`. The cache dir is writable
+      (uid 12021) and holds the containerbase dir. **Unobserved:** which Rust version ran and how long the
+      install took. MR 15's rewritten `Cargo.lock` shows cargo ran, but the info log doesn't print the
+      install and a later debug replay had no work to do. Set `LOG_LEVEL=debug` on the schedule for the
+      run that opens the first toolchain MR or the next weekly MR, and note the install line here.
+- [x] Variables (protected, masked, environment scope `renovate`): `RENOVATE_TOKEN` (project access
       token, `api` + `write_repository`, role Developer) and `GITHUB_COM_TOKEN` (fine-grained, no
       permissions, for changelog lookups and the rate limit). Calendar reminders before both expire.
-- [ ] Schedule "Renovate" on `main`, `SCHEDULE=renovate`, weekly.
-- [ ] Dry run first: play the schedule with `RENOVATE_DRY_RUN=full` added to the schedule's variables,
-      read the log (pins proposed, nothing younger than 7 days, the 0.x rule holding back the right
-      crates), then remove the variable.
-- [ ] Bite test: a throwaway `check` job on a branch prints `${RENOVATE_TOKEN:+set}`: it must print
-      nothing.
+      A protected variable reaches only a protected ref, so `main` had to be protected first: the first
+      run failed with "RENOVATE_TOKEN is not set". That is step 12's first bullet, done early.
+- [x] Schedule "Renovate" on `main`, `SCHEDULE=renovate`, weekly.
+- [x] No separate dry run: the first run was live (no `RENOVATE_DRY_RUN`), outside the schedule window, so
+      it only created the Dependency Dashboard issue. It showed both regex-manager files, the toolchain
+      bump as its own item, and no major or 0.x-minor bump. Ticking the group's box and replaying the
+      schedule then opened the MR; its diff was `Cargo.lock` only, direct deps patch-bumped, every new
+      version at least 18 days old.
+- [x] Bite test: a throwaway MR with jobs printing `${RENOVATE_TOKEN:+set}` and `${GITHUB_COM_TOKEN:+set}`,
+      with and without `environment: renovate`, on an unprotected branch: both print nothing. (First run
+      while `main` was still unprotected, so it proved little; re-run once the variables reached `main`: still nothing.)
 
 **Done when:** a live run opened the grouped MR (and the digest-pin MR), its pipeline ran every check
 job, and it merged through the MR like any other.
@@ -350,7 +358,7 @@ Branch `ci/github-mirror` (the files below; the mirror itself is a setting). Nee
 
 Branch `ci/protect-main` (docs only; the rest is settings).
 
-- [ ] Protected branch `main`: allowed to push and merge "No one" / "Maintainers", force push off,
+- [x] Protected branch `main` (done in step 9, so the `renovate` variables reach scheduled pipelines): allowed to push and merge "No one" / "Maintainers", force push off,
       code-owner approval off (single maintainer).
 - [ ] Merge request settings: "Pipelines must succeed" (on since step 1), "All threads must be
       resolved", "Skipped pipelines are considered successful" off, merge method per D1 (fast-forward, squash required).
