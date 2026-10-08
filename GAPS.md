@@ -2,7 +2,8 @@
 
 Open findings for `gogdl-lib`. Current tree: **`main`**, `Cargo.toml` at `1.2.3`. The newest tag is **`v1.2.3`**. `v1.1.6` and
 `v1.2.0`–`v1.2.3` were cut on `feat/v1.2.0-download-management`, which has been fast-forwarded into
-`main`. Their decisions are in `devlog/v1.2.0-download-management.md` (`v1.1.x`: `devlog/v1.1.0-foundation.md`). `v1.0.11` (`d5b43e6`) includes the owned-products
+`main`. Their decisions are in `devlog/v1.2.0-download-management.md` (`v1.1.x`: `devlog/v1.1.0-foundation.md`; CI/CD:
+`devlog/v1.2.x-ci-cd.md`). `v1.0.11` (`d5b43e6`) includes the owned-products
 rename (`d6dbdc5`) and the owned-games filter (`e032b7d`). `feature/saves` was merged into `main`, so
 every tag is reachable from `main`. Consumer pins: the bridge (`gogdl_flutter`) is on `v1.0.11`, and
 **`lumen-cli`** is on **`v1.0.10`** (`Cargo.toml:12`), so its next bump picks up the
@@ -677,6 +678,17 @@ The ~1,500 lines of new saves code added no clippy warnings beyond the three car
 truncate-before-write on save files, tokens in error strings, a mutex held across network I/O, a
 401 loop with no `continue`, an inverted expiry margin copied into a second type), clippy flags only
 the inverted margin's `map_or` spelling, not its direction.
+
+## Low — CI/CD
+
+- [ ] **Renovate's Rust install is unobserved.** `constraints.rust` pins it, and MR 15's rewritten
+  `Cargo.lock` shows cargo ran, but no log shows the version or install time. Set `LOG_LEVEL=debug` on
+  the schedule for the run that opens the first toolchain MR or the next weekly MR.
+- [ ] **The `release` job's `needs` and on-`main` rule are untested.** First exercised by `v1.3.0`.
+- [ ] **Runner load is unmeasured.** Three builds per push; if the runner can't keep up, `doc` could
+  fold into `lint`.
+- [ ] **Token expiries are calendar reminders only:** `RENOVATE_TOKEN`, `GITHUB_COM_TOKEN` and the
+  GitHub mirror token.
 
 ---
 

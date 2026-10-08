@@ -154,4 +154,5 @@ versioning rules say:
    it is green.
 
 `devlog/v1.1.0-foundation.md` and `devlog/v1.2.0-download-management.md` record the decisions and
-pitfalls of the `v1.1.x` and `v1.2.x` lines.
+pitfalls of the `v1.1.x` and `v1.2.x` lines; `devlog/v1.2.x-ci-cd.md` those of the CI/CD and supply
+chain work done after `v1.2.3`.

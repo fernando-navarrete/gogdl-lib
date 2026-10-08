@@ -24,8 +24,8 @@
 # Pipelines run on merge requests, on main, on vX.Y.Z tags and on manual runs from the web UI
 # (Build -> Pipelines -> Run pipeline, any branch). A branch with an open MR runs only the MR
 # pipeline, and a pushed branch without an MR runs nothing. A scheduled pipeline runs only the jobs
-# that name its SCHEDULE (`audit` and `scan` on SCHEDULE=scan; renovate comes with step 9 of
-# CI-CD-PLAN.md). `scan` (OSV-Scanner) and `secrets` (gitleaks) run upstream images from ghcr.io, and
+# that name its SCHEDULE (`audit` and `scan` on SCHEDULE=scan, `renovate` on
+# SCHEDULE=renovate). `scan` (OSV-Scanner) and `secrets` (gitleaks) run upstream images from ghcr.io, and
 # `renovate-config` the Renovate image: the only jobs not on the local CI image.
 workflow:
   rules:

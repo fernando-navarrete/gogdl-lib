@@ -1,7 +1,7 @@
 # gitleaks config for the `secrets` CI job (see .gitlab-ci.yml).
 # The default rules only. The full-history audit of 2026-10-08 (238 commits, all refs) found nothing,
 # so there is no allowlist. The Galaxy client id/secret in src/constants/mod.rs are the public values
-# every open-source GOG client ships (CI-CD-PLAN.md D6) and no default rule matches them.
+# every open-source GOG client ships (devlog/v1.2.x-ci-cd.md D6) and no default rule matches them.
 # If a false positive turns up, add a narrow [[allowlists]] entry (targetRules + paths or regexes)
 # with a comment saying why it is safe; never a blanket path.
 title = "gogdl-lib"
