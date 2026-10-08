@@ -183,8 +183,10 @@ scan:
     paths: [osv-scanner.json]
 
 # gitleaks over git history, config in .gitleaks.toml (default rules, no allowlist). On an MR it
-# scans only the MR's commits; on main, tags and web runs, the whole history (GIT_DEPTH 0: the diff
-# base and the full scan both need every commit). Findings are redacted, so the report is safe to
+# scans only the MR's commits; on main, tags and web runs, what HEAD, the remote branches and the
+# tags reach (GIT_DEPTH 0: the diff base and the full scan both need every commit). Not `--all`:
+# that also walks GitLab's hidden refs/merge-requests/* and refs/pipelines/*, which outlive a
+# closed MR. Findings are redacted, so the report is safe to
 # keep. Not scheduled: the image is pinned, so a weekly rerun would find nothing new.
 secrets:
   stage: check
@@ -201,7 +203,7 @@ secrets:
     - git config --global --add safe.directory "$CI_PROJECT_DIR"
     - |
       range=""
-      if [ -n "${CI_MERGE_REQUEST_DIFF_BASE_SHA:-}" ]; then range="$CI_MERGE_REQUEST_DIFF_BASE_SHA..HEAD"; else range="--all"; fi
+      if [ -n "${CI_MERGE_REQUEST_DIFF_BASE_SHA:-}" ]; then range="$CI_MERGE_REQUEST_DIFF_BASE_SHA..HEAD"; else range="HEAD --remotes --tags"; fi
       gitleaks git . --config .gitleaks.toml --log-opts="$range" --redact --no-banner --exit-code 1 --report-format json --report-path gitleaks.json
   artifacts:
     when: always
