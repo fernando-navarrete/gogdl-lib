@@ -25,8 +25,8 @@
 # (Build -> Pipelines -> Run pipeline, any branch). A branch with an open MR runs only the MR
 # pipeline, and a pushed branch without an MR runs nothing. A scheduled pipeline runs only the jobs
 # that name its SCHEDULE (`audit` and `scan` on SCHEDULE=scan; renovate comes with step 9 of
-# CI-CD-PLAN.md). `scan` (OSV-Scanner) and `secrets` (gitleaks) run upstream images from ghcr.io, the only jobs
-# not on the local CI image.
+# CI-CD-PLAN.md). `scan` (OSV-Scanner) and `secrets` (gitleaks) run upstream images from ghcr.io, and
+# `renovate-config` the Renovate image: the only jobs not on the local CI image.
 workflow:
   rules:
     - if: $CI_PIPELINE_SOURCE == "schedule"
@@ -207,6 +207,23 @@ secrets:
     when: always
     expire_in: 30 days
     paths: [gitleaks.json]
+
+# Validates renovate.json whenever it changes (Renovate itself comes with step 9 of CI-CD-PLAN.md).
+# --strict also fails on options Renovate would migrate. The image is the one step 9's job will use.
+renovate-config:
+  stage: check
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
+    - changes: [renovate.json]
+  image:
+    name: renovate/renovate:44@sha256:05c512c35c764ef6a179e69c3b30567eca254d67f13a0143479fe3c84852c67a
+    entrypoint: ['']
+    pull_policy: if-not-present
+  cache: []
+  before_script: []
+  script:
+    - renovate-config-validator --strict renovate.json
 
 # Runs after all check jobs, on vX.Y.Z tags only. tool/release_notes.sh fails if Cargo.toml,
 # Cargo.lock and the tag disagree, or if CHANGELOG.md has no section for the version, so a tag

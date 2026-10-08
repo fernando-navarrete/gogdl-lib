@@ -1,0 +1,63 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Weekly, minor and patch grouped, each release at least 7 days old (security fixes excepted). Majors and 0.x minors are held back. Cargo.lock only (CI-CD-PLAN.md D5); the Rust toolchain gets its own MR (D4).",
+  "extends": ["config:recommended"],
+  "enabledManagers": ["cargo", "gitlabci", "dockerfile", "custom.regex"],
+  "schedule": ["before 6am on monday"],
+  "timezone": "America/Mexico_City",
+  "minimumReleaseAge": "7 days",
+  "internalChecksFilter": "strict",
+  "osvVulnerabilityAlerts": true,
+  "vulnerabilityAlerts": { "minimumReleaseAge": null, "enabled": true },
+  "ignoreDeps": ["gogdl-lib-ci"],
+  "lockFileMaintenance": {
+    "description": "Off: it runs a plain `cargo update`, which bypasses the 7-day age check for every transitive crate.",
+    "enabled": false
+  },
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "The channel pinned in rust-toolchain.toml.",
+      "managerFilePatterns": ["/^rust-toolchain\\.toml$/"],
+      "matchStrings": ["channel\\s*=\\s*\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""],
+      "depNameTemplate": "rust",
+      "packageNameTemplate": "rust-lang/rust",
+      "datasourceTemplate": "github-releases"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Consumers pin this crate by tag and resolve their own lockfiles: update Cargo.lock only, never raise a floor in Cargo.toml (D5).",
+      "matchManagers": ["cargo"],
+      "rangeStrategy": "update-lockfile"
+    },
+    {
+      "description": "Pin CI and Dockerfile images by digest; digest updates then come in the grouped MR.",
+      "matchManagers": ["gitlabci", "dockerfile"],
+      "pinDigests": true
+    },
+    {
+      "description": "Semver-major updates are done by hand.",
+      "matchUpdateTypes": ["major"],
+      "enabled": false
+    },
+    {
+      "description": "A 0.x minor is a breaking change (sysinfo, rand, async-compression, ...): treat it as a major.",
+      "matchManagers": ["cargo"],
+      "matchCurrentVersion": "<1.0.0",
+      "matchUpdateTypes": ["minor"],
+      "enabled": false
+    },
+    {
+      "description": "One MR for all minor, patch and digest updates.",
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "groupName": "minor and patch"
+    },
+    {
+      "description": "The toolchain is always its own MR (D4). It stays red on the .toolchain check until ci/build-image.sh is run and image: in .gitlab-ci.yml is pushed onto the branch.",
+      "matchManagers": ["custom.regex"],
+      "matchDepNames": ["rust"],
+      "groupName": "rust toolchain"
+    }
+  ]
+}

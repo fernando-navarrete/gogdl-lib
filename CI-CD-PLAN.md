@@ -18,8 +18,8 @@ done. Writing the devlog and deleting this plan is step 13.
 | **4** | `cargo-deny`: advisories, sources, licenses (`audit` job) | `ci/cargo-deny` | ✅ |
 | **5** | OSV-Scanner on `Cargo.lock` (`scan` job), weekly scan schedule | `ci/osv-scan` | ✅ |
 | **6** | Secret scan (`secrets` job), full-history audit | `ci/secret-scan` | 🟦 |
-| **7** | `SECURITY.md` | `docs/security-policy` | 🟦 |
-| **8** | `renovate.json` and its validation | `ci/renovate-config` | ⬜ |
+| **7** | `SECURITY.md` | `docs/security-policy` | ✅ |
+| **8** | `renovate.json` and its validation | `ci/renovate-config` | 🟦 |
 | **9** | Renovate job and schedule | `ci/renovate-job` | ⬜ |
 | **10** | Release flow for a protected `main` | `ci/release-flow` | ⬜ |
 | **11** | GitHub mirror | `ci/github-mirror` | ⬜ |
@@ -255,7 +255,7 @@ Branch `docs/security-policy`. Modelled on metatrader-dashboard's.
 
 Branch `ci/renovate-config`. Config only; nothing runs Renovate yet.
 
-- [ ] `renovate.json`, from metatrader-dashboard's:
+- [x] `renovate.json`, from metatrader-dashboard's:
   - `extends: ["config:recommended"]`, `enabledManagers: ["cargo", "gitlabci", "dockerfile", "custom.regex"]`.
   - `schedule: ["before 6am on monday"]`, `timezone: "America/Mexico_City"`.
   - `minimumReleaseAge: "7 days"`, `internalChecksFilter: "strict"`.
@@ -270,8 +270,8 @@ Branch `ci/renovate-config`. Config only; nothing runs Renovate yet.
   - Custom regex manager for `rust-toolchain.toml`'s `channel`, its own MR, never grouped (D4).
   - `lockFileMaintenance` off: it runs a plain `cargo update`, which bypasses the 7-day age check
         for every transitive crate.
-- [ ] `CLAUDE.md` "Layout": add `renovate.json` next to `SECURITY.md`.
-- [ ] `renovate-config` job: `renovate-config-validator --strict renovate.json` in the Renovate image
+- [x] `CLAUDE.md` "Layout": add `renovate.json` next to `SECURITY.md`.
+- [x] `renovate-config` job: `renovate-config-validator --strict renovate.json` in the Renovate image
       (pinned by digest), only when `renovate.json` changes (`rules: changes:`).
 
 **Done when:** the validator passes in the MR pipeline.

@@ -81,6 +81,7 @@ When a method is added, changed or removed on `GogDl`, update this table and `CH
   from outside the crate, and scrubbed captures of real responses.
 - `ci/`, `tool/`, `.githooks/`, `.gitlab-ci.yml`: see **Gates** and **Releasing**.
 - `SECURITY.md` (supply-chain policy), `deny.toml`, `.gitleaks.toml`: what the `audit` and `secrets` jobs enforce.
+- `renovate.json`: the dependency-update policy; the `renovate-config` job validates it.
 - `ROADMAP.md`, `GAPS.md`, `CHANGELOG.md`, `devlog/` (decisions and pitfalls per finished line).
 
 ## Tests
