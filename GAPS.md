@@ -685,6 +685,9 @@ the inverted margin's `map_or` spelling, not its direction.
   `Cargo.lock` shows cargo ran, but no log shows the version or install time. Set `LOG_LEVEL=debug` on
   the schedule for the run that opens the first toolchain MR or the next weekly MR.
 - [ ] **The `release` job's `needs` and on-`main` rule are untested.** First exercised by `v1.3.0`.
+  The same job in gogdl_flutter ran first, for its `v1.3.1`: it failed because the `git fetch` of
+  `main` ran before the private CA was trusted. Reordered here too; gogdl_flutter's `v1.3.2` release
+  went green with the fix.
 - [ ] **Runner load is unmeasured.** Three builds per push; if the runner can't keep up, `doc` could
   fold into `lint`.
 - [ ] **Token expiries are calendar reminders only:** `RENOVATE_TOKEN`, `GITHUB_COM_TOKEN` and the

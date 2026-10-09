@@ -293,21 +293,22 @@ release:
   cache: []
   script:
     - git config --global --add safe.directory "$CI_PROJECT_DIR"
+    # The git fetch below and glab, which creates the release, both talk to https://thinkcentre.home,
+    # signed by a private CA the image doesn't trust. The runner hands that CA to jobs as
+    # CI_SERVER_TLS_CA_FILE when its config.toml has tls-ca-file, so add it to the trust store (git
+    # and Go both read this bundle) before the fetch: gogdl_flutter's v1.3.1 release failed on it.
+    - |
+      if [ -n "${CI_SERVER_TLS_CA_FILE:-}" ]; then
+        cat "$CI_SERVER_TLS_CA_FILE" >> /etc/ssl/certs/ca-certificates.crt
+      else
+        echo "warning: CI_SERVER_TLS_CA_FILE is not set; the fetch and the release will fail on the private CA unless the runner provides it" >&2
+      fi
     - git fetch origin "+refs/heads/$CI_DEFAULT_BRANCH:refs/remotes/origin/$CI_DEFAULT_BRANCH"
     - |
       git merge-base --is-ancestor "$CI_COMMIT_SHA" "origin/$CI_DEFAULT_BRANCH" || {
         echo "$CI_COMMIT_TAG points at $CI_COMMIT_SHA, which is not on $CI_DEFAULT_BRANCH: tag the merged release commit" >&2
         exit 1
       }
-    # glab, which creates the release, talks to https://thinkcentre.home, signed by a private CA
-    # the image doesn't trust. The runner hands that CA to jobs as CI_SERVER_TLS_CA_FILE when
-    # its config.toml has tls-ca-file, so add it to the trust store (Go reads this bundle).
-    - |
-      if [ -n "${CI_SERVER_TLS_CA_FILE:-}" ]; then
-        cat "$CI_SERVER_TLS_CA_FILE" >> /etc/ssl/certs/ca-certificates.crt
-      else
-        echo "warning: CI_SERVER_TLS_CA_FILE is not set; creating the release will fail on the private CA unless the runner provides it" >&2
-      fi
     - sh tool/release_notes.sh "$CI_COMMIT_TAG" > release_notes.md
     - cat release_notes.md
   release:
