@@ -689,6 +689,9 @@ the inverted margin's `map_or` spelling, not its direction.
   fold into `lint`.
 - [ ] **Token expiries are calendar reminders only:** `RENOVATE_TOKEN`, `GITHUB_COM_TOKEN` and the
   GitHub mirror token.
+- [ ] **A moved tag on GitHub needs a manual fix.** The `v*` ruleset has no bypass for the mirror
+  token, so the mirror can't restore a tag (it took turning the ruleset off), and nothing compares
+  GitLab and GitHub refs. Compare `git ls-remote` on both after touching a tag.
 
 ---
 
