@@ -6,6 +6,11 @@ behind an unchanged signature is called out as **Behavior change**, and a signat
 
 ## Unreleased
 
+* **Breaking:** `OwnedGames` gains `unresolved: Vec<ProductId>`, the owned products whose `gamesdb`
+  lookup failed (a transport error, any non-2xx including a 404). `get_owned_games` used to drop
+  them silently and return a shorter library; it still returns `Ok`, but now `unresolved` says what
+  is missing. The field is `#[serde(default)]`, so JSON saved without it still parses, and a struct
+  literal must add it. A failure isn't cached, so the next call retries those products.
 * **Behavior change:** one "not a game" answer. `get_game_builds`, `get_game_links` and
   `get_game_summary` return `GamesError::ProductNotAGame` for a DLC or a pack (details: `[]`;
   links: `_embedded.productType` not `GAME`; summary: `gamesdb` `type` not `game`; builds: an empty

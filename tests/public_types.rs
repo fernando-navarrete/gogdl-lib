@@ -8,7 +8,7 @@
 
 use gogdl_lib::{
     Chunk, DepotFile, DownloadError, DownloadEvent, DownloadStageEvent, FileAllocationEvent,
-    FileSizeVerificationEvent, FileSystemError, GameBuild, GameBuilds, ProductDetails,
+    FileSizeVerificationEvent, FileSystemError, GameBuild, GameBuilds, OwnedGames, ProductDetails,
     ProductRemoval, ProductSize, ProtonDownloadEvent, ProtonError, ProtonGeRelease,
     ProtonGeReleasesPage, SavesDownloadEvent, SavesError, SavesUploadEvent, VerificationEvent,
 };
@@ -351,4 +351,20 @@ fn product_removals_can_be_built_and_deserialized() {
     assert_eq!(parsed, built);
     assert_eq!(ProductRemoval::default().files_removed, 0);
     assert_eq!(built, built.clone());
+}
+
+#[test]
+fn owned_games_can_be_built_and_deserialized() {
+    let built = OwnedGames {
+        owned: vec![1],
+        unresolved: vec![2],
+    };
+    assert_eq!(
+        (built.owned.clone(), built.unresolved.clone()),
+        (vec![1], vec![2])
+    );
+
+    let old: OwnedGames = serde_json::from_str(r#"{"owned":[1,2]}"#).unwrap();
+    assert_eq!(old.owned, vec![1, 2]);
+    assert!(old.unresolved.is_empty());
 }

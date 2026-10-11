@@ -6,27 +6,42 @@ use crate::{
     games::{GamesManager, gamesdb::is_game_type, owned_products::ProductId},
 };
 
-/// The IDs of the owned products that are games, as returned by
+/// The owned products that are games, as returned by
 /// [`GogDl::get_owned_games`](crate::GogDl::get_owned_games). DLCs, packs
 /// and other non-game products the account owns are filtered out.
+///
+/// `owned` alone is the whole library only when `unresolved` is empty.
 #[derive(Serialize, Deserialize, Clone)]
 pub struct OwnedGames {
     /// The owned game IDs, in no particular order.
     pub owned: Vec<ProductId>,
+    /// The owned products whose `gamesdb` lookup failed (a transport error
+    /// after retries, any non-2xx status including a 404 for a product
+    /// `gamesdb` doesn't know, or an unexpected body), so it is unknown
+    /// whether they are games. In no particular order. A failure isn't
+    /// cached, so the next call looks them up again.
+    #[serde(default)]
+    pub unresolved: Vec<ProductId>,
 }
 
-/// Keeps the IDs whose lookup succeeded and came back as a game (see
-/// [`is_game_type`]). A failed lookup is dropped silently, whatever the reason
-/// (a 404 for a product gamesdb doesn't know, a transport error, a 5xx):
-/// `v1.3.0` changes that, so it isn't pinned as a contract. A failure isn't
-/// cached, so the next call looks the product up again.
-fn keep_games(lookups: &[Result<(ProductId, String), GamesError>]) -> Vec<ProductId> {
-    lookups
-        .iter()
-        .filter_map(|lookup| lookup.as_ref().ok())
-        .filter(|(_, product_type)| is_game_type(product_type))
-        .map(|(id, _)| *id)
-        .collect::<Vec<_>>()
+/// Splits the lookups into `(owned, unresolved)`: an ID whose lookup came
+/// back as a game (see [`is_game_type`]) is owned, one that came back as
+/// anything else is dropped, and one whose lookup failed, whatever the
+/// reason, is unresolved. A failure isn't cached, so the next call looks the
+/// product up again.
+fn keep_games(
+    lookups: &[(ProductId, Result<String, GamesError>)],
+) -> (Vec<ProductId>, Vec<ProductId>) {
+    let mut owned = Vec::new();
+    let mut unresolved = Vec::new();
+    for (id, lookup) in lookups {
+        match lookup {
+            Ok(product_type) if is_game_type(product_type) => owned.push(*id),
+            Ok(_) => {}
+            Err(_) => unresolved.push(*id),
+        }
+    }
+    (owned, unresolved)
 }
 
 impl OwnedGames {
@@ -42,14 +57,14 @@ impl OwnedGames {
         // calls on a cold cache can both look up the same id; that costs a
         // request, not correctness.
         let lookups = stream::iter(owned_products.owned)
-            .map(|id| async move { Ok((id, games_manager.product_type(id).await?)) })
+            .map(|id| async move { (id, games_manager.product_type(id).await) })
             .buffer_unordered(2)
-            .collect::<Vec<Result<(ProductId, String), GamesError>>>()
+            .collect::<Vec<(ProductId, Result<String, GamesError>)>>()
             .await;
 
-        let owned_games = keep_games(&lookups);
+        let (owned, unresolved) = keep_games(&lookups);
 
-        Ok(OwnedGames { owned: owned_games })
+        Ok(OwnedGames { owned, unresolved })
     }
 }
 
@@ -82,26 +97,28 @@ mod tests {
         );
 
         let lookups = vec![
-            Ok((1, dlc)),
-            Ok((2, game)),
-            Ok((3, pack)),
-            Err(GamesError::ClientError(ClientError::AuthError(
-                crate::client::AuthError::NotAuthenticated,
-            ))),
+            (1, Ok(dlc)),
+            (2, Ok(game)),
+            (3, Ok(pack)),
+            (
+                4,
+                Err(GamesError::ClientError(ClientError::AuthError(
+                    crate::client::AuthError::NotAuthenticated,
+                ))),
+            ),
         ];
-        assert_eq!(keep_games(&lookups), vec![2]);
+        assert_eq!(keep_games(&lookups), (vec![2], vec![4]));
     }
 
     #[test]
-    fn a_failed_lookup_for_a_game_drops_it_silently() {
-        // Today's behavior, changed by `v1.3.0` (GAPS "owned games").
+    fn a_failed_lookup_lands_in_unresolved() {
         let game = product_type(include_str!("../../tests/fixtures/gamesdb_game.json"));
         let lookups = vec![
-            Ok((2, game)),
-            Err(GamesError::ProductNotAGame),
-            Err(GamesError::ProductNotAGame),
+            (2, Ok(game)),
+            (3, Err(GamesError::ProductNotAGame)),
+            (4, Err(GamesError::ProductNotAGame)),
         ];
-        assert_eq!(keep_games(&lookups), vec![2]);
+        assert_eq!(keep_games(&lookups), (vec![2], vec![3, 4]));
     }
 
     #[tokio::test]
@@ -122,12 +139,35 @@ mod tests {
 
         let first = manager.get_owned_games().await.unwrap();
         assert_eq!(first.owned, vec![1]);
+        assert_eq!(first.unresolved, vec![3]);
         assert_eq!([1, 2, 3].map(|id| server.requests(&path(id))), [1, 1, 1]);
 
-        let mut second = manager.get_owned_games().await.unwrap().owned;
-        second.sort();
-        assert_eq!(second, vec![1, 3]);
+        let second = manager.get_owned_games().await.unwrap();
+        let mut owned = second.owned;
+        owned.sort();
+        assert_eq!(owned, vec![1, 3]);
+        assert!(second.unresolved.is_empty());
         assert_eq!([1, 2, 3].map(|id| server.requests(&path(id))), [1, 1, 2]);
+    }
+
+    #[tokio::test]
+    async fn a_404_is_unresolved_and_retried() {
+        let game = include_bytes!("../../tests/fixtures/gamesdb_game.json").to_vec();
+        let server = ChunkServer::start().await;
+        let path = |id: i32| format!("/platforms/gog/external_releases/{id}");
+        server.script(&path(1), vec![Reply::Body(game)]);
+        server.script(&path(2), vec![Reply::Status(404), Reply::Status(404)]);
+
+        let mut manager = GamesManager::new(HttpClient::new_with_client(reqwest::Client::new()));
+        manager.gamesdb_base = server.base_url();
+        manager.inner.lock().await.owned_products = Some(OwnedProducts { owned: vec![1, 2] });
+
+        for _ in 0..2 {
+            let result = manager.get_owned_games().await.unwrap();
+            assert_eq!(result.owned, vec![1]);
+            assert_eq!(result.unresolved, vec![2]);
+        }
+        assert_eq!([1, 2].map(|id| server.requests(&path(id))), [1, 2]);
     }
 
     #[tokio::test]

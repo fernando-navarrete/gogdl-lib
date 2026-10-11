@@ -210,7 +210,7 @@ The paragraph below is the baseline it started from.)* `cargo build --lib` showe
 
 ## Medium — owned games
 
-- [ ] **`get_owned_games` silently drops any product whose `gamesdb` lookup fails.** Each lookup's
+- [x] **`get_owned_games` silently drops any product whose `gamesdb` lookup fails.** Each lookup's
   `Result` is filtered with `.filter(|d| d.is_ok())` (`src/games/owned_games.rs:48`), so a
   transport error after retries, a 404 for a product `gamesdb` doesn't know, a 429, or a body
   without a `type` field just removes that ID. The call still returns `Ok`. A flaky network
@@ -220,6 +220,9 @@ The paragraph below is the baseline it started from.)* `cargo build --lib` showe
   needs to show, not hide". The rustdoc now states the behavior, so it is documented, not fixed.
   Options: fail the whole call on the first non-404 error, or return the unresolved IDs alongside
   the games (e.g. an `unresolved: Vec<ProductId>` field on `OwnedGames`) so callers can decide.
+  *(Fixed in `v1.3.0`: `OwnedGames.unresolved` (`#[serde(default)]`) holds every product whose
+  lookup failed, a 404 included, and the call stays `Ok`. A failure isn't cached, so the next call
+  retries it. Breaking: the struct gains a field.)*
 
 - [x] **Every `get_owned_games` call re-fetches one `gamesdb` record per owned product.** Only the
   underlying `OwnedProducts` list is cached. The type lookups aren't stored on `GamesManagerInner`

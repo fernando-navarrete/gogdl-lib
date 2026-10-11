@@ -240,14 +240,14 @@ impl GogDl {
     ///
     /// A product whose `gamesdb` lookup fails (transport error after retries,
     /// a non-2xx status such as a 404 for a product `gamesdb` doesn't know,
-    /// or an unexpected response shape) is silently left out rather than
-    /// failing the call, so a transient failure can make an owned game
-    /// missing from the result.
+    /// or an unexpected response shape) doesn't fail the call: its ID is
+    /// returned in [`OwnedGames::unresolved`], so `Ok` doesn't mean the list
+    /// is complete and the caller decides what to do with those IDs.
     ///
     /// # Errors
     /// [`GogDlError::GameError`] wrapping [`crate::GamesError::ClientError`] on
     /// auth or transport failure fetching the owned-products list. Per-product
-    /// lookup failures are not reported; see above.
+    /// lookup failures are reported in `unresolved`, not as an error.
     pub async fn get_owned_games(&self) -> Result<OwnedGames, GogDlError> {
         let owned_games = self.games.get_owned_games().await?;
         Ok(owned_games)
