@@ -48,6 +48,10 @@ impl DownloadManager {
             games,
         }
     }
+    /// Drops the downloadable products.
+    pub async fn clear_cache(&self) {
+        self.inner.lock().await.downloadable_products.clear();
+    }
     /// The language-filtered metadata of `build_name`, the one place a build is looked up by name.
     pub async fn get_build_metadata(
         &self,

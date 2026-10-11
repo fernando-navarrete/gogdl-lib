@@ -307,3 +307,24 @@ pub fn with_valid_until(offset: i64, check: impl Fn(i64) -> bool) -> bool {
         }
     }
 }
+
+/// A client holding a session that stays valid for the whole test, for
+/// fetches that require auth.
+pub async fn authed_client() -> crate::client::HttpClient {
+    let client = crate::client::HttpClient::new_with_client(reqwest::Client::new());
+    let auth = serde_json::json!({
+        "access_token": "access",
+        "refresh_token": "refresh",
+        "expires_in": 3600,
+        "token_type": "bearer",
+        "session_id": "session",
+        "scope": null,
+        "user_id": "42",
+        "valid_until": 4_102_444_800i64,
+    });
+    client
+        .restore_auth_from_string(&auth.to_string())
+        .await
+        .unwrap();
+    client
+}

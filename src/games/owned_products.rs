@@ -19,25 +19,24 @@ pub struct OwnedProducts {
 impl OwnedProducts {
     /// Fetches the account's owned product IDs from
     /// `embed.gog.com/user/data/games`. Cached on the `GamesManager` after
-    /// the first non-empty result — the network is not re-checked on later
-    /// calls.
+    /// the first successful fetch (an empty list included) until
+    /// `clear_cache` drops it.
     pub async fn get_owned_products(
         game_manager: &GamesManager,
     ) -> Result<OwnedProducts, GamesError> {
-        let owned_products = {
+        {
             let lock = game_manager.inner.lock().await;
-            lock.owned_products.clone()
-        };
-        if !owned_products.owned.is_empty() {
-            return Ok(owned_products);
+            if let Some(owned_products) = &lock.owned_products {
+                return Ok(owned_products.clone());
+            }
         }
-        let url = "https://embed.gog.com/user/data/games".to_string();
+        let url = game_manager.owned_products_url();
 
         let owned_products: OwnedProducts =
             game_manager.client.fetch(&url, false, true, None).await?;
 
         let mut lock = game_manager.inner.lock().await;
-        lock.owned_products = owned_products.clone();
+        lock.owned_products = Some(owned_products.clone());
         Ok(owned_products)
     }
 }

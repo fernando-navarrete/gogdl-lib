@@ -617,7 +617,7 @@ mod tests {
     use super::*;
     use crate::{
         depot::Chunk,
-        games::GamesManager,
+        games::{GamesManager, OwnedProducts},
         secure_links::{CdnUrlParams, SecureLinks, UrlFormat},
         test_support::{ChunkServer, Reply, TempDir, md5_hex, zlib},
     };
@@ -665,7 +665,9 @@ mod tests {
         let server = ChunkServer::start().await;
         let client = HttpClient::new_with_client(reqwest::Client::new());
         let games = GamesManager::new(client.clone());
-        games.inner.lock().await.owned_products.owned = vec![PRODUCT.parse().unwrap()];
+        games.inner.lock().await.owned_products = Some(OwnedProducts {
+            owned: vec![PRODUCT.parse().unwrap()],
+        });
         let secure_links = SecureLinksManager::new(client.clone(), games);
         secure_links.fixture_links(
             PRODUCT,
@@ -1331,5 +1333,48 @@ mod tests {
             ])
         );
         assert_eq!(h.server.requests(&path), 1);
+    }
+
+    /// A clear while a chunk is in flight changes nothing for the download:
+    /// the secure links are already cached, so no ownership re-check runs.
+    #[tokio::test]
+    async fn clear_cache_during_a_download_does_not_disturb_it() {
+        let h = harness(1).await;
+        let (a, b) = (b"first chunk".as_slice(), b"second chunk".as_slice());
+        let (chunk_a, chunk_b) = (chunk_of(1, a), chunk_of(2, b));
+        let (path_a, path_b) = (
+            chunk_path(&chunk_a.compressed_md5),
+            chunk_path(&chunk_b.compressed_md5),
+        );
+        let open = Arc::new(Notify::new());
+        h.server.script(&path_a, vec![Reply::Body(zlib(a))]);
+        h.server.script(
+            &path_b,
+            vec![Reply::After(open.clone(), Box::new(Reply::Body(zlib(b))))],
+        );
+        let bundle = bundle_of(vec![("game.bin", vec![chunk_a, chunk_b])]);
+        let dir = h.dir.path().to_str().unwrap().to_string();
+
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let download = h.downloader.download(vec![bundle], &dir, tx);
+        let clear = async {
+            while h.server.requests(&path_b) == 0 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            h.downloader.secure_links.games.clear_cache().await;
+            open.notify_one();
+        };
+        let (result, ()) = tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::join!(download, clear)
+        })
+        .await
+        .expect("the download stalled");
+        result.unwrap();
+
+        assert_eq!(
+            std::fs::read(h.dir.path().join("game.bin")).unwrap(),
+            [a, b].concat()
+        );
+        assert_eq!(h.downloader.secure_links.fetches(), 1);
     }
 }

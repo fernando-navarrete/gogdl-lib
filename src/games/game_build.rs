@@ -84,10 +84,7 @@ impl GameBuilds {
                 return Ok(game_builds.clone());
             }
         }
-        let url = format!(
-            "https://content-system.gog.com/products/{}/os/windows/builds?generation=2",
-            game_id
-        );
+        let url = games_manager.game_builds_url(game_id);
 
         let game_builds: GameBuilds = games_manager.client.fetch(&url, false, true, None).await?;
         let mut lock = games_manager.inner.lock().await;

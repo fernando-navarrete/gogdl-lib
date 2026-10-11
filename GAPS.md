@@ -231,8 +231,7 @@ The paragraph below is the baseline it started from.)* `cargo build --lib` showe
   cached, so the item above stays fixable.
   *(Fixed in `v1.3.0`: `GamesManagerInner.product_types` caches each product's type after a
   successful lookup; a failed lookup isn't cached and is retried. A test with a fixture server
-  checks the second call makes no request for a resolved product. `clear_cache` (`v1.3.0` step 4) must
-  keep it, per D5.)*
+  checks the second call makes no request for a resolved product. `clear_cache` keeps it, per D5.)*
 
 - [ ] **The game/non-game decision rests on an undocumented endpoint and an exact string.**
   `gamesdb.gog.com` is not a documented GOG API, the request is unauthenticated
@@ -247,7 +246,7 @@ The paragraph below is the baseline it started from.)* `cargo build --lib` showe
 Both are the bridge's `v1.4.0` requests (its GAPS §7.12–7.13, Lumen's `v1.4.0` D3 and D1), scheduled
 in `v1.3.0` (steps 4–5 of `v1.3.0-LIBRARY.md`; once planned as the patches `v1.2.4` and `v1.2.5`).
 
-- [ ] **Cached library data can't be refreshed.** A `GogDl` memoizes the owned products
+- [x] **Cached library data can't be refreshed.** A `GogDl` memoizes the owned products
   (`OwnedProducts::get_owned_products` re-fetches only while the list is empty,
   `src/games/owned_products.rs:28-33`), game builds (`GamesManagerInner.game_builds`,
   `src/games/games_manager.rs:26`) and downloadable products
@@ -259,6 +258,10 @@ in `v1.3.0` (steps 4–5 of `v1.3.0-LIBRARY.md`; once planned as the patches `v1
   product details, which don't change. Asks from the bridge: auth, the token observer and running
   jobs are untouched; a fetch in flight during a clear may repopulate its entry with its own
   (current) result but never panics or leaves a half-built entry. Sync or async is our choice.
+  *(Fixed in `v1.3.0`: `GogDl::clear_cache` is async and infallible. `GamesManagerInner.owned_products`
+  is now an `Option`, so a clear is told apart from an account that owns nothing, which is cached
+  too. Tests cover the owned list, builds, downloadable products, a purchase made after the list
+  was cached, and a clear during a running download.)*
 
 - [ ] **Nothing removes a product's files from an install.** The downloader has no `remove_file`
   anywhere under `src/downloader/`, so `repair_game` with a smaller product set leaves a removed

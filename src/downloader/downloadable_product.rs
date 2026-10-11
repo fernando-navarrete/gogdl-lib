@@ -131,4 +131,25 @@ mod tests {
         drop(games_guard);
         cold.abort();
     }
+
+    #[tokio::test]
+    async fn clear_cache_drops_the_downloadable_products() {
+        let client = HttpClient::new_with_client(reqwest::Client::new());
+        let games = GamesManager::new(client.clone());
+        let manager = DownloadManager::new(
+            DepotManager::new(client.clone()),
+            SecureLinksManager::new(client.clone(), games.clone()),
+            games,
+            client,
+        );
+        manager
+            .inner
+            .lock()
+            .await
+            .downloadable_products
+            .insert((2, "b".to_string()), Vec::new());
+
+        manager.clear_cache().await;
+        assert!(manager.inner.lock().await.downloadable_products.is_empty());
+    }
 }

@@ -94,7 +94,8 @@ mod tests {
     use super::*;
     use crate::ClientError;
     use crate::client::HttpClient;
-    use crate::test_support::{ChunkServer, Reply};
+    use crate::games::OwnedProducts;
+    use crate::test_support::{ChunkServer, Reply, authed_client};
 
     fn details(json: &str) -> GogdbDetails {
         serde_json::from_str(json).unwrap()
@@ -147,7 +148,9 @@ mod tests {
 
         let mut manager = GamesManager::new(HttpClient::new_with_client(reqwest::Client::new()));
         manager.gamesdb_base = server.base_url();
-        manager.inner.lock().await.owned_products.owned = vec![1, 2, 3];
+        manager.inner.lock().await.owned_products = Some(OwnedProducts {
+            owned: vec![1, 2, 3],
+        });
 
         let first = manager.get_owned_games().await.unwrap();
         assert_eq!(first.owned, vec![1]);
@@ -157,5 +160,36 @@ mod tests {
         second.sort();
         assert_eq!(second, vec![1, 3]);
         assert_eq!([1, 2, 3].map(|id| server.requests(&path(id))), [1, 1, 2]);
+    }
+
+    #[tokio::test]
+    async fn clear_cache_refetches_the_owned_list_but_keeps_resolved_types() {
+        let game = include_bytes!("../../tests/fixtures/gamesdb_game.json").to_vec();
+        let server = ChunkServer::start().await;
+        let record = |id: i32| format!("/platforms/gog/external_releases/{id}");
+        server.script(
+            "/user/data/games",
+            vec![
+                Reply::Body(br#"{"owned": [1]}"#.to_vec()),
+                Reply::Body(br#"{"owned": [1, 2]}"#.to_vec()),
+            ],
+        );
+        server.script(&record(1), vec![Reply::Body(game.clone())]);
+        server.script(&record(2), vec![Reply::Body(game)]);
+
+        let mut manager = GamesManager::new(authed_client().await);
+        manager.gamesdb_base = server.base_url();
+        manager.embed_base = server.base_url();
+
+        assert_eq!(manager.get_owned_games().await.unwrap().owned, vec![1]);
+        assert_eq!(manager.get_owned_games().await.unwrap().owned, vec![1]);
+        assert_eq!(server.requests("/user/data/games"), 1);
+
+        manager.clear_cache().await;
+        let mut after = manager.get_owned_games().await.unwrap().owned;
+        after.sort();
+        assert_eq!(after, vec![1, 2]);
+        assert_eq!(server.requests("/user/data/games"), 2);
+        assert_eq!([1, 2].map(|id| server.requests(&record(id))), [1, 1]);
     }
 }

@@ -193,6 +193,7 @@ mod tests {
     use std::{sync::Arc, time::Duration};
 
     use super::*;
+    use crate::games::OwnedProducts;
     use crate::secure_links::links::{CdnUrlParams, UrlFormat};
 
     fn links() -> SecureLinks {
@@ -228,12 +229,12 @@ mod tests {
     async fn an_ownership_check_does_not_block_a_cache_hit() {
         let client = HttpClient::new_with_client(reqwest::Client::new());
         let games = GamesManager::new(client.clone());
-        games.inner.lock().await.owned_products.owned = vec![2];
+        games.inner.lock().await.owned_products = Some(OwnedProducts { owned: vec![2] });
         let manager = Arc::new(SecureLinksManager::new(client, games.clone()));
         manager.fixture_links("2", links());
         manager.get_secure_links("2").await.unwrap();
         // Force a cold lookup of game 1 to need the owned list again.
-        games.inner.lock().await.owned_products.owned.clear();
+        games.inner.lock().await.owned_products = None;
 
         let games_guard = games.inner.lock().await;
         let cold = tokio::spawn({
@@ -257,7 +258,7 @@ mod tests {
     async fn manager_for_game_1(links: SecureLinks) -> (Arc<SecureLinksManager>, GamesManager) {
         let client = HttpClient::new_with_client(reqwest::Client::new());
         let games = GamesManager::new(client.clone());
-        games.inner.lock().await.owned_products.owned = vec![1];
+        games.inner.lock().await.owned_products = Some(OwnedProducts { owned: vec![1] });
         let manager = Arc::new(SecureLinksManager::new(client, games.clone()));
         manager.fixture_links("1", links);
         (manager, games)
@@ -350,5 +351,30 @@ mod tests {
         manager.invalidate_secure_links("1", &a).await;
         assert_eq!(manager.get_secure_links("1").await.unwrap(), b);
         assert_eq!(manager.fetches(), 2);
+    }
+
+    /// A game bought after the owned list was cached passes the ownership
+    /// check once `clear_cache` has dropped the list.
+    #[tokio::test]
+    async fn a_new_purchase_passes_the_ownership_check_after_a_clear() {
+        use crate::test_support::{ChunkServer, Reply, authed_client};
+        let server = ChunkServer::start().await;
+        server.script(
+            "/user/data/games",
+            vec![Reply::Body(br#"{"owned": [1, 2]}"#.to_vec())],
+        );
+        let client = authed_client().await;
+        let mut games = GamesManager::new(client.clone());
+        games.embed_base = server.base_url();
+        games.inner.lock().await.owned_products = Some(OwnedProducts { owned: vec![1] });
+        let manager = SecureLinksManager::new(client, games.clone());
+        manager.fixture_links("2", links());
+
+        assert!(matches!(
+            manager.get_secure_links("2").await,
+            Err(SecureLinksError::ProductNotOwned(_))
+        ));
+        games.clear_cache().await;
+        manager.get_secure_links("2").await.unwrap();
     }
 }

@@ -42,7 +42,7 @@ drains concurrently.
 |---|---|
 | Construction | `new_from_client` |
 | Auth | `get_login_url`, `login_with_code`, `restore_auth`, `set_token_observer`, `remove_token_observer` |
-| Library | `get_owned_games`, `get_game_details`, `get_game_builds`, `get_game_links`, `get_game_summary`, `get_game_screenshots`, `get_product_details` |
+| Library | `clear_cache`, `get_owned_games`, `get_game_details`, `get_game_builds`, `get_game_links`, `get_game_summary`, `get_game_screenshots`, `get_product_details` |
 | Downloads, repair, verify | `get_downloadable_products`, `get_product_sizes`, `get_product_bundles`, `verify_files`, `download_game`, `repair_game`, `get_free_space` |
 | Proton-GE (GitHub, no GOG auth) | `get_proton_releases`, `get_proton_release_by_tag`, `download_proton_release` |
 | Cloud saves | `get_save_files`, `get_remote_config`, `download_save_files`, `upload_save_files` |
@@ -50,8 +50,11 @@ drains concurrently.
 - **Auth** state lives in the `HttpClient`; refreshes happen inside requests and are reported to a
   registered `TokenObserver`, the only signal that the refresh token rotated. The cloud saves grant
   is a separate per-game token that is never refreshed or reported.
-- **Library** results are cached per id for the lifetime of the `GogDl`, except `get_owned_games`,
-  which caches the owned-products list and each product's `gamesdb` type after a successful lookup.
+- **Library** results are cached per id until `clear_cache`, except `get_owned_games`, which caches
+  the owned-products list and each product's `gamesdb` type after a successful lookup.
+  `clear_cache` drops the owned products, game builds and downloadable products, and keeps the rest
+  (details, links, summary, screenshots, product details, the `gamesdb` types, secure links, save
+  ids), auth and running jobs.
 - **Downloads:** `download_game` re-transfers everything; `repair_game` is the resume path;
   `get_product_bundles` is not cached. Events: `DownloadStageEvent`, `DownloadEvent`,
   `VerificationEvent`. Dropping the future stops the work (no job uses `tokio::spawn`), and

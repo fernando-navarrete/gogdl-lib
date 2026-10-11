@@ -230,9 +230,9 @@ impl GogDl {
     /// product up on `gamesdb.gog.com` and keeping those whose `type` is
     /// `"game"`.
     ///
-    /// The owned-products list is cached for the lifetime of this `GogDl`
-    /// (after the first successful call), and so is each product's `gamesdb`
-    /// type once its lookup succeeds. A repeat call only looks up products
+    /// The owned-products list is cached (after the first successful call)
+    /// until [`clear_cache`](Self::clear_cache), and so is each product's
+    /// `gamesdb` type once its lookup succeeds, which `clear_cache` keeps. A repeat call only looks up products
     /// not yet resolved, two at a time, so only the first call on a large
     /// library is slow. A failed lookup is not cached and is retried on the
     /// next call. The returned IDs are in no particular order.
@@ -251,6 +251,27 @@ impl GogDl {
         let owned_games = self.games.get_owned_games().await?;
         Ok(owned_games)
     }
+    /// Drops the cached data that can go stale, so the next call fetches it
+    /// again: the owned-products list (what [`get_owned_games`](Self::get_owned_games),
+    /// [`get_downloadable_products`](Self::get_downloadable_products) and the
+    /// ownership check behind every download read), the game builds, and the
+    /// downloadable products.
+    ///
+    /// Everything else stays cached: game details, links, summary and
+    /// screenshots, product details, each product's `gamesdb` type (it never
+    /// changes, so a refresh of [`get_owned_games`](Self::get_owned_games)
+    /// only looks up products it hasn't seen), cached secure links and save
+    /// ids. Auth and the [`TokenObserver`] are untouched.
+    ///
+    /// Running jobs are not affected: [`verify_files`](Self::verify_files),
+    /// [`download_game`](Self::download_game) and
+    /// [`repair_game`](Self::repair_game) work from the bundles they were
+    /// given. A call already in flight when this runs may store its own
+    /// complete result afterwards, which is current as of its fetch.
+    pub async fn clear_cache(&self) {
+        self.games.clear_cache().await;
+        self.downloader.clear_cache().await;
+    }
     /// Details for a single game. Cached per `game_id` after the first call.
     ///
     /// # Errors
@@ -263,7 +284,8 @@ impl GogDl {
     }
     /// The published builds for a game, newest and oldest alike. Always
     /// queries the Windows depot (`os/windows/builds`) — there is currently
-    /// no way to request a different OS. Cached per `game_id`.
+    /// no way to request a different OS. Cached per `game_id` until
+    /// [`clear_cache`](Self::clear_cache).
     ///
     /// # Errors
     /// [`GogDlError::GameError`] wrapping [`crate::GamesError::ClientError`] on
@@ -321,7 +343,7 @@ impl GogDl {
     /// depot list (an internal type, not exported). Use this to build the
     /// `selected_products` list for
     /// [`get_product_bundles`](Self::get_product_bundles). Cached per
-    /// `(game_id, build_name)`.
+    /// `(game_id, build_name)` until [`clear_cache`](Self::clear_cache).
     ///
     /// # Errors
     /// [`GogDlError::DownloadError`] wrapping [`crate::DownloadError::BuildNotFound`]
