@@ -43,7 +43,7 @@ pub struct SavesManagerInner {
     /// call once they expire.
     pub auth_cache: HashMap<(i32, String), SavesAuth>,
     /// Game client credentials keyed by `(game_id, build_name)`. Never
-    /// evicted.
+    /// evicted. A miss is cheap once the builds list and the build metadata are cached.
     pub ids_cache: HashMap<(i32, String), GameSaveIds>,
 }
 

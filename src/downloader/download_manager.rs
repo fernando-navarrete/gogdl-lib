@@ -176,4 +176,68 @@ mod tests {
             assert_eq!(removal, ProductRemoval::default());
         }
     }
+
+    /// The build metadata is fetched once per build, cached unfiltered, and survives
+    /// `clear_cache`, which only re-fetches the builds list.
+    #[tokio::test]
+    async fn build_metadata_is_fetched_once_and_kept_by_clear_cache() {
+        use crate::test_support::{ChunkServer, Reply, authed_client, zlib};
+
+        let server = ChunkServer::start().await;
+        let builds_path = "/products/7/os/windows/builds";
+        let meta_path = "/meta/ab/cd/abcd";
+        let builds = serde_json::json!({"count": 1, "items": [{
+            "build_id": "1",
+            "version_name": "1.0",
+            "date_published": "2020-01-01T00:00:00+0000",
+            "link": format!("{}{meta_path}", server.base_url()),
+        }]});
+        server.script(
+            builds_path,
+            vec![Reply::Body(builds.to_string().into_bytes())],
+        );
+        let depot = |lang: &str| {
+            serde_json::json!({"manifest": "m", "size": 1, "compressedSize": 1,
+                "productId": "7", "languages": [lang]})
+        };
+        let metadata = serde_json::json!({
+            "dependencies": null,
+            "depots": [depot("en-US"), depot("fr-FR")],
+            "clientId": "id",
+            "clientSecret": "secret",
+        });
+        server.script(
+            meta_path,
+            vec![Reply::Body(zlib(metadata.to_string().as_bytes()))],
+        );
+
+        let client = authed_client().await;
+        let mut games = GamesManager::new(client.clone());
+        games.content_system_base = server.base_url();
+        let depot_manager = DepotManager::new(client.clone());
+        let manager = DownloadManager::new(
+            depot_manager.clone(),
+            SecureLinksManager::new(client.clone(), games.clone()),
+            games.clone(),
+            client,
+        );
+
+        manager.get_downloadable_files(7, "1.0", &[]).await.unwrap();
+        let filtered = manager.get_build_metadata(7, "1.0").await.unwrap();
+        assert_eq!(filtered.depots.len(), 1);
+        assert_eq!(server.requests(meta_path), 1);
+        let link = format!("{}{meta_path}", server.base_url());
+        assert_eq!(
+            depot_manager.inner.lock().await.build_metadata[&link]
+                .depots
+                .len(),
+            2
+        );
+
+        games.clear_cache().await;
+        manager.clear_cache().await;
+        manager.get_build_metadata(7, "1.0").await.unwrap();
+        assert_eq!(server.requests(builds_path), 2);
+        assert_eq!(server.requests(meta_path), 1);
+    }
 }

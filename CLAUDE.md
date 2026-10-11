@@ -53,7 +53,7 @@ drains concurrently.
 - **Library** results are cached per id until `clear_cache`, except `get_owned_games`, which caches
   the owned-products list and each product's `gamesdb` type after a successful lookup.
   `clear_cache` drops the owned products, game builds and downloadable products, and keeps the rest
-  (details, links, summary, screenshots, product details, the `gamesdb` types, secure links, save
+  (details, links, summary, screenshots, product details, build metadata, the `gamesdb` types, secure links, save
   ids), auth and running jobs.
 - **Downloads:** `download_game` re-transfers everything; `repair_game` is the resume path;
   `get_product_bundles` is not cached. Events: `DownloadStageEvent`, `DownloadEvent`,

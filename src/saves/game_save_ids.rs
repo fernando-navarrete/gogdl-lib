@@ -28,7 +28,8 @@ impl GameSaveIds {
     ///
     /// Holds the manager's `inner` lock only for the cache lookup and insert,
     /// never across a fetch, so concurrent calls for an uncached key may each
-    /// fetch the metadata.
+    /// fetch the metadata. The metadata itself is cached by `DepotManager`, so a miss here is
+    /// cheap once the builds list is cached.
     ///
     /// # Errors
     /// - [`SavesError::BuildNotFound`] if no build of `game_id` has a

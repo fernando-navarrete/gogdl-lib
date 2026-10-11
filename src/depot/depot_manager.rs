@@ -18,6 +18,8 @@ pub struct DepotManager {
 
 pub struct DepotManagerInner {
     pub product_details: HashMap<String, ProductDetails>,
+    /// Unfiltered build metadata keyed by the build link. Never evicted, `clear_cache` keeps it.
+    pub build_metadata: HashMap<String, BuildMetadata>,
 }
 
 impl DepotManager {
@@ -26,6 +28,7 @@ impl DepotManager {
             client,
             inner: Arc::new(Mutex::new(DepotManagerInner {
                 product_details: HashMap::new(),
+                build_metadata: HashMap::new(),
             })),
         }
     }

@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::depot::{depot_manager::DepotManager, error::DepotError};
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct BuildMetadata {
     pub dependencies: Option<Vec<String>>,
     pub depots: Vec<Depot>,
@@ -24,14 +24,36 @@ pub struct Depot {
 }
 
 impl BuildMetadata {
+    /// The language-filtered metadata for the build at `game_link`. The unfiltered document is
+    /// cached by link, so a later language selection still works. The lock is held only for the
+    /// cache read and insert, so concurrent misses may each fetch.
     pub async fn get_build_metadata(
         download_manager: &DepotManager,
         game_link: &str,
     ) -> Result<Self, DepotError> {
-        let mut build_metadata: BuildMetadata = download_manager
-            .client
-            .fetch(game_link, true, true, None)
-            .await?;
+        let cached = download_manager
+            .inner
+            .lock()
+            .await
+            .build_metadata
+            .get(game_link)
+            .cloned();
+        let mut build_metadata = match cached {
+            Some(build_metadata) => build_metadata,
+            None => {
+                let fetched: BuildMetadata = download_manager
+                    .client
+                    .fetch(game_link, true, true, None)
+                    .await?;
+                download_manager
+                    .inner
+                    .lock()
+                    .await
+                    .build_metadata
+                    .insert(game_link.to_string(), fetched.clone());
+                fetched
+            }
+        };
 
         build_metadata.filter_languages(&["en-US", "en"]);
         Ok(build_metadata)

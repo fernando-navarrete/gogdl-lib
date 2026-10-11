@@ -262,7 +262,7 @@ impl GogDl {
     /// screenshots, product details, each product's `gamesdb` type (it never
     /// changes, so a refresh of [`get_owned_games`](Self::get_owned_games)
     /// only looks up products it hasn't seen), cached secure links and save
-    /// ids. Auth and the [`TokenObserver`] are untouched.
+    /// ids, and build metadata (keyed by the build's link). Auth and the [`TokenObserver`] are untouched.
     ///
     /// Running jobs are not affected: [`verify_files`](Self::verify_files),
     /// [`download_game`](Self::download_game) and
@@ -367,8 +367,8 @@ impl GogDl {
     /// [`download_game`](Self::download_game) and
     /// [`repair_game`](Self::repair_game) consume.
     ///
-    /// **Not cached** — every call re-fetches every selected depot's
-    /// manifest from the CDN, even if an earlier call already resolved the
+    /// The build metadata is cached, but the depot manifests are **not**: every call re-fetches
+    /// every selected depot's manifest from the CDN, even if an earlier call already resolved the
     /// same `(game_id, build_name)`. Depot manifests are typically the
     /// largest payloads this crate fetches; call this once and hold onto the
     /// result rather than re-deriving it.
@@ -402,7 +402,8 @@ impl GogDl {
     ///
     /// Every product in the build is listed, owned or not; intersect the result with
     /// [`get_downloadable_products`](Self::get_downloadable_products) to keep the owned ones.
-    /// **Not cached**: every call is a fresh round-trip for the build metadata.
+    /// The build metadata is cached per build for the lifetime of this `GogDl`, and
+    /// [`clear_cache`](Self::clear_cache) keeps it (the builds list is still dropped).
     ///
     /// # Errors
     /// [`GogDlError::DownloadError`] wrapping [`crate::DownloadError::BuildNotFound`] if no build
