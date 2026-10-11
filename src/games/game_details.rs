@@ -15,6 +15,15 @@ pub struct GameDetails {
     pub id: ProductId,
 }
 
+/// What `embed.gog.com/account/gameDetails/{id}.json` answers: an object for a
+/// game, and an empty array (still a 200) for a DLC or a pack.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum DetailsResponse {
+    Game(GameDetails),
+    NotAGame(#[allow(dead_code)] Vec<serde::de::IgnoredAny>),
+}
+
 impl GameDetails {
     /// Not reachable from outside the crate — `GamesManager` is not
     /// exported. Call
@@ -34,15 +43,18 @@ impl GameDetails {
             }
         }
 
-        let url = format!("https://embed.gog.com/account/gameDetails/{}.json", game_id);
+        let url = games_manager.game_details_url(game_id);
 
-        let game_details: GameDetails = games_manager.client.fetch(&url, false, true, None).await?;
+        let response: DetailsResponse = games_manager.client.fetch(&url, false, true, None).await?;
+        let game_details = match response {
+            DetailsResponse::Game(game_details) => Some(game_details),
+            DetailsResponse::NotAGame(_) => None,
+        };
 
         let mut lock = games_manager.inner.lock().await;
-        lock.game_details
-            .insert(game_id, Some(game_details.clone()));
+        lock.game_details.insert(game_id, game_details.clone());
 
-        Ok(game_details)
+        game_details.ok_or(GamesError::ProductNotAGame)
     }
 }
 
@@ -52,11 +64,15 @@ mod tests {
 
     // Captured from `embed.gog.com/account/gameDetails/{id}.json` for a DLC
     // and a pack the account owns: 200 with an empty JSON array, not an
-    // object. Step 10 maps this to `ProductNotAGame`.
+    // object, which `get_game_details` maps to `ProductNotAGame`.
     #[test]
-    fn a_non_games_details_are_an_empty_array_that_fails_to_decode() {
+    fn a_non_games_details_are_an_empty_array() {
         let body = include_str!("../../tests/fixtures/game_details_non_game.json");
         assert!(serde_json::from_str::<GameDetails>(body).is_err());
+        assert!(matches!(
+            serde_json::from_str::<DetailsResponse>(body).unwrap(),
+            DetailsResponse::NotAGame(_)
+        ));
     }
 
     #[test]

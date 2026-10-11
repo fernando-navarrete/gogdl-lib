@@ -4,6 +4,17 @@ One section per tag, newest first. Consumers pin this crate by git tag. A change
 behind an unchanged signature is called out as **Behavior change**, and a signature change as
 **Breaking**. The `v0.x` and `-restart` tags predate this file and aren't covered.
 
+## Unreleased
+
+* **Behavior change:** one "not a game" answer. `get_game_builds`, `get_game_links` and
+  `get_game_summary` return `GamesError::ProductNotAGame` for a DLC or a pack (details: `[]`;
+  links: `_embedded.productType` not `GAME`; summary: `gamesdb` `type` not `game`; builds: an empty
+  list whose `gamesdb` type isn't `game`, one cached extra request). `get_game_details` returned a
+  decode error for a non-game, which its `ProductNotAGame` never covered; it now returns it. The
+  answer is cached like a game's. The saves and download methods that list builds return
+  `GamesError(ProductNotAGame)` for a non-game, not `BuildNotFound`. `gamesdb`'s `"game"` is compared
+  in one place.
+
 ## 1.2.3
 
 * `DownloadEvent::Started { compressed_total: u64 }` is sent once per download stage, after

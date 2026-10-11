@@ -5,6 +5,7 @@ mod game_links;
 mod game_screenshots;
 mod game_summary;
 mod games_manager;
+mod gamesdb;
 mod owned_games;
 mod owned_products;
 

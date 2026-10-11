@@ -279,7 +279,8 @@ impl GogDl {
     ///
     /// # Errors
     /// [`GogDlError::GameError`] wrapping [`crate::GamesError::ProductNotAGame`] if
-    /// `game_id` names a non-game product (e.g. a DLC), or
+    /// `game_id` names a non-game product (e.g. a DLC): GOG answers `[]` instead
+    /// of an object. The answer is cached too. Or
     /// [`crate::GamesError::ClientError`] on transport failure.
     pub async fn get_game_details(&self, game_id: i32) -> Result<GameDetails, GogDlError> {
         let game_details = self.games.get_game_details(game_id).await?;
@@ -290,9 +291,14 @@ impl GogDl {
     /// no way to request a different OS. Cached per `game_id` until
     /// [`clear_cache`](Self::clear_cache).
     ///
+    /// GOG answers an empty list for a DLC or a pack, the same as for a game
+    /// with no published build, so an empty list is checked against the
+    /// product's `gamesdb` type (one extra request, cached per product).
+    ///
     /// # Errors
-    /// [`GogDlError::GameError`] wrapping [`crate::GamesError::ClientError`] on
-    /// transport failure.
+    /// [`GogDlError::GameError`] wrapping [`crate::GamesError::ProductNotAGame`]
+    /// if `game_id` is not a game, or [`crate::GamesError::ClientError`] on
+    /// transport failure (a failed type lookup included, which isn't cached).
     pub async fn get_game_builds(&self, game_id: i32) -> Result<GameBuilds, GogDlError> {
         let game_builds = self.games.get_game_builds(game_id).await?;
         Ok(game_builds)
@@ -301,8 +307,9 @@ impl GogDl {
     /// Cached per `game_id`.
     ///
     /// # Errors
-    /// [`GogDlError::GameError`] wrapping [`crate::GamesError::ClientError`] on
-    /// transport failure.
+    /// [`GogDlError::GameError`] wrapping [`crate::GamesError::ProductNotAGame`]
+    /// if the record's `productType` isn't `GAME`, or
+    /// [`crate::GamesError::ClientError`] on transport failure.
     pub async fn get_game_links(&self, game_id: i32) -> Result<GameLinks, GogDlError> {
         let game_links = self.games.get_game_links(game_id).await?;
         Ok(game_links)
@@ -310,8 +317,9 @@ impl GogDl {
     /// The store summary/description text for a game. Cached per `game_id`.
     ///
     /// # Errors
-    /// [`GogDlError::GameError`] wrapping [`crate::GamesError::ClientError`] on
-    /// transport failure.
+    /// [`GogDlError::GameError`] wrapping [`crate::GamesError::ProductNotAGame`]
+    /// if the `gamesdb` `type` isn't `game`, or
+    /// [`crate::GamesError::ClientError`] on transport failure.
     pub async fn get_game_summary(&self, game_id: i32) -> Result<GameSummary, GogDlError> {
         let game_summary = self.games.get_game_summary(game_id).await?;
         Ok(game_summary)
@@ -657,7 +665,8 @@ impl GogDl {
     /// # Errors
     /// - [`SavesError::BuildNotFound`] if no build of `game_id` has a
     ///   `version_name` equal to `build_name`.
-    /// - [`SavesError::GamesError`] if listing the game's builds fails.
+    /// - [`SavesError::GamesError`] if listing the game's builds fails
+    ///   ([`ProductNotAGame`](crate::GamesError::ProductNotAGame) for a non-game).
     /// - [`SavesError::DepotError`] if fetching the build metadata fails.
     /// - [`SavesError::ClientError`] wrapping
     ///   [`crate::AuthError::NotAuthenticated`] if no session is logged in,
@@ -709,7 +718,8 @@ impl GogDl {
     /// # Errors
     /// - [`SavesError::BuildNotFound`] if no build of `game_id` has a
     ///   `version_name` equal to `build_name`.
-    /// - [`SavesError::GamesError`] if listing the game's builds fails.
+    /// - [`SavesError::GamesError`] if listing the game's builds fails
+    ///   ([`ProductNotAGame`](crate::GamesError::ProductNotAGame) for a non-game).
     /// - [`SavesError::DepotError`] if fetching the build metadata fails.
     /// - [`SavesError::ClientError`] wrapping
     ///   [`crate::ClientError::HttpError`] if GOG publishes no remote config

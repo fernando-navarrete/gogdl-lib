@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::games::{GamesError, GamesManager, owned_products::ProductId};
+use crate::games::{GamesError, GamesManager, gamesdb::is_game_type, owned_products::ProductId};
 
 /// A single published build of a game.
 ///
@@ -81,15 +81,27 @@ impl GameBuilds {
         {
             let lock = games_manager.inner.lock().await;
             if let Some(game_builds) = lock.game_builds.get(&game_id) {
-                return Ok(game_builds.clone());
+                return game_builds.clone().ok_or(GamesError::ProductNotAGame);
             }
         }
         let url = games_manager.game_builds_url(game_id);
 
         let game_builds: GameBuilds = games_manager.client.fetch(&url, false, true, None).await?;
+
+        // An empty list is what a DLC or a pack answers, and also what a game
+        // with no published build answers, so `gamesdb`'s type decides. A
+        // failed lookup caches nothing and is retried by the next call.
+        let game_builds = if game_builds.items.is_empty()
+            && !is_game_type(&games_manager.product_type(game_id).await?)
+        {
+            None
+        } else {
+            Some(game_builds)
+        };
+
         let mut lock = games_manager.inner.lock().await;
         lock.game_builds.insert(game_id, game_builds.clone());
-        Ok(game_builds)
+        game_builds.ok_or(GamesError::ProductNotAGame)
     }
 }
 
@@ -99,8 +111,8 @@ mod tests {
 
     // Captured from `content-system.gog.com/products/{id}/os/windows/builds`
     // for a DLC and a pack: 200 with `count: 0` and no items, the same
-    // answer a game with no published build would give. Step 10 maps it to
-    // `ProductNotAGame` only if that can be told apart.
+    // answer a game with no published build would give. `get_game_builds`
+    // tells them apart by `gamesdb`'s type.
     #[test]
     fn a_non_games_builds_decode_as_an_empty_list() {
         let body = include_str!("../../tests/fixtures/game_builds_non_game.json");

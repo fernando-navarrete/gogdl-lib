@@ -40,9 +40,12 @@ pub enum GamesError {
     #[error("Deflate error: {0}")]
     DeflateError(#[from] io::Error),
 
-    /// The requested product ID is not a game (e.g. it's a DLC). Only
-    /// [`crate::GogDl::get_game_details`] currently distinguishes this from
-    /// a decode failure — the other catalog getters don't.
+    /// The requested product ID is not a game (e.g. it's a DLC or a pack).
+    /// Returned by [`crate::GogDl::get_game_details`],
+    /// [`get_game_builds`](crate::GogDl::get_game_builds),
+    /// [`get_game_links`](crate::GogDl::get_game_links) and
+    /// [`get_game_summary`](crate::GogDl::get_game_summary), and through the
+    /// last-named builds lookup by the downloads and cloud saves methods.
     #[error("Product not a game")]
     ProductNotAGame,
 

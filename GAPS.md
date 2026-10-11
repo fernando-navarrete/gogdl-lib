@@ -233,13 +233,15 @@ The paragraph below is the baseline it started from.)* `cargo build --lib` showe
   successful lookup; a failed lookup isn't cached and is retried. A test with a fixture server
   checks the second call makes no request for a resolved product. `clear_cache` keeps it, per D5.)*
 
-- [ ] **The game/non-game decision rests on an undocumented endpoint and an exact string.**
+- [x] **The game/non-game decision rests on an undocumented endpoint and an exact string.**
   `gamesdb.gog.com` is not a documented GOG API, the request is unauthenticated
   (`fetch(.., require_auth: false, ..)`, `owned_games.rs:38`), and the filter is
   `produt_type == "game"` (`:50`). Any other spelling or new type string silently counts as
   non-game. `GameDetails::get_game_details` already has its own "not a game" signal
   (`GamesError::ProductNotAGame`, from `embed.gog.com/account/gameDetails`). The two can disagree,
   and nothing reconciles or tests them.
+  *(Fixed in `v1.3.0`: `gamesdb`'s `"game"` is compared in one place, and a test serves step 9's
+  captures to every fetcher and `get_owned_games` and checks they agree.)*
 
 ## Medium — library and install management
 
@@ -505,7 +507,9 @@ in `v1.3.0` (steps 4–5 of `v1.3.0-LIBRARY.md`; once planned as the patches `v1
   constructs it directly (`:273,355,381`). Because these enums are `pub`, `dead_code` never warns.
   `ProtonError` and `SavesError` have no dead variants.
 
-- [ ] **"Not a game" handling is inconsistent across near-identical fetchers.** Only
+- [x] **"Not a game" handling is inconsistent across near-identical fetchers.**
+  *(Fixed in `v1.3.0`: details, links, builds and summary return `ProductNotAGame` and cache it.)*
+  Only
   `GameDetails::get_game_details` turns a cached `None` into `GamesError::ProductNotAGame`.
   `GameBuilds`, `GameLinks`, `GameSummary` and `OwnedGames` don't, so e.g. `get_game_builds` for a
   DLC surfaces a raw decode error. Every saves method inherits this through its `get_game_builds`

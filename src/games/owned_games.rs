@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     GamesError,
-    games::{GamesManager, owned_products::ProductId},
+    games::{GamesManager, gamesdb::is_game_type, owned_products::ProductId},
 };
 
 /// The IDs of the owned products that are games, as returned by
@@ -15,22 +15,16 @@ pub struct OwnedGames {
     pub owned: Vec<ProductId>,
 }
 
-#[derive(Deserialize)]
-struct GogdbDetails {
-    #[serde(rename = "type")]
-    product_type: String,
-}
-
-/// Keeps the IDs whose lookup succeeded and came back as `type == "game"`.
-/// A failed lookup is dropped silently, whatever the reason (a 404 for a
-/// product gamesdb doesn't know, a transport error, a 5xx): `v1.3.0` changes
-/// that, so it isn't pinned as a contract. A failure isn't cached, so the
-/// next call looks the product up again.
-fn keep_games(lookups: &[Result<(ProductId, GogdbDetails), GamesError>]) -> Vec<ProductId> {
+/// Keeps the IDs whose lookup succeeded and came back as a game (see
+/// [`is_game_type`]). A failed lookup is dropped silently, whatever the reason
+/// (a 404 for a product gamesdb doesn't know, a transport error, a 5xx):
+/// `v1.3.0` changes that, so it isn't pinned as a contract. A failure isn't
+/// cached, so the next call looks the product up again.
+fn keep_games(lookups: &[Result<(ProductId, String), GamesError>]) -> Vec<ProductId> {
     lookups
         .iter()
-        .filter_map(|detail| detail.as_ref().ok())
-        .filter(|(_, detail)| detail.product_type == "game")
+        .filter_map(|lookup| lookup.as_ref().ok())
+        .filter(|(_, product_type)| is_game_type(product_type))
         .map(|(id, _)| *id)
         .collect::<Vec<_>>()
 }
@@ -43,45 +37,15 @@ impl OwnedGames {
     pub async fn get_owned_games(games_manager: &GamesManager) -> Result<OwnedGames, GamesError> {
         let owned_products = games_manager.get_owned_products().await?;
 
-        // The lock is held only to split the ids and to store the results,
-        // never across a lookup. Two concurrent calls on a cold cache can
-        // both look up the same id; that costs a request, not correctness.
-        let (cached, missing): (Vec<_>, Vec<_>) = {
-            let lock = games_manager.inner.lock().await;
-            owned_products
-                .owned
-                .iter()
-                .partition(|id| lock.product_types.contains_key(id))
-        };
-        let mut lookups: Vec<Result<(ProductId, GogdbDetails), GamesError>> = {
-            let lock = games_manager.inner.lock().await;
-            cached
-                .into_iter()
-                .map(|id| {
-                    let product_type = lock.product_types[id].clone();
-                    Ok((*id, GogdbDetails { product_type }))
-                })
-                .collect()
-        };
-
-        let fetched = stream::iter(missing)
-            .map(|&id| async move {
-                let url = games_manager.gamesdb_release_url(id);
-                let details: GogdbDetails =
-                    games_manager.client.fetch(&url, false, false, None).await?;
-                Ok::<(i32, GogdbDetails), GamesError>((id, details))
-            })
+        // `product_type` answers from the cache or fetches and caches on
+        // success, never holding the lock across the fetch. Two concurrent
+        // calls on a cold cache can both look up the same id; that costs a
+        // request, not correctness.
+        let lookups = stream::iter(owned_products.owned)
+            .map(|id| async move { Ok((id, games_manager.product_type(id).await?)) })
             .buffer_unordered(2)
-            .collect::<Vec<_>>()
+            .collect::<Vec<Result<(ProductId, String), GamesError>>>()
             .await;
-
-        {
-            let mut lock = games_manager.inner.lock().await;
-            for (id, details) in fetched.iter().flatten() {
-                lock.product_types.insert(*id, details.product_type.clone());
-            }
-        }
-        lookups.extend(fetched);
 
         let owned_games = keep_games(&lookups);
 
@@ -97,19 +61,23 @@ mod tests {
     use crate::games::OwnedProducts;
     use crate::test_support::{ChunkServer, Reply, authed_client};
 
-    fn details(json: &str) -> GogdbDetails {
-        serde_json::from_str(json).unwrap()
+    use crate::games::gamesdb::GamesdbRecord;
+
+    fn product_type(json: &str) -> String {
+        serde_json::from_str::<GamesdbRecord>(json)
+            .unwrap()
+            .product_type
     }
 
     #[test]
     fn only_products_typed_game_are_kept() {
-        let game = details(include_str!("../../tests/fixtures/gamesdb_game.json"));
-        let dlc = details(include_str!("../../tests/fixtures/gamesdb_dlc.json"));
+        let game = product_type(include_str!("../../tests/fixtures/gamesdb_game.json"));
+        let dlc = product_type(include_str!("../../tests/fixtures/gamesdb_dlc.json"));
         // GOG's type for a collection like "Alien: Isolation Collection" is
         // "spam", not "pack" (captured from gamesdb).
-        let pack = details(include_str!("../../tests/fixtures/gamesdb_pack.json"));
+        let pack = product_type(include_str!("../../tests/fixtures/gamesdb_pack.json"));
         assert_eq!(
-            [&game, &dlc, &pack].map(|d| d.product_type.as_str()),
+            [&game, &dlc, &pack].map(|t| t.as_str()),
             ["game", "dlc", "spam"]
         );
 
@@ -127,7 +95,7 @@ mod tests {
     #[test]
     fn a_failed_lookup_for_a_game_drops_it_silently() {
         // Today's behavior, changed by `v1.3.0` (GAPS "owned games").
-        let game = details(include_str!("../../tests/fixtures/gamesdb_game.json"));
+        let game = product_type(include_str!("../../tests/fixtures/gamesdb_game.json"));
         let lookups = vec![
             Ok((2, game)),
             Err(GamesError::ProductNotAGame),
