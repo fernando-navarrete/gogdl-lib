@@ -103,6 +103,7 @@ fn file_system_error(e: &FileSystemError) {
         | FileSystemError::FileCreationError(..)
         | FileSystemError::PathResolutionError(..)
         | FileSystemError::FileOpenError(..)
+        | FileSystemError::FileRemovalError(..)
         | FileSystemError::NoDiskMatchingPath(..) => {}
     }
 }

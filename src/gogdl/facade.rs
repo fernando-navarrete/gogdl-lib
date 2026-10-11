@@ -7,7 +7,8 @@ use crate::client::{HttpClient, TokenObserver};
 use crate::depot::{DepotManager, ProductDetails};
 use crate::downloader::DownloadError;
 use crate::downloader::{
-    DownloadManager, DownloadableProduct, ProductBundle, ProductSize, VerificationEvent,
+    DownloadManager, DownloadableProduct, ProductBundle, ProductRemoval, ProductSize,
+    VerificationEvent,
 };
 use crate::fs::free_space_at;
 use crate::games::{
@@ -568,6 +569,46 @@ impl GogDl {
     ) -> Result<(), GogDlError> {
         self.downloader.repair_game(bundles, path, tx).await?;
         Ok(())
+    }
+    /// Deletes a product's files from an install, for a DLC the player unselected. Fetches the
+    /// depot manifests of `keep` and `remove` for `build_name` of `game_id`, the same ones
+    /// [`get_product_bundles`](Self::get_product_bundles) resolves (same language filter), and
+    /// deletes under `path` the files only `remove`'s manifests list.
+    ///
+    /// - A file `keep`'s manifests also list stays, whatever case or separators the two spell it
+    ///   with: DLCs share files with the base game, so pass every product still installed in `keep`.
+    /// - A product in both lists is kept.
+    /// - An empty `remove` returns zeros without fetching anything.
+    /// - Only files the manifests list are touched. A path is resolved the way the downloader
+    ///   resolved it, so `..` components are dropped, and a symlinked directory that leads outside
+    ///   `path` is skipped.
+    /// - A file that is already gone is success, and a `path` that doesn't exist removes nothing.
+    /// - Directories the removal emptied are pruned, up to but never including `path`; a directory
+    ///   holding any other file stays.
+    ///
+    /// Cancel-safe like the downloads: dropping the future leaves some files removed, and calling
+    /// it again finishes. The result counts only what that call removed. No events are sent and
+    /// nothing is cached.
+    ///
+    /// # Errors
+    /// The lookups fail as in [`get_product_bundles`](Self::get_product_bundles), including
+    /// [`GogDlError::DownloadError`] wrapping [`crate::DownloadError::BuildNotFound`] and an HTTP
+    /// 404 as [`crate::ClientError::HttpError`]. A delete that fails is
+    /// [`GogDlError::DownloadError`] wrapping [`crate::DownloadError::FileSystemError`] with
+    /// [`crate::FileSystemError::FileRemovalError`].
+    pub async fn remove_products(
+        &self,
+        game_id: i32,
+        path: &str,
+        build_name: &str,
+        keep: &[i32],
+        remove: &[i32],
+    ) -> Result<ProductRemoval, GogDlError> {
+        let removal = self
+            .downloader
+            .remove_products(game_id, path, build_name, keep, remove)
+            .await?;
+        Ok(removal)
     }
     /// Registers a callback invoked whenever an internal token refresh
     /// rotates the auth tokens (e.g. mid-download, on a 401). This is the

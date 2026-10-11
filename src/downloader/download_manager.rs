@@ -10,6 +10,7 @@ use crate::{
         downloadable_product::DownloadableProduct,
         engine::Downloader,
         error::DownloadError,
+        product_removal::{ProductRemoval, remove_files},
         product_size::{ProductSize, sum_by_product},
         progress_reporting::VerificationEvent,
     },
@@ -119,5 +120,60 @@ impl DownloadManager {
         let downloader = Downloader::new(self.client.clone(), self.secure_links.clone());
         downloader.repair(bundles, path, tx).await?;
         Ok(())
+    }
+    /// Deletes the files only `remove`'s manifests list. An id in both lists is kept, and an empty
+    /// `remove` returns before anything is fetched.
+    pub async fn remove_products(
+        &self,
+        game_id: i32,
+        path: &str,
+        build_name: &str,
+        keep: &[i32],
+        remove: &[i32],
+    ) -> Result<ProductRemoval, DownloadError> {
+        let remove: Vec<i32> = remove
+            .iter()
+            .copied()
+            .filter(|id| !keep.contains(id))
+            .collect();
+        if remove.is_empty() {
+            return Ok(ProductRemoval::default());
+        }
+        let keep = self
+            .get_downloadable_files(game_id, build_name, keep)
+            .await?;
+        let remove = self
+            .get_downloadable_files(game_id, build_name, &remove)
+            .await?;
+        remove_files(path, &keep, &remove).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{client::HttpClient, depot::DepotManager};
+
+    /// No auth and no network here, so any manifest or build lookup would fail: `Ok` proves an
+    /// empty `remove`, or one the `keep` list covers, fetched nothing.
+    #[tokio::test]
+    async fn nothing_to_remove_fetches_nothing() {
+        let client = HttpClient::new_with_client(reqwest::Client::new());
+        let games = GamesManager::new(client.clone());
+        let manager = DownloadManager::new(
+            DepotManager::new(client.clone()),
+            SecureLinksManager::new(client.clone(), games.clone()),
+            games,
+            client,
+        );
+        let tmp = crate::test_support::TempDir::new();
+        let path = tmp.path().to_str().unwrap();
+        for (keep, remove) in [(&[1][..], &[][..]), (&[1][..], &[1][..])] {
+            let removal = manager
+                .remove_products(7, path, "b", keep, remove)
+                .await
+                .unwrap();
+            assert_eq!(removal, ProductRemoval::default());
+        }
     }
 }

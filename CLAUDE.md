@@ -43,7 +43,7 @@ drains concurrently.
 | Construction | `new_from_client` |
 | Auth | `get_login_url`, `login_with_code`, `restore_auth`, `set_token_observer`, `remove_token_observer` |
 | Library | `clear_cache`, `get_owned_games`, `get_game_details`, `get_game_builds`, `get_game_links`, `get_game_summary`, `get_game_screenshots`, `get_product_details` |
-| Downloads, repair, verify | `get_downloadable_products`, `get_product_sizes`, `get_product_bundles`, `verify_files`, `download_game`, `repair_game`, `get_free_space` |
+| Downloads, repair, verify | `get_downloadable_products`, `get_product_sizes`, `get_product_bundles`, `verify_files`, `download_game`, `repair_game`, `remove_products`, `get_free_space` |
 | Proton-GE (GitHub, no GOG auth) | `get_proton_releases`, `get_proton_release_by_tag`, `download_proton_release` |
 | Cloud saves | `get_save_files`, `get_remote_config`, `download_save_files`, `upload_save_files` |
 
@@ -58,7 +58,9 @@ drains concurrently.
 - **Downloads:** `download_game` re-transfers everything; `repair_game` is the resume path;
   `get_product_bundles` is not cached. Events: `DownloadStageEvent`, `DownloadEvent`,
   `VerificationEvent`. Dropping the future stops the work (no job uses `tokio::spawn`), and
-  `repair_game` completes what a dropped `download_game` left.
+  `repair_game` completes what a dropped `download_game` left. `remove_products` deletes the files
+  only the removed products' manifests list (never one a kept product also lists, matched
+  case-insensitively), prunes emptied directories, and a dropped call is finished by calling it again.
 - **Proton:** `download_proton_release` extracts the tarball as it streams, emitting
   `ProtonDownloadEvent`, into a hidden staging directory that then replaces `path/<tag>`, so a
   failure or drop leaves `path` as it was. Not resumable.

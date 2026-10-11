@@ -8,9 +8,9 @@
 
 use gogdl_lib::{
     Chunk, DepotFile, DownloadError, DownloadEvent, DownloadStageEvent, FileAllocationEvent,
-    FileSizeVerificationEvent, FileSystemError, GameBuild, GameBuilds, ProductDetails, ProductSize,
-    ProtonDownloadEvent, ProtonError, ProtonGeRelease, ProtonGeReleasesPage, SavesDownloadEvent,
-    SavesError, SavesUploadEvent, VerificationEvent,
+    FileSizeVerificationEvent, FileSystemError, GameBuild, GameBuilds, ProductDetails,
+    ProductRemoval, ProductSize, ProtonDownloadEvent, ProtonError, ProtonGeRelease,
+    ProtonGeReleasesPage, SavesDownloadEvent, SavesError, SavesUploadEvent, VerificationEvent,
 };
 use std::{io, path::PathBuf};
 
@@ -298,6 +298,10 @@ fn file_system_errors_can_be_built_and_matched() {
     }
     let resolution = FileSystemError::PathResolutionError(io::Error::other("escapes the base"));
     let no_disk = FileSystemError::NoDiskMatchingPath(PathBuf::from("/x"));
+    assert_eq!(
+        which(&FileSystemError::FileRemovalError(io::Error::other("busy"))),
+        "other"
+    );
     assert_eq!(which(&resolution), "resolution");
     assert_eq!(which(&no_disk), "no-disk");
 
@@ -334,4 +338,17 @@ fn product_sizes_can_be_built_and_summed() {
     assert_eq!(sizes.iter().map(|s| s.size).sum::<u64>(), 15);
     assert_eq!(sizes.iter().map(|s| s.compressed_size).sum::<u64>(), 7);
     assert_eq!(sizes[0].clone(), sizes[0]);
+}
+
+#[test]
+fn product_removals_can_be_built_and_deserialized() {
+    let built = ProductRemoval {
+        files_removed: 9,
+        bytes_freed: 1024,
+    };
+    let parsed: ProductRemoval =
+        serde_json::from_str(r#"{"files_removed":9,"bytes_freed":1024}"#).unwrap();
+    assert_eq!(parsed, built);
+    assert_eq!(ProductRemoval::default().files_removed, 0);
+    assert_eq!(built, built.clone());
 }

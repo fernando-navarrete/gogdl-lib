@@ -138,37 +138,9 @@ impl PathResolver {
         &self,
         raw_relative_path: &str,
     ) -> Result<Option<PathBuf>, FileSystemError> {
-        let normalized = normalize_separators(raw_relative_path);
-        let path = Path::new(normalized.as_ref());
+        let relative = install_relative_path(raw_relative_path)?;
 
-        let raw_dir = path
-            .parent()
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        let raw_filename = path
-            .file_name()
-            .ok_or_else(|| {
-                FileSystemError::PathResolutionError(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    format!("path has no filename component: {raw_relative_path:?}"),
-                ))
-            })?
-            .to_string_lossy()
-            .into_owned();
-
-        let sanitized_dir = sanitize_relative_path(&raw_dir);
-        let safe_filename = sanitize_filename(&raw_filename);
-        if safe_filename.is_empty() {
-            return Err(FileSystemError::PathResolutionError(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("empty filename after sanitizing: {raw_filename:?}"),
-            )));
-        }
-
-        let candidate = self
-            .canonical_base
-            .join(&sanitized_dir)
-            .join(&safe_filename);
+        let candidate = self.canonical_base.join(&relative);
 
         match fs::try_exists(&candidate).await {
             Ok(exists) => {
@@ -223,6 +195,38 @@ impl PathResolver {
 
         Ok(canonical)
     }
+}
+
+/// Where a manifest path lands under the install directory: separators normalized and every
+/// component sanitized, so `..` and root components vanish. The one place that decides it, so
+/// whatever the downloader wrote is found again by the same name.
+pub fn install_relative_path(raw_relative_path: &str) -> Result<PathBuf, FileSystemError> {
+    let normalized = normalize_separators(raw_relative_path);
+    let path = Path::new(normalized.as_ref());
+
+    let raw_dir = path
+        .parent()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let raw_filename = path
+        .file_name()
+        .ok_or_else(|| {
+            FileSystemError::PathResolutionError(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("path has no filename component: {raw_relative_path:?}"),
+            ))
+        })?
+        .to_string_lossy()
+        .into_owned();
+
+    let safe_filename = sanitize_filename(&raw_filename);
+    if safe_filename.is_empty() {
+        return Err(FileSystemError::PathResolutionError(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("empty filename after sanitizing: {raw_filename:?}"),
+        )));
+    }
+    Ok(sanitize_relative_path(&raw_dir).join(safe_filename))
 }
 
 /// Available bytes on the disk holding `path`, which needn't exist and is never created: the

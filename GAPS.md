@@ -263,7 +263,9 @@ in `v1.3.0` (steps 4–5 of `v1.3.0-LIBRARY.md`; once planned as the patches `v1
   too. Tests cover the owned list, builds, downloadable products, a purchase made after the list
   was cached, and a clear during a running download.)*
 
-- [ ] **Nothing removes a product's files from an install.** The downloader has no `remove_file`
+- [x] **Nothing removes a product's files from an install.** Fixed in `v1.3.0`:
+  `GogDl::remove_products` and `ProductRemoval` (an id in both lists is kept; a failed delete is
+  `FileSystemError::FileRemovalError`). The downloader has no `remove_file`
   anywhere under `src/downloader/`, so `repair_game` with a smaller product set leaves a removed
   DLC's files on disk, and some games detect a DLC by its files. The caller can't do it: it has no
   manifests, and guessing by path deletes the base game's files. Lumen's Phase 0 found that five of
