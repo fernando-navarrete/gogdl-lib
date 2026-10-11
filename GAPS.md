@@ -511,7 +511,9 @@ in `v1.3.0` (steps 4–5 of `v1.3.0-LIBRARY.md`; once planned as the patches `v1
   DLC surfaces a raw decode error. Every saves method inherits this through its `get_game_builds`
   call.
 
-- [ ] **Caching is inconsistent between depot and saves data of similar shape.**
+- [x] **Caching is inconsistent between depot and saves data of similar shape.**
+  *(Fixed in `v1.3.0`: `BuildMetadata` is cached by link and kept by `clear_cache`; `DepotInfo` by
+  manifest hash and dropped by it, for memory; `RemoteConfig` per client id and dropped by it.)*
   - `DepotManagerInner` caches `ProductDetails` (`src/depot/depot_manager.rs:20`) but not
     `DepotInfo`, the per-depot manifest and likely the largest payload.
   - `BuildMetadata` isn't cached either. `SavesManager` works around that by caching the two fields

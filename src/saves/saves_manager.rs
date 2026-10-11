@@ -33,6 +33,9 @@ pub struct SavesManager {
     pub depot: DepotManager,
     /// Lists a game's builds. Shared and kept outside the mutex like `depot`.
     pub games: GamesManager,
+    /// Test-only: host standing in for `remote-config.gog.com`.
+    #[cfg(test)]
+    pub remote_config_base: String,
 }
 
 /// The saves-specific caches behind `SavesManager`'s mutex, which is never
@@ -45,6 +48,9 @@ pub struct SavesManagerInner {
     /// Game client credentials keyed by `(game_id, build_name)`. Never
     /// evicted. A miss is cheap once the builds list and the build metadata are cached.
     pub ids_cache: HashMap<(i32, String), GameSaveIds>,
+    /// Remote configs keyed by the game's `client_id`. GOG can edit them, so
+    /// `clear_cache` drops it.
+    pub remote_config: HashMap<String, RemoteConfig>,
 }
 
 impl SavesManager {
@@ -54,11 +60,26 @@ impl SavesManager {
             inner: Arc::new(Mutex::new(SavesManagerInner {
                 auth_cache: HashMap::new(),
                 ids_cache: HashMap::new(),
+                remote_config: HashMap::new(),
             })),
             client,
             depot,
             games,
+            #[cfg(test)]
+            remote_config_base: "https://remote-config.gog.com".to_string(),
         }
+    }
+    /// Drops the cached remote configs.
+    pub async fn clear_cache(&self) {
+        self.inner.lock().await.remote_config.clear();
+    }
+    /// The remote config URL for `client_id`.
+    pub fn remote_config_url(&self, client_id: &str) -> String {
+        #[cfg(test)]
+        let base = self.remote_config_base.as_str();
+        #[cfg(not(test))]
+        let base = "https://remote-config.gog.com";
+        format!("{base}/components/galaxy_client/clients/{client_id}?component_version=2.0.43")
     }
     /// Obtains a game-scoped cloud saves auth grant, cached per
     /// `(game_id, build_name)`. See [`SavesAuth::get_saves_auth`]. Not
@@ -169,5 +190,57 @@ impl SavesManager {
             return Err(SavesError::CloudStorageNotSupported);
         }
         resolve_locations(&locations, prefix, install_path).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::{ChunkServer, Reply, TempDir};
+
+    /// The remote config is fetched once per game client across
+    /// `get_remote_config` and `download_save_files`, and `clear_cache`
+    /// drops it.
+    #[tokio::test]
+    async fn remote_config_is_fetched_once_and_dropped_by_clear_cache() {
+        let server = ChunkServer::start().await;
+        let path = "/components/galaxy_client/clients/id";
+        server.script(
+            path,
+            vec![Reply::Body(
+                br#"{"content":{"Windows":{"cloudStorage":{"enabled":true,"locations":[]}}}}"#
+                    .to_vec(),
+            )],
+        );
+        let client = HttpClient::new_with_client(reqwest::Client::new());
+        let games = GamesManager::new(client.clone());
+        let mut saves = SavesManager::new(client.clone(), DepotManager::new(client), games);
+        saves.remote_config_base = server.base_url();
+        saves.inner.lock().await.ids_cache.insert(
+            (7, "1.0".to_string()),
+            GameSaveIds {
+                client_id: "id".into(),
+                client_secret: "secret".into(),
+            },
+        );
+
+        assert!(
+            saves
+                .get_remote_config(7, "1.0")
+                .await
+                .unwrap()
+                .is_supported()
+        );
+        let dir = TempDir::new();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let result = saves
+            .download_save_files(7, "1.0", dir.path(), dir.path(), tx)
+            .await;
+        assert!(matches!(result, Err(SavesError::CloudStorageNotSupported)));
+        assert_eq!(server.requests(path), 1);
+
+        saves.clear_cache().await;
+        saves.get_remote_config(7, "1.0").await.unwrap();
+        assert_eq!(server.requests(path), 2);
     }
 }

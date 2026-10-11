@@ -256,8 +256,8 @@ impl GogDl {
     /// again: the owned-products list (what [`get_owned_games`](Self::get_owned_games),
     /// [`get_downloadable_products`](Self::get_downloadable_products) and the
     /// ownership check behind every download read), the game builds, the
-    /// downloadable products, and the cached depot manifests (a large game's are tens of MB, so
-    /// they are not kept).
+    /// downloadable products, the cached depot manifests (a large game's are tens of MB, so
+    /// they are not kept), and the cloud saves remote configs (GOG can edit them).
     ///
     /// Everything else stays cached: game details, links, summary and
     /// screenshots, product details, each product's `gamesdb` type (it never
@@ -273,6 +273,7 @@ impl GogDl {
     pub async fn clear_cache(&self) {
         self.games.clear_cache().await;
         self.downloader.clear_cache().await;
+        self.saves.clear_cache().await;
     }
     /// Details for a single game. Cached per `game_id` after the first call.
     ///
@@ -695,8 +696,9 @@ impl GogDl {
     /// credentials, which are cached in memory per `(game_id, build_name)`
     /// for the lifetime of this `GogDl` and shared with
     /// [`get_save_files`](Self::get_save_files). The remote config request
-    /// itself is unauthenticated and is neither cached nor retried,
-    /// including on network errors.
+    /// itself is unauthenticated and is never retried, including on network
+    /// errors. The document is cached per game client until
+    /// [`clear_cache`](Self::clear_cache); a failed request is not cached.
     ///
     /// **Requires a logged-in session** even so, because resolving those
     /// credentials lists the game's builds and fetches build metadata; both

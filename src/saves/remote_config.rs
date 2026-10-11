@@ -14,7 +14,7 @@ use crate::{SavesError, saves::SavesManager};
 ///
 /// Deserialized from the JSON document GOG serves; only the keys used here
 /// are modelled, the rest of the document is ignored.
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 pub struct RemoteConfig {
     /// The document's body: one section per operating system.
     content: OsConfig,
@@ -29,12 +29,16 @@ impl RemoteConfig {
     ///
     /// Resolves the game's client credentials for `build_name` via
     /// `SavesManager::get_game_save_ids` (cached on the manager), then
-    /// fetches
+    /// returns the config cached for that `client_id`, or fetches
     /// `remote-config.gog.com/components/galaxy_client/clients/{client_id}`,
-    /// pinned to `component_version=2.0.43`, and deserializes the JSON
-    /// document into a [`RemoteConfig`]. Unlike the rest of the saves API
-    /// this request carries no authorization header; it is made once,
-    /// without retries, and the result is not cached.
+    /// pinned to `component_version=2.0.43`, deserializes the JSON document
+    /// into a [`RemoteConfig`] and caches it. Unlike the rest of the saves
+    /// API this request carries no authorization header; it is made without
+    /// retries, and a failure is not cached.
+    ///
+    /// Cached per `client_id` until `SavesManager::clear_cache`. The manager's
+    /// `inner` lock is held only for the lookup and the insert, never across
+    /// the fetch, so concurrent calls for an uncached game may each fetch.
     pub async fn get_remote_config(
         saves_manager: &SavesManager,
         game_id: i32,
@@ -42,14 +46,22 @@ impl RemoteConfig {
     ) -> Result<Self, SavesError> {
         let game_ids = saves_manager.get_game_save_ids(game_id, build_name).await?;
         let client_id = game_ids.client_id;
-        let url = format!(
-            "https://remote-config.gog.com/components/galaxy_client/clients/{client_id}?component_version=2.0.43",
-        );
+        {
+            let inner = saves_manager.inner.lock().await;
+            if let Some(config) = inner.remote_config.get(&client_id) {
+                return Ok(config.clone());
+            }
+        }
+        let url = saves_manager.remote_config_url(&client_id);
 
         let remote_config: RemoteConfig = saves_manager
             .client
             .fetch_no_retry(&url, false, false, None)
             .await?;
+        {
+            let mut inner = saves_manager.inner.lock().await;
+            inner.remote_config.insert(client_id, remote_config.clone());
+        }
         Ok(remote_config)
     }
     /// Whether the game declares working cloud save support.
@@ -99,7 +111,7 @@ impl RemoteConfig {
 /// The body of a [`RemoteConfig`]: one section per operating system, keyed
 /// by GOG's own OS names. A system GOG publishes no section for
 /// deserializes as `None`.
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 struct OsConfig {
     /// The game's Windows client settings. The only section this crate
     /// reads.
@@ -108,7 +120,7 @@ struct OsConfig {
 }
 
 /// What the Galaxy client enables for a game on one operating system.
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 struct OsConfigDetails {
     /// The game's cloud save settings, if it declares any. Absent for games
     /// that never shipped cloud saves on this system.
@@ -117,7 +129,7 @@ struct OsConfigDetails {
 }
 
 /// A game's cloud save settings for one operating system.
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 struct CloudStorageDetail {
     /// Whether cloud saves are turned on for the game. Backs
     /// [`RemoteConfig::is_supported`].

@@ -52,8 +52,8 @@ drains concurrently.
   is a separate per-game token that is never refreshed or reported.
 - **Library** results are cached per id until `clear_cache`, except `get_owned_games`, which caches
   the owned-products list and each product's `gamesdb` type after a successful lookup.
-  `clear_cache` drops the owned products, game builds, downloadable products and depot manifests
-  (the last for memory: a large game's are tens of MB), and keeps the rest (details, links, summary, screenshots, product details, build metadata, the `gamesdb` types, secure links, save
+  `clear_cache` drops the owned products, game builds, downloadable products, depot manifests
+  (for memory: a large game's are tens of MB) and cloud saves remote configs, and keeps the rest (details, links, summary, screenshots, product details, build metadata, the `gamesdb` types, secure links, save
   ids), auth and running jobs.
 - **Downloads:** `download_game` re-transfers everything; `repair_game` is the resume path;
   `get_product_bundles` isn't cached, but the depot manifests it fetches are, by hash, until
@@ -69,6 +69,7 @@ drains concurrently.
   and expand the game's save locations into it; events are `SavesDownloadEvent` and
   `SavesUploadEvent`. A download replaces an existing save only by renaming a finished
   `.<name>.gogdl-part` file over it, so a failure or drop leaves the old save. Nothing is retried.
+  The remote config is cached per game client until `clear_cache`.
 
 When a method is added, changed or removed on `GogDl`, update this table and `CHANGELOG.md`.
 
