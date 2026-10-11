@@ -1,0 +1,26 @@
+{
+  "_links": {
+    "self": {
+      "href": "https://api.gog.com/v2/games/1563339319?locale=en-US"
+    },
+    "store": {
+      "href": "https://www.gog.com/en/game/alien_isolation_collection"
+    },
+    "boxArtImage": {
+      "href": "https://images.gog-statics.com/5f38309a9376beeb1e661d8e1f65772e598c71f62880207d95cc9fcc951108a5.jpg"
+    },
+    "backgroundImage": {
+      "href": "https://images.gog-statics.com/996335123396e7a208623ac520cedd9ed23d93d079c337c3eec6d4d066a0c43d.jpg"
+    },
+    "galaxyBackgroundImage": {
+      "href": "https://images.gog-statics.com/989bd05b1beda00c05980c4ca0dc035cb6e6d3effeffe032f13c1f2bb3346524.jpg"
+    }
+  },
+  "_embedded": {
+    "productType": "PACK",
+    "product": {
+      "id": 1563339319,
+      "title": "Alien: Isolation Collection"
+    }
+  }
+}

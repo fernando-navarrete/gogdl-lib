@@ -52,3 +52,43 @@ impl GameLinks {
         Ok(game_links)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Captured from `api.gog.com/v2/games/{id}`: a DLC and a pack answer 200
+    // with the same shape as a game. Only `_embedded.productType` ("DLC",
+    // "PACK", "GAME") tells them apart, and `GameLinks` doesn't read it.
+    // Step 10 reads it.
+    #[test]
+    fn a_non_games_links_decode_like_a_games() {
+        for body in [
+            include_str!("../../tests/fixtures/game_links_dlc.json"),
+            include_str!("../../tests/fixtures/game_links_pack.json"),
+            include_str!("../../tests/fixtures/game_links_game.json"),
+        ] {
+            let links: GameLinks = serde_json::from_str(body).unwrap();
+            assert!(links.links.box_art_image.href.starts_with("https://"));
+        }
+    }
+
+    #[test]
+    fn the_product_type_marks_a_non_game() {
+        let types: Vec<String> = [
+            include_str!("../../tests/fixtures/game_links_dlc.json"),
+            include_str!("../../tests/fixtures/game_links_pack.json"),
+            include_str!("../../tests/fixtures/game_links_game.json"),
+        ]
+        .iter()
+        .map(|body| {
+            let value: serde_json::Value = serde_json::from_str(body).unwrap();
+            value["_embedded"]["productType"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        })
+        .collect();
+        assert_eq!(types, ["DLC", "PACK", "GAME"]);
+    }
+}

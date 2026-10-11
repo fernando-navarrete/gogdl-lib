@@ -45,3 +45,24 @@ impl GameSummary {
         Ok(game_summary)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // `get_game_summary` reads the same `gamesdb` record `get_owned_games`
+    // does. A DLC's and a pack's decode fine; only their `type` ("dlc",
+    // "spam") marks them as non-games, and `GameSummary` doesn't read it.
+    // Step 10 reads it.
+    #[test]
+    fn a_non_games_summary_decodes_like_a_games() {
+        for body in [
+            include_str!("../../tests/fixtures/gamesdb_dlc.json"),
+            include_str!("../../tests/fixtures/gamesdb_pack.json"),
+            include_str!("../../tests/fixtures/gamesdb_game.json"),
+        ] {
+            let summary: GameSummary = serde_json::from_str(body).unwrap();
+            assert!(!summary.summary.default.is_empty());
+        }
+    }
+}

@@ -92,3 +92,20 @@ impl GameBuilds {
         Ok(game_builds)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Captured from `content-system.gog.com/products/{id}/os/windows/builds`
+    // for a DLC and a pack: 200 with `count: 0` and no items, the same
+    // answer a game with no published build would give. Step 10 maps it to
+    // `ProductNotAGame` only if that can be told apart.
+    #[test]
+    fn a_non_games_builds_decode_as_an_empty_list() {
+        let body = include_str!("../../tests/fixtures/game_builds_non_game.json");
+        let builds: GameBuilds = serde_json::from_str(body).unwrap();
+        assert_eq!(builds.count, 0);
+        assert!(builds.items.is_empty());
+    }
+}

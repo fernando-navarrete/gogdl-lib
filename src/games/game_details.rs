@@ -45,3 +45,24 @@ impl GameDetails {
         Ok(game_details)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Captured from `embed.gog.com/account/gameDetails/{id}.json` for a DLC
+    // and a pack the account owns: 200 with an empty JSON array, not an
+    // object. Step 10 maps this to `ProductNotAGame`.
+    #[test]
+    fn a_non_games_details_are_an_empty_array_that_fails_to_decode() {
+        let body = include_str!("../../tests/fixtures/game_details_non_game.json");
+        assert!(serde_json::from_str::<GameDetails>(body).is_err());
+    }
+
+    #[test]
+    fn a_games_details_decode() {
+        let body = include_str!("../../tests/fixtures/game_details_game.json");
+        let details: GameDetails = serde_json::from_str(body).unwrap();
+        assert_eq!(details.title, "Cyberpunk 2077");
+    }
+}

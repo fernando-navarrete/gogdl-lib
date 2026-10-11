@@ -1,0 +1,26 @@
+{
+  "_links": {
+    "self": {
+      "href": "https://api.gog.com/v2/games/1288586309?locale=en-US"
+    },
+    "store": {
+      "href": "https://www.gog.com/en/game/alien_isolation_trauma"
+    },
+    "boxArtImage": {
+      "href": "https://images.gog-statics.com/e454983838d0250b6303938f3613017e2de6528655e33642311a8ea62dafd547.jpg"
+    },
+    "backgroundImage": {
+      "href": "https://images.gog-statics.com/b7cbeae510b7d48d12835f877e6434a48b82aa9842fc963ea74e3d81edd4f22e.jpg"
+    },
+    "galaxyBackgroundImage": {
+      "href": "https://images.gog-statics.com/5c7f8ec28c250eb37e1f7c6c6964d7c8d12b2f715ad1889eae5d6d6d2ab8806f.jpg"
+    }
+  },
+  "_embedded": {
+    "productType": "DLC",
+    "product": {
+      "id": 1288586309,
+      "title": "Alien: Isolation - Trauma"
+    }
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "_links": {
+    "self": {
+      "href": "https://api.gog.com/v2/games/1423049311?locale=en-US"
+    },
+    "store": {
+      "href": "https://www.gog.com/en/game/cyberpunk_2077"
+    },
+    "boxArtImage": {
+      "href": "https://images.gog-statics.com/ec255c6db963e8a442f30eb92c04e4c384dc625e68af383c2b98aa1f4f471fc4.jpg"
+    },
+    "backgroundImage": {
+      "href": "https://images.gog-statics.com/0b2cff9f26a505b097946add8a557b7c8be1d967cd3048d5af70b585071cd495.jpg"
+    },
+    "galaxyBackgroundImage": {
+      "href": "https://images.gog-statics.com/5cd6b49e7f74913e364f9afc788220dd1acf03c5e5502ba3bc9fc9716cd20d48.jpg"
+    }
+  },
+  "_embedded": {
+    "productType": "GAME",
+    "product": {
+      "id": 1423049311,
+      "title": "Cyberpunk 2077"
+    }
+  }
+}
