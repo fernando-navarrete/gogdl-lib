@@ -27,14 +27,17 @@ use crate::{
 pub struct SavesManager {
     pub inner: Arc<Mutex<SavesManagerInner>>,
     pub client: HttpClient,
+    /// Resolves build metadata. A clone sharing state (and caches) with the
+    /// one held by `GogDl` itself; outside the mutex so no lock is held
+    /// across its fetches.
+    pub depot: DepotManager,
+    /// Lists a game's builds. Shared and kept outside the mutex like `depot`.
+    pub games: GamesManager,
 }
 
-/// The managers `SavesManager` resolves builds and build metadata through.
-/// These are clones sharing state (and caches) with the ones held by
-/// `GogDl` itself, plus the saves-specific caches.
+/// The saves-specific caches behind `SavesManager`'s mutex, which is never
+/// held across a fetch.
 pub struct SavesManagerInner {
-    pub depot: DepotManager,
-    pub games: GamesManager,
     /// Game-scoped auth grants keyed by `(game_id, build_name)`. Entries are
     /// reused while [`SavesAuth::is_valid`] holds and replaced on the next
     /// call once they expire.
@@ -49,12 +52,12 @@ impl SavesManager {
     pub fn new(client: HttpClient, depot: DepotManager, games: GamesManager) -> Self {
         Self {
             inner: Arc::new(Mutex::new(SavesManagerInner {
-                depot,
-                games,
                 auth_cache: HashMap::new(),
                 ids_cache: HashMap::new(),
             })),
             client,
+            depot,
+            games,
         }
     }
     /// Obtains a game-scoped cloud saves auth grant, cached per

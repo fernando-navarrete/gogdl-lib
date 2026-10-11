@@ -9,6 +9,9 @@ every tag is reachable from `main`. Consumer pins: the bridge (`gogdl_flutter`) 
 **`lumen-cli`** is on **`v1.0.10`** (`Cargo.toml:12`), so its next bump picks up the
 `get_owned_games` behavior change below with no compile error.
 
+`v1.3.0` is planned in `v1.3.0-LIBRARY.md`: among other things, `get_owned_games` will report failed
+lookups in `OwnedGames.unresolved` instead of dropping them.
+
 **What changed since the last full pass of this document (`e4596b6`, `v1.0.4`), 13 commits in all:**
 
 1. **Cloud saves are no longer list-only** (`c52ac1a` → `abfdda3`). New public surface:
@@ -154,7 +157,7 @@ The paragraph below is the baseline it started from.)* `cargo build --lib` showe
   `HttpClient::post_token`, which also strips the URL from every `reqwest::Error`. Tests pin both
   halves: no secret in the `Display`/`Debug` of a failed exchange, and no URL in a `NetworkError`.
 
-- [ ] **`SavesManager` holds its `inner` mutex across network round-trips, the same shape fixed for
+- [x] **`SavesManager` holds its `inner` mutex across network round-trips, the same shape fixed for
   auth in `9a1f780`.** `GameSaveIds::get_game_save_ids` takes `saves_manager.inner.lock()` and
   awaits `inner.games.get_game_builds(game_id)` while holding it
   (`src/saves/game_save_ids.rs:50-53`). It does the same for `inner.depot.get_build_metadata(..)`
@@ -168,6 +171,14 @@ The paragraph below is the baseline it started from.)* `cargo build --lib` showe
   `SavesManagerInner` with only the two `HashMap`s. `SecureLinksManager::get_secure_links` has the
   same pattern around `get_owned_products()` (`src/secure_links/links_manager.rs:62-63`). That one is
   older, but saves copied it.
+
+  `DownloadManager` has it three times: `get_build_metadata` (`src/downloader/download_manager.rs:56-67`),
+  the `get_depot_info` loop in `product_bundle.rs:68-71` and `get_owned_products` in
+  `downloadable_product.rs:56-59`. Same fix, planned for `v1.3.0` step 1 (`v1.3.0-LIBRARY.md`).
+  *(Fixed in `v1.3.0`: `SavesManager`, `DownloadManager` and `SecureLinksManager` hold their
+  `DepotManager`, `GamesManager` and `SecureLinksManager` handles directly, outside the mutex, which
+  now guards only caches. No lock is held across a fetch; a test per manager holds the games
+  manager's `inner` and checks a cached call still completes.)*
 
 - [ ] **The saves API requires a still-valid session access token and never refreshes it, and a
   revoked game grant stays cached until it expires.**
@@ -427,7 +438,7 @@ as the additive patches `v1.2.4` and `v1.2.5` (ROADMAP).
   so the event count is unchanged. Chunks below the old length of a resized file are still hashed,
   since `set_len` keeps those bytes. An all-zero chunk that used to verify is now re-fetched.
 
-- [ ] **Secure-link fetches aren't collapsed across concurrent chunk downloads.**
+- [x] **Secure-link fetches aren't collapsed across concurrent chunk downloads.**
   `SecureLinksManager::get_secure_links` (`src/secure_links/links_manager.rs`, cache at `:27`) has
   no in-flight dedup. `download_files` runs up to `self.threads` units concurrently
   (`engine.rs:258`), and each attempt of each unit calls `get_secure_links` itself (`:278`).
@@ -440,6 +451,13 @@ as the additive patches `v1.2.4` and `v1.2.5` (ROADMAP).
 
   An in-flight dedup (a per-`game_id` `OnceCell`/shared future, the shape `PathResolver::dir_cache`
   uses at `src/fs/path_resolver.rs:13,93`) fixes both halves.
+
+  Fixed in `v1.3.0`: each `game_id` has an `Arc<OnceCell<SecureLinks>>`, so concurrent callers share
+  one ownership check and one fetch, and the first caller past an expiry swaps in a fresh cell. A
+  failed fetch isn't cached; the queued callers retry one at a time, each with its own error, rather
+  than sharing the leader's, because `SecureLinksError` isn't `Clone` and a shared variant would be
+  breaking. `invalidate_secure_links` now takes the set the caller used and evicts only if it is
+  still the cached one, so a late 401 can't evict a sibling's fresh fetch.
 
 - [x] **Types a consumer must be able to name are not exported: `DepotFile`, `Chunk`,
   `DownloadUnit` and `FileSystemError`.** The exported `ProductBundle` declares

@@ -282,7 +282,6 @@ impl Downloader {
                                 | SecureLinksError::ProductNotOwned(_)),
                             ) => return Err(DownloadError::SecureLinksError(err)),
                             Err(err) => {
-                                secure_links_manager.invalidate_secure_links(&download_unit.product_id).await;
                                 retry_or_return(attempt, MAX_ATTEMPTS, DownloadError::SecureLinksError(err)).await?;
                                 continue;
                             },
@@ -291,7 +290,7 @@ impl Downloader {
                         let url_format = match links.get_highest_priority_url() {
                             Ok(url_format) => url_format,
                             Err(err) => {
-                                secure_links_manager.invalidate_secure_links(&download_unit.product_id).await;
+                                secure_links_manager.invalidate_secure_links(&download_unit.product_id, &links).await;
                                 retry_or_return(attempt, MAX_ATTEMPTS, DownloadError::SecureLinksError(err)).await?;
                                 continue;
                             },
@@ -315,7 +314,7 @@ impl Downloader {
                                 Err(ClientError::HttpError { status, body }) => {
                                     let err = DownloadError::ClientError(ClientError::HttpError { status, body });
                                     if status == reqwest::StatusCode::UNAUTHORIZED {
-                                        secure_links_manager.invalidate_secure_links(&download_unit.product_id).await;
+                                        secure_links_manager.invalidate_secure_links(&download_unit.product_id, &links).await;
                                         retry_now_or_return(attempt, MAX_ATTEMPTS, err)?;
                                     } else {
                                         retry_or_return(attempt, MAX_ATTEMPTS, err).await?;
@@ -343,7 +342,7 @@ impl Downloader {
                         let writer = buf_writer.into_inner();
 
                         if actual_md5 != download_unit.md5 {
-                            secure_links_manager.invalidate_secure_links(&download_unit.product_id).await;
+                            secure_links_manager.invalidate_secure_links(&download_unit.product_id, &links).await;
                             retry_or_return(attempt, MAX_HASH_ATTEMPTS, DownloadError::ChunkHashMismatch {
                                 path: download_unit.path.clone(),
                                 offset: download_unit.offset,
@@ -354,7 +353,7 @@ impl Downloader {
                         }
 
                         if writer.remaining() != 0 {
-                            secure_links_manager.invalidate_secure_links(&download_unit.product_id).await;
+                            secure_links_manager.invalidate_secure_links(&download_unit.product_id, &links).await;
                             retry_or_return(attempt, MAX_ATTEMPTS, DownloadError::DeflateError(std::io::Error::new(
                                 std::io::ErrorKind::InvalidData,
                                 format!(

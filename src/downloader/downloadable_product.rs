@@ -53,10 +53,7 @@ impl DownloadableProduct {
                 .push(depot.clone());
         }
 
-        let owned_products = {
-            let inner = download_manager.inner.lock().await;
-            inner.games.get_owned_products().await?
-        };
+        let owned_products = download_manager.games.get_owned_products().await?;
 
         let downloadable_products = products
             .into_iter()
@@ -81,5 +78,57 @@ impl DownloadableProduct {
             downloadable_products.clone(),
         );
         Ok(downloadable_products)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{sync::Arc, time::Duration};
+
+    use super::*;
+    use crate::{
+        client::HttpClient, depot::DepotManager, games::GamesManager,
+        secure_links::SecureLinksManager,
+    };
+
+    /// A cold lookup stuck inside the games manager (its `inner` is held here,
+    /// the await the manager's own lock used to span) must not block a cached
+    /// lookup for another game.
+    #[tokio::test(start_paused = true)]
+    async fn a_cold_lookup_does_not_block_a_cached_one() {
+        let client = HttpClient::new_with_client(reqwest::Client::new());
+        let games = GamesManager::new(client.clone());
+        let manager = Arc::new(DownloadManager::new(
+            DepotManager::new(client.clone()),
+            SecureLinksManager::new(client.clone(), games.clone()),
+            games.clone(),
+            client,
+        ));
+        manager.inner.lock().await.downloadable_products.insert(
+            (2, "b".to_string()),
+            vec![DownloadableProduct {
+                product_id: "2".into(),
+                depots: Vec::new(),
+            }],
+        );
+
+        let games_guard = games.inner.lock().await;
+        let cold = tokio::spawn({
+            let manager = manager.clone();
+            async move { manager.get_downloadable_products(1, "a").await }
+        });
+        tokio::time::sleep(Duration::from_millis(1)).await;
+
+        let cached = tokio::time::timeout(
+            Duration::from_secs(1),
+            manager.get_downloadable_products(2, "b"),
+        )
+        .await
+        .expect("a cached lookup waited on another game's fetch")
+        .unwrap();
+        assert_eq!(cached.len(), 1);
+
+        drop(games_guard);
+        cold.abort();
     }
 }

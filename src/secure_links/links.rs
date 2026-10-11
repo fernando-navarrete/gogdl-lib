@@ -7,7 +7,7 @@ use crate::secure_links::{SecureLinksManager, error::SecureLinksError};
 /// The CDN's presigned-URL parameters for one endpoint, as returned by the
 /// secure-link endpoint. Substituted into [`UrlFormat::url_format`]'s
 /// placeholders by [`UrlFormat::parse_url`].
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct CdnUrlParams {
     /// Base CDN URL the chunk path is resolved against.
     pub base_url: String,
@@ -39,7 +39,7 @@ pub struct CdnUrlParams {
 
 /// One CDN endpoint offering a given chunk, with the priority to pick among
 /// several (see [`SecureLinks::get_highest_priority_url`]).
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct UrlFormat {
     /// Human-readable CDN endpoint name, as reported by GOG.
     pub endpoint_name: String,
@@ -54,7 +54,7 @@ pub struct UrlFormat {
 /// The set of CDN endpoints available for one product's chunks, as returned
 /// by the secure-link endpoint and cached by
 /// [`SecureLinksManager`](crate::secure_links::SecureLinksManager).
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct SecureLinks {
     /// GOG product ID these links serve.
     pub product_id: u64,

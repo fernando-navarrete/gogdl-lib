@@ -26,10 +26,9 @@ impl GameSaveIds {
     /// reads `client_id`/`client_secret` from its build metadata, and caches
     /// them. Cache entries never expire.
     ///
-    /// Holds the manager's `inner` lock for the cache lookup, while listing
-    /// builds, while fetching build metadata, and for the cache insert — but
-    /// releases it in between, so concurrent calls for an uncached key may
-    /// each fetch the metadata.
+    /// Holds the manager's `inner` lock only for the cache lookup and insert,
+    /// never across a fetch, so concurrent calls for an uncached key may each
+    /// fetch the metadata.
     ///
     /// # Errors
     /// - [`SavesError::BuildNotFound`] if no build of `game_id` has a
@@ -47,20 +46,14 @@ impl GameSaveIds {
                 return Ok(ids.clone());
             }
         }
-        let game_builds = {
-            let inner = saves_manager.inner.lock().await;
-            inner.games.get_game_builds(game_id).await?
-        };
+        let game_builds = saves_manager.games.get_game_builds(game_id).await?;
         let build = game_builds
             .items
             .iter()
             .find(|b| b.version_name == build_name)
             .ok_or(SavesError::BuildNotFound)?;
 
-        let build_metadata = {
-            let inner = saves_manager.inner.lock().await;
-            inner.depot.get_build_metadata(&build.link).await?
-        };
+        let build_metadata = saves_manager.depot.get_build_metadata(&build.link).await?;
         let client_id = build_metadata.client_id;
         let client_secret = build_metadata.client_secret;
         let game_ids = GameSaveIds {
@@ -74,5 +67,50 @@ impl GameSaveIds {
                 .insert((game_id, build_name.to_string()), game_ids.clone());
         }
         Ok(game_ids)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{sync::Arc, time::Duration};
+
+    use super::*;
+    use crate::{client::HttpClient, depot::DepotManager, games::GamesManager};
+
+    /// A cold lookup stuck inside the games manager (its `inner` is held here,
+    /// the await the manager's own lock used to span) must not block a cached
+    /// lookup for another game.
+    #[tokio::test(start_paused = true)]
+    async fn a_cold_lookup_does_not_block_a_cached_one() {
+        let client = HttpClient::new_with_client(reqwest::Client::new());
+        let games = GamesManager::new(client.clone());
+        let saves = Arc::new(SavesManager::new(
+            client.clone(),
+            DepotManager::new(client),
+            games.clone(),
+        ));
+        saves.inner.lock().await.ids_cache.insert(
+            (2, "b".to_string()),
+            GameSaveIds {
+                client_id: "id".into(),
+                client_secret: "secret".into(),
+            },
+        );
+
+        let games_guard = games.inner.lock().await;
+        let cold = tokio::spawn({
+            let saves = saves.clone();
+            async move { saves.get_game_save_ids(1, "a").await }
+        });
+        tokio::time::sleep(Duration::from_millis(1)).await;
+
+        let cached = tokio::time::timeout(Duration::from_secs(1), saves.get_game_save_ids(2, "b"))
+            .await
+            .expect("a cached lookup waited on another game's fetch")
+            .unwrap();
+        assert_eq!(cached.client_id, "id");
+
+        drop(games_guard);
+        cold.abort();
     }
 }

@@ -21,12 +21,13 @@ use crate::{
 pub struct DownloadManager {
     pub inner: Arc<Mutex<DownloadManagerInner>>,
     pub client: HttpClient,
-}
-
-pub struct DownloadManagerInner {
+    // Shared handles kept outside the mutex so none is held across a fetch.
     pub depot: DepotManager,
     pub secure_links: SecureLinksManager,
     pub games: GamesManager,
+}
+
+pub struct DownloadManagerInner {
     pub downloadable_products: HashMap<(i32, String), Vec<DownloadableProduct>>,
 }
 
@@ -39,12 +40,12 @@ impl DownloadManager {
     ) -> Self {
         Self {
             inner: Arc::new(Mutex::new(DownloadManagerInner {
-                depot,
-                secure_links,
-                games,
                 downloadable_products: HashMap::new(),
             })),
             client,
+            depot,
+            secure_links,
+            games,
         }
     }
     /// The language-filtered metadata of `build_name`, the one place a build is looked up by name.
@@ -53,18 +54,14 @@ impl DownloadManager {
         game_id: i32,
         build_name: &str,
     ) -> Result<BuildMetadata, DownloadError> {
-        let game_builds = {
-            let inner = self.inner.lock().await;
-            inner.games.get_game_builds(game_id).await?
-        };
+        let game_builds = self.games.get_game_builds(game_id).await?;
         let build = game_builds
             .items
             .iter()
             .find(|b| b.version_name == build_name)
             .ok_or(DownloadError::BuildNotFound)?;
 
-        let inner = self.inner.lock().await;
-        Ok(inner.depot.get_build_metadata(&build.link).await?)
+        Ok(self.depot.get_build_metadata(&build.link).await?)
     }
     pub async fn get_product_sizes(
         &self,
@@ -95,12 +92,7 @@ impl DownloadManager {
         path: &str,
         tx: mpsc::UnboundedSender<VerificationEvent>,
     ) -> Result<(), DownloadError> {
-        let links = {
-            let inner = self.inner.lock().await;
-
-            inner.secure_links.clone()
-        };
-        let downloader = Downloader::new(self.client.clone(), links);
+        let downloader = Downloader::new(self.client.clone(), self.secure_links.clone());
         downloader.verify(bundles, path, tx).await?;
         Ok(())
     }
@@ -110,12 +102,7 @@ impl DownloadManager {
         path: &str,
         tx: mpsc::UnboundedSender<DownloadStageEvent>,
     ) -> Result<(), DownloadError> {
-        let links = {
-            let inner = self.inner.lock().await;
-
-            inner.secure_links.clone()
-        };
-        let downloader = Downloader::new(self.client.clone(), links);
+        let downloader = Downloader::new(self.client.clone(), self.secure_links.clone());
         downloader.download(bundles, path, tx).await?;
         Ok(())
     }
@@ -125,12 +112,7 @@ impl DownloadManager {
         path: &str,
         tx: mpsc::UnboundedSender<DownloadStageEvent>,
     ) -> Result<(), DownloadError> {
-        let links = {
-            let inner = self.inner.lock().await;
-
-            inner.secure_links.clone()
-        };
-        let downloader = Downloader::new(self.client.clone(), links);
+        let downloader = Downloader::new(self.client.clone(), self.secure_links.clone());
         downloader.repair(bundles, path, tx).await?;
         Ok(())
     }

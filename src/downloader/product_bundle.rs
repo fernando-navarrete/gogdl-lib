@@ -65,10 +65,10 @@ impl ProductBundle {
 
         for (id, depots) in filtered_products {
             for depot in depots {
-                let depot_info = {
-                    let inner = download_manager.inner.lock().await;
-                    inner.depot.get_depot_info(&depot.manifest).await?
-                };
+                let depot_info = download_manager
+                    .depot
+                    .get_depot_info(&depot.manifest)
+                    .await?;
 
                 let depot_files = depot_info.depot.items;
                 downloadable_files.push(ProductBundle {

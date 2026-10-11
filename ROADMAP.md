@@ -193,15 +193,15 @@ Follow-up patches (`v1.2.1+`), one per tag:
 
 ## v1.3.0 — Library and account (for a bridge `v1.4.x` patch)
 
-What the bridge's `v1.4.0` needs shipped early as `v1.2.4`–`v1.2.5`, so nothing here blocks it or
+Work plan: [v1.3.0-LIBRARY.md](v1.3.0-LIBRARY.md). What the bridge's `v1.4.0` needs shipped early as `v1.2.4`–`v1.2.5`, so nothing here blocks it or
 Lumen. The bridge pins this in a `v1.4.x` patch and absorbs the breaking parts without changing what
 Dart sees (a new translator stage for `VerificationStage`; `OwnedGames.unresolved`).
 
-- `download_game` skips chunks that already verify, so it resumes like `repair_game` (GAPS "Medium
-  — duplication & consistency"). A **behavior change**: its events gain a `VerificationStage`. Moved
+- `download_game` skips chunks that already verify, so it resumes like `repair_game` and does the
+  same thing (it runs the verify-then-fetch path; GAPS "Medium — duplication & consistency"). A **behavior change**: its events gain a `VerificationStage`. Moved
   here from `v1.2.2`, since a patch can't change the event stream.
 - `get_owned_games` stops silently dropping failed lookups: return the unresolved IDs next to the
-  games (an `unresolved` field on `OwnedGames`). `lumen-cli` asked for this directly (GAPS "Medium —
+  games (an `unresolved: Vec<ProductId>` field on `OwnedGames`, which also holds `gamesdb` 404s). `lumen-cli` asked for this directly (GAPS "Medium —
   owned games").
 - Cache the per-product `gamesdb` type lookups on `GamesManagerInner` (failures not cached), and
   reconcile the `gamesdb` "game" check with `GamesError::ProductNotAGame`. This makes
@@ -211,17 +211,18 @@ Dart sees (a new translator stage for `VerificationStage`; `OwnedGames.unresolve
   `OwnedGames`, so `get_game_builds` on a DLC returns `ProductNotAGame`, not a decode error. Needed
   for Lumen's DLC tab (GAPS "Medium — duplication & consistency").
 - Collapse concurrent secure-link fetches (in-flight dedup per `game_id`), and stop
-  `SecureLinksManager` and `SavesManager` holding their mutex across network calls (GAPS "Medium —
+  `SecureLinksManager`, `SavesManager` and `DownloadManager` holding their mutex across network calls (GAPS "Medium —
   duplication & consistency", "Medium — cloud saves").
 - Cache `DepotInfo`, `BuildMetadata` and `RemoteConfig`. Each new cache says whether `clear_cache`
-  drops it: data keyed by an immutable id (a build's metadata, a product's type) stays.
+  drops it: data keyed by an immutable id (a build's metadata, a product's type, a manifest's `DepotInfo`) stays, and `RemoteConfig` is dropped.
 - `GogDl::logout` is dropped: the bridge no longer needs it (bridge §7.5).
 - **Breaking**: the new `OwnedGames` field and `download_game`'s new stage, for the bridge's
   `v1.4.x` pin (and `lumen-cli`, which gets its first bump since `v1.0.10`).
 
 Follow-up patches (`v1.3.1+`), one per tag:
 1. `v1.3.1`: `GameScreenshots::resolve_links` stops using the magic `formatter.get(2)`.
-2. `v1.3.2`: populate or drop `GameDetails.id` and `GameBuilds.game_title`.
+2. `v1.3.2`: populate `GameDetails.id` and `GameBuilds.game_title` (if a value needs a second request,
+   move its removal to `v1.4.0` instead and skip the patch).
 
 ## v1.4.0 — Errors and API cleanup (for bridge `v1.5.0` / Lumen `v1.5.0`)
 
@@ -233,6 +234,7 @@ the bridge migrates once.
   (bridge §7.3 auth part, GAPS "Medium — duplication & consistency").
 - `GogDlError::SavesError(#[from] SavesError)`, and the four saves methods return `GogDlError`
   (GAPS "Medium — cloud saves").
+- Discuss deprecating one of `download_game`/`repair_game`, which do the same since `v1.3.0`.
 - Remove `DownloadEvent::Preparing` and `Prepared`, deprecated in `v1.2.3`.
 - Remove the dead `Http`/`UrlParseError`/`NetworkError`/`DecodeError`/`DeflateError` variants, and
   `FileSystemError`'s `FileMetadataError` and `FileCreationError`, which no public method returns.
