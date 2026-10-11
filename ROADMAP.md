@@ -10,8 +10,9 @@ numbered.
 - **Patch** (`1.x.y`): one tag per small, self-contained fix or addition.
 - **Minor** (`1.x.0`): a big update, meaning a feature set or cross-cutting refactor. Patches then
   continue from `.1` under that minor.
-- Tags use the existing `vX.Y.Z` format. `v1.1.0`–`v1.1.6` and `v1.2.0`–`v1.2.3` shipped, so the
-  next stage is **`v1.3.0`**. The old `-restart`/`-debug` tags stay, but nothing new is tagged that way.
+- Tags use the existing `vX.Y.Z` format. `v1.1.0`–`v1.1.6` and `v1.2.0`–`v1.2.3` shipped. Next are
+  the additive patches **`v1.2.4`** and **`v1.2.5`** the bridge's `v1.4.0` needs, then the stage
+  **`v1.3.0`**. The old `-restart`/`-debug` tags stay, but nothing new is tagged that way.
 - For each release, on a release branch: bump `version` in `Cargo.toml` to match the tag (the
   `v1.0.1` mismatch in GAPS "Low — style / clippy" must not happen again), tick the item(s) in
   `GAPS.md`, add a `CHANGELOG.md` entry. Open an MR titled `vX.Y.Z: ...`, merge it once green, then
@@ -28,10 +29,11 @@ numbered.
 
 Three repos depend on `gogdl-lib`:
 
-- **`gogdl_flutter`** (the Flutter/Rust bridge) pins `v1.0.11`. Its GAPS §7 is the list of requests
-  it makes here, and its `ROADMAP.md` orders them by the Lumen stage that needs them.
-- **Lumen** uses this crate only through the bridge. Its `v1.3.0-DOWNLOAD-MANAGEMENT.md` lists
-  requests D4–D6 here.
+- **`gogdl_flutter`** (the Flutter/Rust bridge) pins `v1.2.3`, from the GitHub mirror. Its GAPS §7
+  is the list of requests it makes here, its `ROADMAP.md` orders them by the Lumen stage that needs
+  them, and its `v1.4.0-LIBRARY-AND-ACCOUNT.md` is the plan for its current stage.
+- **Lumen** uses this crate only through the bridge. Its `v1.3.0-DOWNLOAD-MANAGEMENT.md` listed
+  requests D4–D6 here, and its `v1.4.0-LIBRARY.md` ("Dependency changes") lists D1 and D3.
 - **`lumen-cli`** pins `v1.0.10` and exercises this crate directly. It has no roadmap of its own: it
   follows the newest tag and shows what works. Bumping it is the smoke test for each release.
 
@@ -45,15 +47,27 @@ later as its own patch.
 |---|---|---|---|
 | (none, internal) | `v1.2.0` ✅ | Test-constructible types (§7.1) | `v1.1.0` ✅ |
 | `v1.3.0` Download management | `v1.3.0` | Cancel-safe contract (§7.2), download error kinds (§7.3), free-space query and mount fix (§7.4, D4, D5), no save truncation (§7.6 part), per-product sizes (§7.10), Proton cleanup on failure (D6) | `v1.2.0` ✅ |
-| `v1.4.0` Library and account | `v1.4.0` | `logout` (§7.5), owned games that don't silently shrink, cheaper title and DLC lookups | `v1.3.0` |
+| `v1.4.0` Library and account | `v1.4.0` | `clear_cache` (§7.12, D3), `remove_products` (§7.13, D1) | `v1.2.4`, `v1.2.5` |
+| (none, absorbed without a Dart change) | a `v1.4.x` patch | Nothing it asked for: owned games that don't silently shrink, `download_game` skipping verified chunks, cheaper lookups | `v1.3.0` |
 | `v1.5.0` UI polish and packaging | `v1.5.0` | Login error kinds (§7.3 auth part), breaking error and API cleanup | `v1.4.0` |
 | `v1.6.0` Extras | — | Nothing | — |
 | Not on Lumen's roadmap yet (cloud saves) | `v1.6.0` | Save sync metadata, `cloudStorage.enabled`, file subsets (§7.6) | `v1.5.0` |
-| Not on Lumen's roadmap yet | `v1.7.0` | Language/OS selection (§7.7), Proton integrity (§7.8), `i64` ids (§7.9) | `v1.6.0` |
+| Not on Lumen's roadmap yet | `v1.7.0` | Language/OS selection (§7.7), Proton integrity (§7.8), `i64` ids (§7.9), stream retries and upload timeout (§7.11) | `v1.6.0` |
 
 Things consumers need that don't need a change here: resume is already `repair_game` (Lumen
 `v1.3.0` "B"), and dropping a game job's future already stops it (no `tokio::spawn`), which
-`v1.2.0` only has to document. Update detection uses `get_game_builds` as it is today.
+`v1.2.0` only has to document. Update detection uses `get_game_builds` as it is today. Sign out
+needs no `logout`: a fresh `GogDl` is unauthenticated, so Lumen builds a new backend (bridge §7.5,
+Lumen's dropped D2). Installing DLC on an installed game is `repair_game` with the larger product
+set. The bridge's `v1.4.1`–`v1.4.3` patches (parallel, tolerant `get_downloadable_products`, one
+`get_game_links` for boxart and background, Proton pages with `has_more`) are bridge-side over
+methods that exist here.
+
+**Settled:** the bridge's `v1.4.0` plan (its D1) leaves to this repo whether `clear_cache` and
+`remove_products` ride `v1.3.0` or ship ahead of it. Both are additive, so they ship as the
+`v1.2.4` and `v1.2.5` patches: the bridge pins a `v1.2.x` with nothing breaking to absorb, and
+Lumen's Phase 6 isn't held up by `v1.3.0`'s scope. The bridge picks up `v1.3.0` later as a `v1.4.x`
+patch.
 
 **Settled:** Lumen's plan lists D4/D5 (free space) as blocking, while the bridge's `v1.3.0` plan ships
 a `statvfs` fallback and doesn't wait. They were cut early as the additive patch **`v1.1.6`**
@@ -165,29 +179,45 @@ Follow-up patches (`v1.2.1+`), one per tag:
 3. `v1.2.3`: `DownloadEvent::Started { compressed_total }` gives `Progress` a denominator so a
    percentage can reach 100%, and `Preparing`/`Prepared` are deprecated in its favor (still sent;
    removed in `v1.4.0`).
+4. `v1.2.4`: `GogDl::clear_cache()`, for the bridge's `v1.4.0` (bridge §7.12, Lumen D3). Drops the
+   memoized owned products, game builds and downloadable products, keeps the rest, and leaves auth
+   and running jobs alone. Without it, Lumen's library refresh re-reads the same owned list (GAPS
+   "Medium — library and install management"). Additive.
+5. `v1.2.5`: `GogDl::remove_products(game_id, path, build_name, keep, remove)`, for the bridge's
+   `v1.4.0` (bridge §7.13, Lumen D1). Deletes the files only `remove`'s depots list, never one
+   `keep`'s also list (Alien: Isolation's DLCs share files with the base game), and returns a
+   test-constructible `ProductRemoval { files_removed, bytes_freed }`. The bridge's other asks
+   (edge cases, error variants, cancel safety) are in GAPS "Medium — library and install
+   management". Additive. If it slips, the bridge tags its `v1.4.0` with `clear_cache` alone and
+   ships removal as a `v1.4.x` patch.
 
-## v1.3.0 — Library and account (for bridge `v1.4.0` / Lumen `v1.4.0`)
+## v1.3.0 — Library and account (for a bridge `v1.4.x` patch)
+
+What the bridge's `v1.4.0` needs shipped early as `v1.2.4`–`v1.2.5`, so nothing here blocks it or
+Lumen. The bridge pins this in a `v1.4.x` patch and absorbs the breaking parts without changing what
+Dart sees (a new translator stage for `VerificationStage`; `OwnedGames.unresolved`).
 
 - `download_game` skips chunks that already verify, so it resumes like `repair_game` (GAPS "Medium
   — duplication & consistency"). A **behavior change**: its events gain a `VerificationStage`. Moved
   here from `v1.2.2`, since a patch can't change the event stream.
-- `GogDl::logout` (or `clear_auth`), which also drops the token observer (bridge §7.5). Without it
-  the bridge falls back to `GogdlApi::reset()`.
 - `get_owned_games` stops silently dropping failed lookups: return the unresolved IDs next to the
   games (an `unresolved` field on `OwnedGames`). `lumen-cli` asked for this directly (GAPS "Medium —
   owned games").
 - Cache the per-product `gamesdb` type lookups on `GamesManagerInner` (failures not cached), and
-  reconcile the `gamesdb` "game" check with `GamesError::ProductNotAGame`. This makes the bridge's
-  batched title lookup and Lumen's library refresh cheap (GAPS "Medium — owned games").
+  reconcile the `gamesdb` "game" check with `GamesError::ProductNotAGame`. This makes
+  `get_owned_games` after a `clear_cache` (Lumen's library refresh) cheap (GAPS "Medium — owned
+  games").
 - "Not a game" handling is the same across `GameBuilds`, `GameLinks`, `GameSummary` and
   `OwnedGames`, so `get_game_builds` on a DLC returns `ProductNotAGame`, not a decode error. Needed
   for Lumen's DLC tab (GAPS "Medium — duplication & consistency").
 - Collapse concurrent secure-link fetches (in-flight dedup per `game_id`), and stop
   `SecureLinksManager` and `SavesManager` holding their mutex across network calls (GAPS "Medium —
   duplication & consistency", "Medium — cloud saves").
-- Cache `DepotInfo`, `BuildMetadata` and `RemoteConfig`.
-- **Breaking** for bridge `v1.4.0`: the new `OwnedGames` field (and `lumen-cli`, which gets its
-  first bump since `v1.0.10`).
+- Cache `DepotInfo`, `BuildMetadata` and `RemoteConfig`. Each new cache says whether `clear_cache`
+  drops it: data keyed by an immutable id (a build's metadata, a product's type) stays.
+- `GogDl::logout` is dropped: the bridge no longer needs it (bridge §7.5).
+- **Breaking**: the new `OwnedGames` field and `download_game`'s new stage, for the bridge's
+  `v1.4.x` pin (and `lumen-cli`, which gets its first bump since `v1.0.10`).
 
 Follow-up patches (`v1.3.1+`), one per tag:
 1. `v1.3.1`: `GameScreenshots::resolve_links` stops using the magic `formatter.get(2)`.
@@ -243,3 +273,6 @@ Items with no Lumen stage yet. Each can ship as a patch as soon as it's ready.
 - Check Proton tarballs against the `.sha512sum` asset while streaming (bridge §7.8, GAPS "Medium —
   Proton").
 - `i64` (or `u64`) product ids (**breaking**, lockstep with the bridge and Lumen) (bridge §7.9).
+- Retry a timed-out Proton tarball and saves download like game chunks, and give `put_stream` a
+  timeout that tracks upload progress instead of the bridge client's 30s `read_timeout`, which a
+  slow save upload trips (bridge §7.11).

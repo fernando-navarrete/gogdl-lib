@@ -5,7 +5,7 @@ Open findings for `gogdl-lib`. Current tree: **`main`**, `Cargo.toml` at `1.2.3`
 `main`. Their decisions are in `devlog/v1.2.0-download-management.md` (`v1.1.x`: `devlog/v1.1.0-foundation.md`; CI/CD:
 `devlog/v1.2.x-ci-cd.md`). `v1.0.11` (`d5b43e6`) includes the owned-products
 rename (`d6dbdc5`) and the owned-games filter (`e032b7d`). `feature/saves` was merged into `main`, so
-every tag is reachable from `main`. Consumer pins: the bridge (`gogdl_flutter`) is on `v1.0.11`, and
+every tag is reachable from `main`. Consumer pins: the bridge (`gogdl_flutter`) is on `v1.2.3`, and
 **`lumen-cli`** is on **`v1.0.10`** (`Cargo.toml:12`), so its next bump picks up the
 `get_owned_games` behavior change below with no compile error.
 
@@ -225,6 +225,44 @@ The paragraph below is the baseline it started from.)* `cargo build --lib` showe
   non-game. `GameDetails::get_game_details` already has its own "not a game" signal
   (`GamesError::ProductNotAGame`, from `embed.gog.com/account/gameDetails`). The two can disagree,
   and nothing reconciles or tests them.
+
+## Medium — library and install management
+
+Both are the bridge's `v1.4.0` requests (its GAPS §7.12–7.13, Lumen's `v1.4.0` D3 and D1), scheduled
+as the additive patches `v1.2.4` and `v1.2.5` (ROADMAP).
+
+- [ ] **Cached library data can't be refreshed.** A `GogDl` memoizes the owned products
+  (`OwnedProducts::get_owned_products` re-fetches only while the list is empty,
+  `src/games/owned_products.rs:28-33`), game builds (`GamesManagerInner.game_builds`,
+  `src/games/games_manager.rs:26`) and downloadable products
+  (`DownloadManagerInner.downloadable_products`, `src/downloader/download_manager.rs:30`) for its
+  whole life. A game bought or a build published after launch never shows up, and the secure-link
+  ownership check keeps using the stale owned list. Lumen's library refresh re-reads the same list
+  and its Builds tab's Refresh is a no-op. Recreating the `GogDl` drops auth and running jobs. Add
+  `GogDl::clear_cache()` that drops those three and keeps details, links, summary, screenshots and
+  product details, which don't change. Asks from the bridge: auth, the token observer and running
+  jobs are untouched; a fetch in flight during a clear may repopulate its entry with its own
+  (current) result but never panics or leaves a half-built entry. Sync or async is our choice.
+
+- [ ] **Nothing removes a product's files from an install.** The downloader has no `remove_file`
+  anywhere under `src/downloader/`, so `repair_game` with a smaller product set leaves a removed
+  DLC's files on disk, and some games detect a DLC by its files. The caller can't do it: it has no
+  manifests, and guessing by path deletes the base game's files. Lumen's Phase 0 found that five of
+  Alien: Isolation's seven DLCs share 9 files each with the base game
+  (`DATA\TEXT\<LANG>\DLCnn_FRONTEND.TXT`), and each product has several bundles, one per depot.
+  Add `GogDl::remove_products(game_id, path, build_name, keep, remove)`: fetch both sets'
+  manifests, delete the files only `remove`'s depots list (never one `keep`'s also list, compared
+  case-insensitively on normalized paths), prune directories the removal emptied, never touch a file
+  outside the manifests, and treat an already-missing file as success. Asks from the bridge:
+  - An empty `remove` is a no-op that fetches nothing. An id in both lists is an error, or is kept
+    (our call; document it).
+  - A path that would escape `path` after normalization is never deleted.
+  - Errors use existing variants where they fit (404 → `HttpError`, I/O → `FileSystemError`), so
+    the bridge maps them without a new error kind.
+  - A public result type, test-constructible like the others (bridge §7.1): `files_removed` and
+    `bytes_freed`, with public fields or deserializable from JSON.
+  - Cancel-safe like the downloads: a dropped future leaves some files removed, and calling it
+    again finishes. The bridge exposes it as a `Future`, or a stream if a large DLC measures slow.
 
 ## Medium — Proton
 
