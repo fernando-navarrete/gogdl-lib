@@ -49,9 +49,10 @@ impl DownloadManager {
             games,
         }
     }
-    /// Drops the downloadable products.
+    /// Drops the downloadable products and the cached depot manifests (the latter for memory).
     pub async fn clear_cache(&self) {
         self.inner.lock().await.downloadable_products.clear();
+        self.depot.inner.lock().await.depot_info.clear();
     }
     /// The language-filtered metadata of `build_name`, the one place a build is looked up by name.
     pub async fn get_build_metadata(
@@ -239,5 +240,96 @@ mod tests {
         manager.get_build_metadata(7, "1.0").await.unwrap();
         assert_eq!(server.requests(builds_path), 2);
         assert_eq!(server.requests(meta_path), 1);
+    }
+
+    /// A depot manifest is fetched once per hash across bundle resolutions, and `clear_cache`
+    /// drops it (the manifests can be tens of MB), so the next resolution fetches it again.
+    #[tokio::test]
+    async fn depot_info_is_fetched_once_per_manifest_and_dropped_by_clear_cache() {
+        use crate::test_support::{ChunkServer, Reply, authed_client, zlib};
+
+        let server = ChunkServer::start().await;
+        let builds_path = "/products/7/os/windows/builds";
+        let meta_path = "/meta/ab/cd/abcd";
+        let builds = serde_json::json!({"count": 1, "items": [{
+            "build_id": "1",
+            "version_name": "1.0",
+            "date_published": "2020-01-01T00:00:00+0000",
+            "link": format!("{}{meta_path}", server.base_url()),
+        }]});
+        server.script(
+            builds_path,
+            vec![Reply::Body(builds.to_string().into_bytes())],
+        );
+        let depot = |manifest: &str| {
+            serde_json::json!({"manifest": manifest, "size": 1, "compressedSize": 1,
+                "productId": "7", "languages": ["en-US"]})
+        };
+        let metadata = serde_json::json!({
+            "dependencies": null,
+            "depots": [depot("aaaa1111"), depot("bbbb2222")],
+            "clientId": "id",
+            "clientSecret": "secret",
+        });
+        server.script(
+            meta_path,
+            vec![Reply::Body(zlib(metadata.to_string().as_bytes()))],
+        );
+        let manifest_paths = ["/meta/aa/aa/aaaa1111", "/meta/bb/bb/bbbb2222"];
+        for (path, file) in manifest_paths.iter().zip(["a.bin", "b.bin"]) {
+            let manifest = serde_json::json!({"depot": {"items": [{
+                "md5": null,
+                "path": file,
+                "type": "DepotFile",
+                "chunks": [{"md5": "m", "size": 1, "compressedMd5": "c", "compressedSize": 1}],
+            }]}});
+            server.script(
+                path,
+                vec![Reply::Body(zlib(manifest.to_string().as_bytes()))],
+            );
+        }
+
+        let client = authed_client().await;
+        let mut games = GamesManager::new(client.clone());
+        games.content_system_base = server.base_url();
+        let mut depot_manager = DepotManager::new(client.clone());
+        depot_manager.cdn_meta_base = format!("{}/meta", server.base_url());
+        let manager = DownloadManager::new(
+            depot_manager,
+            SecureLinksManager::new(client.clone(), games.clone()),
+            games,
+            client,
+        );
+
+        let first = manager
+            .get_downloadable_files(7, "1.0", &[7])
+            .await
+            .unwrap();
+        let second = manager
+            .get_downloadable_files(7, "1.0", &[7])
+            .await
+            .unwrap();
+        let files = |bundles: &[ProductBundle]| {
+            let mut files: Vec<String> = bundles
+                .iter()
+                .flat_map(|b| b.product_files.iter().map(|f| f.path.clone()))
+                .collect();
+            files.sort();
+            files
+        };
+        assert_eq!(files(&first), ["a.bin", "b.bin"]);
+        assert_eq!(files(&first), files(&second));
+        for path in manifest_paths {
+            assert_eq!(server.requests(path), 1);
+        }
+
+        manager.clear_cache().await;
+        manager
+            .get_downloadable_files(7, "1.0", &[7])
+            .await
+            .unwrap();
+        for path in manifest_paths {
+            assert_eq!(server.requests(path), 2);
+        }
     }
 }

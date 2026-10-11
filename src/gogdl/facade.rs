@@ -255,8 +255,9 @@ impl GogDl {
     /// Drops the cached data that can go stale, so the next call fetches it
     /// again: the owned-products list (what [`get_owned_games`](Self::get_owned_games),
     /// [`get_downloadable_products`](Self::get_downloadable_products) and the
-    /// ownership check behind every download read), the game builds, and the
-    /// downloadable products.
+    /// ownership check behind every download read), the game builds, the
+    /// downloadable products, and the cached depot manifests (a large game's are tens of MB, so
+    /// they are not kept).
     ///
     /// Everything else stays cached: game details, links, summary and
     /// screenshots, product details, each product's `gamesdb` type (it never
@@ -367,11 +368,10 @@ impl GogDl {
     /// [`download_game`](Self::download_game) and
     /// [`repair_game`](Self::repair_game) consume.
     ///
-    /// The build metadata is cached, but the depot manifests are **not**: every call re-fetches
-    /// every selected depot's manifest from the CDN, even if an earlier call already resolved the
-    /// same `(game_id, build_name)`. Depot manifests are typically the
-    /// largest payloads this crate fetches; call this once and hold onto the
-    /// result rather than re-deriving it.
+    /// The build metadata and each depot manifest (by its hash) are cached, so a second call for
+    /// the same build fetches neither, until [`clear_cache`](Self::clear_cache) drops the
+    /// manifests. The manifests are typically the largest payloads this crate fetches, and a
+    /// large game's can take tens of MB; hold onto the result of a call rather than re-deriving it.
     ///
     /// # Errors
     /// [`GogDlError::DownloadError`] wrapping [`crate::DownloadError::BuildNotFound`]

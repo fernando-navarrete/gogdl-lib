@@ -82,21 +82,34 @@ impl DepotFile {
 }
 
 impl DepotInfo {
+    /// The manifest with hash `depot_manifest`, cached by hash (a manifest never changes). The
+    /// lock is held only for the cache read and insert, so concurrent misses may each fetch.
     pub async fn get_depot_info(
         download_manager: &DepotManager,
         depot_manifest: &str,
     ) -> Result<DepotInfo, DepotError> {
-        let url = format!(
-            "https://cdn.gog.com/content-system/v2/meta/{}/{}/{}",
-            &depot_manifest[0..2],
-            &depot_manifest[2..4],
-            depot_manifest
-        );
+        let cached = download_manager
+            .inner
+            .lock()
+            .await
+            .depot_info
+            .get(depot_manifest)
+            .cloned();
+        if let Some(depot_info) = cached {
+            return Ok(depot_info);
+        }
 
+        let url = download_manager.depot_info_url(depot_manifest);
         let depot_info: DepotInfo = download_manager
             .client
             .fetch(&url, true, true, None)
             .await?;
+        download_manager
+            .inner
+            .lock()
+            .await
+            .depot_info
+            .insert(depot_manifest.to_string(), depot_info.clone());
 
         Ok(depot_info)
     }

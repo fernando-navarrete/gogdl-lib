@@ -52,11 +52,12 @@ drains concurrently.
   is a separate per-game token that is never refreshed or reported.
 - **Library** results are cached per id until `clear_cache`, except `get_owned_games`, which caches
   the owned-products list and each product's `gamesdb` type after a successful lookup.
-  `clear_cache` drops the owned products, game builds and downloadable products, and keeps the rest
-  (details, links, summary, screenshots, product details, build metadata, the `gamesdb` types, secure links, save
+  `clear_cache` drops the owned products, game builds, downloadable products and depot manifests
+  (the last for memory: a large game's are tens of MB), and keeps the rest (details, links, summary, screenshots, product details, build metadata, the `gamesdb` types, secure links, save
   ids), auth and running jobs.
 - **Downloads:** `download_game` re-transfers everything; `repair_game` is the resume path;
-  `get_product_bundles` is not cached. Events: `DownloadStageEvent`, `DownloadEvent`,
+  `get_product_bundles` isn't cached, but the depot manifests it fetches are, by hash, until
+  `clear_cache`. Events: `DownloadStageEvent`, `DownloadEvent`,
   `VerificationEvent`. Dropping the future stops the work (no job uses `tokio::spawn`), and
   `repair_game` completes what a dropped `download_game` left. `remove_products` deletes the files
   only the removed products' manifests list (never one a kept product also lists, matched
