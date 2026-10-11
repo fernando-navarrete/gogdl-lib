@@ -34,10 +34,7 @@ impl GameSummary {
             }
         }
 
-        let url = format!(
-            "https://gamesdb.gog.com/platforms/gog/external_releases/{}",
-            game_id
-        );
+        let url = games_manager.gamesdb_release_url(game_id);
 
         let game_summary: GameSummary =
             games_manager.client.fetch(&url, false, false, None).await?;

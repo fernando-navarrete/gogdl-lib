@@ -17,6 +17,10 @@ use crate::games::owned_products::{OwnedProducts, ProductId};
 pub struct GamesManager {
     pub inner: Arc<Mutex<GamesManagerInner>>,
     pub client: HttpClient,
+    /// Test-only: host the `gamesdb` lookups go to, so a fixture server can
+    /// stand in for `gamesdb.gog.com`.
+    #[cfg(test)]
+    pub gamesdb_base: String,
 }
 
 pub struct GamesManagerInner {
@@ -26,6 +30,8 @@ pub struct GamesManagerInner {
     pub game_builds: HashMap<ProductId, GameBuilds>,
     pub game_summary: HashMap<ProductId, GameSummary>,
     pub game_screenshots: HashMap<ProductId, GameScreenshots>,
+    /// `gamesdb`'s `type` per product. Only successful lookups are stored.
+    pub product_types: HashMap<ProductId, String>,
 }
 
 impl GamesManager {
@@ -38,9 +44,20 @@ impl GamesManager {
                 game_builds: HashMap::new(),
                 game_summary: HashMap::new(),
                 game_screenshots: HashMap::new(),
+                product_types: HashMap::new(),
             })),
             client,
+            #[cfg(test)]
+            gamesdb_base: "https://gamesdb.gog.com".to_string(),
         }
+    }
+    /// The `gamesdb` record URL for `id`.
+    pub fn gamesdb_release_url(&self, id: ProductId) -> String {
+        #[cfg(test)]
+        let base = self.gamesdb_base.as_str();
+        #[cfg(not(test))]
+        let base = "https://gamesdb.gog.com";
+        format!("{base}/platforms/gog/external_releases/{id}")
     }
     pub async fn get_owned_products(&self) -> Result<OwnedProducts, GamesError> {
         OwnedProducts::get_owned_products(self).await

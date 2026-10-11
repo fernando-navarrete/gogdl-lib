@@ -51,7 +51,7 @@ drains concurrently.
   registered `TokenObserver`, the only signal that the refresh token rotated. The cloud saves grant
   is a separate per-game token that is never refreshed or reported.
 - **Library** results are cached per id for the lifetime of the `GogDl`, except `get_owned_games`,
-  which caches only the owned-products list and does one uncached `gamesdb` lookup per product.
+  which caches the owned-products list and each product's `gamesdb` type after a successful lookup.
 - **Downloads:** `download_game` re-transfers everything; `repair_game` is the resume path;
   `get_product_bundles` is not cached. Events: `DownloadStageEvent`, `DownloadEvent`,
   `VerificationEvent`. Dropping the future stops the work (no job uses `tokio::spawn`), and

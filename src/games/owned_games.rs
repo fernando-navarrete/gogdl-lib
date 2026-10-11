@@ -24,7 +24,8 @@ struct GogdbDetails {
 /// Keeps the IDs whose lookup succeeded and came back as `type == "game"`.
 /// A failed lookup is dropped silently, whatever the reason (a 404 for a
 /// product gamesdb doesn't know, a transport error, a 5xx): `v1.3.0` changes
-/// that, so it isn't pinned as a contract.
+/// that, so it isn't pinned as a contract. A failure isn't cached, so the
+/// next call looks the product up again.
 fn keep_games(lookups: &[Result<(ProductId, GogdbDetails), GamesError>]) -> Vec<ProductId> {
     lookups
         .iter()
@@ -42,12 +43,30 @@ impl OwnedGames {
     pub async fn get_owned_games(games_manager: &GamesManager) -> Result<OwnedGames, GamesError> {
         let owned_products = games_manager.get_owned_products().await?;
 
-        let owned_games = stream::iter(owned_products.owned)
-            .map(|id| async move {
-                let url = format!(
-                    "https://gamesdb.gog.com/platforms/gog/external_releases/{}",
-                    id
-                );
+        // The lock is held only to split the ids and to store the results,
+        // never across a lookup. Two concurrent calls on a cold cache can
+        // both look up the same id; that costs a request, not correctness.
+        let (cached, missing): (Vec<_>, Vec<_>) = {
+            let lock = games_manager.inner.lock().await;
+            owned_products
+                .owned
+                .iter()
+                .partition(|id| lock.product_types.contains_key(id))
+        };
+        let mut lookups: Vec<Result<(ProductId, GogdbDetails), GamesError>> = {
+            let lock = games_manager.inner.lock().await;
+            cached
+                .into_iter()
+                .map(|id| {
+                    let product_type = lock.product_types[id].clone();
+                    Ok((*id, GogdbDetails { product_type }))
+                })
+                .collect()
+        };
+
+        let fetched = stream::iter(missing)
+            .map(|&id| async move {
+                let url = games_manager.gamesdb_release_url(id);
                 let details: GogdbDetails =
                     games_manager.client.fetch(&url, false, false, None).await?;
                 Ok::<(i32, GogdbDetails), GamesError>((id, details))
@@ -56,7 +75,15 @@ impl OwnedGames {
             .collect::<Vec<_>>()
             .await;
 
-        let owned_games = keep_games(&owned_games);
+        {
+            let mut lock = games_manager.inner.lock().await;
+            for (id, details) in fetched.iter().flatten() {
+                lock.product_types.insert(*id, details.product_type.clone());
+            }
+        }
+        lookups.extend(fetched);
+
+        let owned_games = keep_games(&lookups);
 
         Ok(OwnedGames { owned: owned_games })
     }
@@ -66,6 +93,8 @@ impl OwnedGames {
 mod tests {
     use super::*;
     use crate::ClientError;
+    use crate::client::HttpClient;
+    use crate::test_support::{ChunkServer, Reply};
 
     fn details(json: &str) -> GogdbDetails {
         serde_json::from_str(json).unwrap()
@@ -104,5 +133,29 @@ mod tests {
             Err(GamesError::ProductNotAGame),
         ];
         assert_eq!(keep_games(&lookups), vec![2]);
+    }
+
+    #[tokio::test]
+    async fn type_lookups_are_cached_and_failures_retried() {
+        let game = include_bytes!("../../tests/fixtures/gamesdb_game.json").to_vec();
+        let dlc = include_bytes!("../../tests/fixtures/gamesdb_dlc.json").to_vec();
+        let server = ChunkServer::start().await;
+        let path = |id: i32| format!("/platforms/gog/external_releases/{id}");
+        server.script(&path(1), vec![Reply::Body(game.clone())]);
+        server.script(&path(2), vec![Reply::Body(dlc)]);
+        server.script(&path(3), vec![Reply::Status(503), Reply::Body(game)]);
+
+        let mut manager = GamesManager::new(HttpClient::new_with_client(reqwest::Client::new()));
+        manager.gamesdb_base = server.base_url();
+        manager.inner.lock().await.owned_products.owned = vec![1, 2, 3];
+
+        let first = manager.get_owned_games().await.unwrap();
+        assert_eq!(first.owned, vec![1]);
+        assert_eq!([1, 2, 3].map(|id| server.requests(&path(id))), [1, 1, 1]);
+
+        let mut second = manager.get_owned_games().await.unwrap().owned;
+        second.sort();
+        assert_eq!(second, vec![1, 3]);
+        assert_eq!([1, 2, 3].map(|id| server.requests(&path(id))), [1, 1, 2]);
     }
 }

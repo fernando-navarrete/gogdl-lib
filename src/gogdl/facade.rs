@@ -230,12 +230,12 @@ impl GogDl {
     /// product up on `gamesdb.gog.com` and keeping those whose `type` is
     /// `"game"`.
     ///
-    /// Only the underlying owned-products list is cached (for the lifetime of
-    /// this `GogDl`, after the first successful call). The per-product
-    /// `gamesdb` lookups are **not** cached: every call issues one request per
-    /// owned product, two at a time, so on a large library this is slow —
-    /// cache the result yourself rather than calling it repeatedly. The
-    /// returned IDs are in no particular order.
+    /// The owned-products list is cached for the lifetime of this `GogDl`
+    /// (after the first successful call), and so is each product's `gamesdb`
+    /// type once its lookup succeeds. A repeat call only looks up products
+    /// not yet resolved, two at a time, so only the first call on a large
+    /// library is slow. A failed lookup is not cached and is retried on the
+    /// next call. The returned IDs are in no particular order.
     ///
     /// A product whose `gamesdb` lookup fails (transport error after retries,
     /// a non-2xx status such as a 404 for a product `gamesdb` doesn't know,

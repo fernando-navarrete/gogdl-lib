@@ -10,7 +10,8 @@ every tag is reachable from `main`. Consumer pins: the bridge (`gogdl_flutter`) 
 `get_owned_games` behavior change below with no compile error.
 
 `v1.3.0` is planned in `v1.3.0-LIBRARY.md`: among other things, `get_owned_games` will report failed
-lookups in `OwnedGames.unresolved` instead of dropping them.
+lookups in `OwnedGames.unresolved` instead of dropping them, and `clear_cache` and `remove_products`
+ship with it.
 
 **What changed since the last full pass of this document (`e4596b6`, `v1.0.4`), 13 commits in all:**
 
@@ -220,7 +221,7 @@ The paragraph below is the baseline it started from.)* `cargo build --lib` showe
   Options: fail the whole call on the first non-404 error, or return the unresolved IDs alongside
   the games (e.g. an `unresolved: Vec<ProductId>` field on `OwnedGames`) so callers can decide.
 
-- [ ] **Every `get_owned_games` call re-fetches one `gamesdb` record per owned product.** Only the
+- [x] **Every `get_owned_games` call re-fetches one `gamesdb` record per owned product.** Only the
   underlying `OwnedProducts` list is cached. The type lookups aren't stored on `GamesManagerInner`
   (`src/games/games_manager.rs:23-29`), and they run two at a time (`buffer_unordered(2)`,
   `owned_games.rs:42`). A few-hundred-product library means a few hundred sequential-ish requests
@@ -228,6 +229,10 @@ The paragraph below is the baseline it started from.)* `cargo build --lib` showe
   type doesn't change, so a `HashMap<ProductId, String>` (or `bool`) cache on `GamesManagerInner`,
   like the other per-ID caches there, makes repeat calls free. A failed lookup should not be
   cached, so the item above stays fixable.
+  *(Fixed in `v1.3.0`: `GamesManagerInner.product_types` caches each product's type after a
+  successful lookup; a failed lookup isn't cached and is retried. A test with a fixture server
+  checks the second call makes no request for a resolved product. `clear_cache` (`v1.3.0` step 4) must
+  keep it, per D5.)*
 
 - [ ] **The game/non-game decision rests on an undocumented endpoint and an exact string.**
   `gamesdb.gog.com` is not a documented GOG API, the request is unauthenticated
@@ -240,7 +245,7 @@ The paragraph below is the baseline it started from.)* `cargo build --lib` showe
 ## Medium — library and install management
 
 Both are the bridge's `v1.4.0` requests (its GAPS §7.12–7.13, Lumen's `v1.4.0` D3 and D1), scheduled
-as the additive patches `v1.2.4` and `v1.2.5` (ROADMAP).
+in `v1.3.0` (steps 4–5 of `v1.3.0-LIBRARY.md`; once planned as the patches `v1.2.4` and `v1.2.5`).
 
 - [ ] **Cached library data can't be refreshed.** A `GogDl` memoizes the owned products
   (`OwnedProducts::get_owned_products` re-fetches only while the list is empty,
