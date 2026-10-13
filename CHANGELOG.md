@@ -4,8 +4,23 @@ One section per tag, newest first. Consumers pin this crate by git tag. A change
 behind an unchanged signature is called out as **Behavior change**, and a signature change as
 **Breaking**. The `v0.x` and `-restart` tags predate this file and aren't covered.
 
-## Unreleased
+## 1.3.0
 
+Library and account: what the bridge's `v1.4.0` asks of this crate. **Breaking** (see below), so
+consumers adopt it together with the change that fixes their `match`es and struct literals.
+
+* `GogDl::clear_cache()` drops what can go stale so the next call fetches it again: the owned
+  products, game builds, downloadable products, depot manifests (a large game's are tens of MB) and
+  cloud saves remote configs. It keeps details, links, summary, screenshots, product details, build
+  metadata, each product's `gamesdb` type, secure links and save ids, and leaves auth, the token
+  observer and running jobs alone. Additive.
+* `GogDl::remove_products(game_id, path, build_name, keep, remove)` deletes the files only
+  `remove`'s depots list, never one `keep`'s also list (compared case-insensitively), prunes the
+  directories it emptied and returns a `ProductRemoval { files_removed, bytes_freed }`. An empty
+  `remove` fetches nothing, a missing file counts as removed, a path that would escape `path` is
+  never deleted, and a dropped call is finished by calling it again. A failed delete is the new
+  `FileSystemError::FileRemovalError`. Additive.
+* `RemoteConfig` and its parts are `Clone`.
 * **Behavior change:** `download_game` skips chunks that already verify, so it resumes like
   `repair_game` (the two now run the same pipeline; both are kept). Its events gain a
   `VerificationStage` between allocation and the download stage, `DownloadEvent::Started`'s
@@ -25,6 +40,13 @@ behind an unchanged signature is called out as **Behavior change**, and a signat
   answer is cached like a game's. The saves and download methods that list builds return
   `GamesError(ProductNotAGame)` for a non-game, not `BuildNotFound`. `gamesdb`'s `"game"` is compared
   in one place.
+* `get_owned_games` no longer returns a shorter library on a failed lookup (see the `unresolved`
+  entry above); each product's `gamesdb` type is cached after a successful lookup.
+* Internal: `BuildMetadata` (by build link), `DepotInfo` (by manifest hash) and `RemoteConfig` (by
+  game client) are cached, so `get_product_bundles`, `verify_files`, `download_game`,
+  `repair_game` and the saves methods stop re-fetching them; `clear_cache` drops the last two.
+  Concurrent `get_secure_links` calls for a game share one fetch, and `SecureLinksManager`,
+  `SavesManager` and `DownloadManager` no longer hold their mutex across a network call.
 
 ## 1.2.3
 

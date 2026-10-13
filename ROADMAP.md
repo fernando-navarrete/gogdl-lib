@@ -188,8 +188,8 @@ Work plan: [v1.3.0-LIBRARY.md](v1.3.0-LIBRARY.md). Carries what the bridge's `v1
 for it. The bridge absorbs the breaking parts without changing what Dart sees (a new translator stage
 for `VerificationStage`; `OwnedGames.unresolved`).
 
-- `GogDl::clear_cache()` (bridge §7.12, Lumen D3). Drops the memoized owned products, game builds and
-  downloadable products, keeps the rest, and leaves auth and running jobs alone. Without it, Lumen's
+- `GogDl::clear_cache()` (bridge §7.12, Lumen D3). Drops the memoized owned products, game builds,
+  downloadable products, depot manifests and cloud saves remote configs, keeps the rest, and leaves auth and running jobs alone. Without it, Lumen's
   library refresh re-reads the same owned list (GAPS "Medium — library and install management").
   Additive.
 - `GogDl::remove_products(game_id, path, build_name, keep, remove)` (bridge §7.13, Lumen D1). Deletes
@@ -215,7 +215,8 @@ for `VerificationStage`; `OwnedGames.unresolved`).
   `SecureLinksManager`, `SavesManager` and `DownloadManager` holding their mutex across network calls (GAPS "Medium —
   duplication & consistency", "Medium — cloud saves").
 - Cache `DepotInfo`, `BuildMetadata` and `RemoteConfig`. Each new cache says whether `clear_cache`
-  drops it: data keyed by an immutable id (a build's metadata, a product's type, a manifest's `DepotInfo`) stays, and `RemoteConfig` is dropped.
+  drops it: data keyed by an immutable id (a build's metadata, a product's type) stays; `RemoteConfig`
+  (GOG can edit it) and `DepotInfo` (tens of MB for a large game, measured in step 7) are dropped.
 - `GogDl::logout` is dropped: the bridge no longer needs it (bridge §7.5).
 - **Breaking**: the new `OwnedGames` field and `download_game`'s new stage, for the bridge's
   `v1.4.0` pin (and `lumen-cli`, which gets its first bump since `v1.0.10`).

@@ -327,6 +327,10 @@ release:
 # form. lumen-cli's main still pins gogdl-lib v1.0.4, so until its feature/remote-config is
 # merged, set LUMEN_CLI_REF=feature/remote-config or the job fails on its own old code.
 #
+# Two [patch] sections: lumen-cli pins the GitLab URL, the bridge pins the GitHub mirror's (since
+# its v1.3.3). A [patch] for the wrong URL is only a warning, so with one section the bridge half
+# would test the old tag and pass.
+#
 # Access: one read-only deploy key, enabled on the lumen-cli, gogdl_flutter and gogdl-lib
 # projects (Settings -> Repository -> Deploy keys), stored base64-encoded on one line as
 # `DOWNSTREAM_DEPLOY_KEY_B64` (Settings -> CI/CD -> Variables: Type Variable, masked, NOT
@@ -345,7 +349,7 @@ downstream:
     - when: manual
   allow_failure: true
   variables:
-    LUMEN_CLI_REF: main
+    LUMEN_CLI_REF: feature/remote-config
     BRIDGE_REF: main
     CARGO_NET_GIT_FETCH_WITH_CLI: "true"
     CARGO_TARGET_DIR: "$CI_PROJECT_DIR/.ci/downstream/target"
@@ -374,6 +378,7 @@ downstream:
     - |
       for manifest in .ci/downstream/lumen-cli/Cargo.toml .ci/downstream/gogdl_flutter/rust/Cargo.toml; do
         printf '\n[patch."ssh://git@thinkcentre.home:2200/gogdl/gogdl-lib.git"]\ngogdl-lib = { path = "%s" }\n' "$CI_PROJECT_DIR" >> "$manifest"
+        printf '\n[patch."https://github.com/fernando-navarrete/gogdl-lib.git"]\ngogdl-lib = { path = "%s" }\n' "$CI_PROJECT_DIR" >> "$manifest"
       done
     # The consumers' Cargo.lock still pins the old tag, and cargo ignores a [patch] until the lock
     # is updated ("patch ... was not used in the crate graph"), so re-lock gogdl-lib first.
