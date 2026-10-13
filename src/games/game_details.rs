@@ -8,9 +8,8 @@ use crate::games::{GamesError, GamesManager, owned_products::ProductId};
 pub struct GameDetails {
     /// The game's display title.
     pub title: String,
-    /// Not populated. `#[serde(skip)]` and never assigned after
-    /// deserialization — always `0`. Use the `game_id` you already passed to
-    /// `get_game_details` instead of reading this back.
+    /// The `game_id` passed to `get_game_details`. It isn't part of GOG's
+    /// response, so it is `#[serde(skip)]`: `0` when deserialized directly.
     #[serde(skip)]
     pub id: ProductId,
 }
@@ -47,7 +46,10 @@ impl GameDetails {
 
         let response: DetailsResponse = games_manager.client.fetch(&url, false, true, None).await?;
         let game_details = match response {
-            DetailsResponse::Game(game_details) => Some(game_details),
+            DetailsResponse::Game(mut game_details) => {
+                game_details.id = game_id;
+                Some(game_details)
+            }
             DetailsResponse::NotAGame(_) => None,
         };
 

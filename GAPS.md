@@ -556,9 +556,13 @@ in `v1.3.0` (steps 4–5 of `v1.3.0-LIBRARY.md`; once planned as the patches `v1
   missing ones for `repair_game`). `progress_nets_to_the_compressed_total_with_a_retried_chunk` pins
   that `Progress` minus `ProgressRegression` equals it.
 
-- [ ] **`GameDetails.id` and `GameBuilds.game_title` are `#[serde(skip)]` and never assigned.**
+- [x] **`GameDetails.id` and `GameBuilds.game_title` are `#[serde(skip)]` and never assigned.**
   They are always `0` (`src/games/game_details.rs:14`) and `""` (`src/games/game_build.rs:30`).
   Documented and unchanged. Populate them or drop them.
+
+  Fixed in `v1.3.2`: `GameDetails.id` is set from the requested id before caching.
+  `GameBuilds.game_title` can't be had: the builds listing has no title and a second request isn't
+  worth it, so its removal is scheduled in ROADMAP's `v1.4.0`.
 
 ## Medium — missing coverage
 

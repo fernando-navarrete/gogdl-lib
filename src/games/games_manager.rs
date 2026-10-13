@@ -281,6 +281,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn game_details_carry_the_requested_id() {
+        let server = ChunkServer::start().await;
+        capture_server(&server);
+        let manager = manager_on(&server).await;
+        // Fresh, then cached.
+        assert_eq!(manager.get_game_details(GAME).await.unwrap().id, GAME);
+        assert_eq!(manager.get_game_details(GAME).await.unwrap().id, GAME);
+        assert_eq!(
+            server.requests(&format!("/account/gameDetails/{GAME}.json")),
+            1
+        );
+    }
+
+    #[tokio::test]
     async fn owned_games_agrees_with_the_fetchers() {
         let server = ChunkServer::start().await;
         capture_server(&server);

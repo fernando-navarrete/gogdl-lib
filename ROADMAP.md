@@ -223,8 +223,8 @@ for `VerificationStage`; `OwnedGames.unresolved`).
 
 Follow-up patches (`v1.3.1+`), one per tag:
 1. `v1.3.1`: `GameScreenshots::resolve_links` stops using the magic `formatter.get(2)`.
-2. `v1.3.2`: populate `GameDetails.id` and `GameBuilds.game_title` (if a value needs a second request,
-   move its removal to `v1.4.0` instead and skip the patch).
+2. `v1.3.2`: populate `GameDetails.id`. `GameBuilds.game_title` can't be had without a second
+   request, so its removal is in `v1.4.0`.
 
 ## v1.4.0 — Errors and API cleanup (for bridge `v1.5.0` / Lumen `v1.5.0`)
 
@@ -238,6 +238,7 @@ the bridge migrates once.
   (GAPS "Medium — cloud saves").
 - Discuss deprecating one of `download_game`/`repair_game`, which do the same since `v1.3.0`.
 - Remove `DownloadEvent::Preparing` and `Prepared`, deprecated in `v1.2.3`.
+- **Breaking:** remove `GameBuilds.game_title` (always empty; GOG's builds listing has no title).
 - Remove the dead `Http`/`UrlParseError`/`NetworkError`/`DecodeError`/`DeflateError` variants, and
   `FileSystemError`'s `FileMetadataError` and `FileCreationError`, which no public method returns.
 - Remove `SaveFile::relative_path`, and either export or un-`pub` the path sanitizers from

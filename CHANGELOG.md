@@ -4,6 +4,13 @@ One section per tag, newest first. Consumers pin this crate by git tag. A change
 behind an unchanged signature is called out as **Behavior change**, and a signature change as
 **Breaking**. The `v0.x` and `-restart` tags predate this file and aren't covered.
 
+## 1.3.2
+
+* `GameDetails.id` is the id passed to `get_game_details` (it was always `0`), on the fresh and the
+  cached path. `GameBuilds.game_title` stays empty: GOG's builds listing carries no title, so
+  filling it would take a second request. Its removal moves to `v1.4.0`. A fix; no signature
+  changes.
+
 ## 1.3.1
 
 * `GameScreenshots::resolve_links` picks its formatter by name (`product_card_screenshot_748_2x`)

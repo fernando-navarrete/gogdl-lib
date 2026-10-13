@@ -59,8 +59,10 @@ pub struct GameBuild {
 /// ```
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct GameBuilds {
-    /// Not populated. `#[serde(skip)]` and never assigned after
-    /// deserialization — always the empty string.
+    /// Always the empty string: GOG's builds listing carries no title and
+    /// filling it would take a second request (use
+    /// [`GogDl::get_game_details`](crate::GogDl::get_game_details) for the
+    /// title). Removed in `v1.4.0`.
     #[serde(skip)]
     pub game_title: String,
     /// The number of builds in `items`.
