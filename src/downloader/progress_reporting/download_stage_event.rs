@@ -8,12 +8,11 @@ use crate::downloader::progress_reporting::VerificationEvent;
 /// [`GogDl::repair_game`](crate::GogDl::repair_game), tagging which pipeline
 /// stage an inner event belongs to.
 ///
-/// `download_game` emits, in order: `FileSizeVerificationStage`,
+/// `download_game` and `repair_game` emit, in order: `FileSizeVerificationStage`,
 /// `FileAllocationStage` (then `FileAllocationError` and an early return if
-/// any file failed to allocate), `DownloadStage`. `repair_game` inserts a
-/// `VerificationStage` pass between allocation and the download stage, and
-/// only feeds units that fail verification into `DownloadStage`. Neither
-/// stage set is documented anywhere else — this ordering is the contract.
+/// any file failed to allocate), `VerificationStage`, `DownloadStage`. Only
+/// units that fail verification are fed into `DownloadStage`, and it is
+/// skipped when none do. This ordering is the contract.
 ///
 /// `DownloadStage` may stop partway through: the first chunk that fails
 /// terminally aborts the rest of that stage, so a failed call doesn't imply
@@ -45,7 +44,7 @@ pub enum DownloadStageEvent {
     /// (`set_len` to its final size) before the transfer stage. See
     /// [`FileAllocationEvent`].
     FileAllocationStage(FileAllocationEvent),
-    /// `repair_game` only: an on-disk chunk was checksummed against the
+    /// An on-disk chunk was checksummed against the
     /// manifest to decide whether it needs re-downloading. See
     /// [`VerificationEvent`].
     ///

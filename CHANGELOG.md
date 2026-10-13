@@ -6,6 +6,12 @@ behind an unchanged signature is called out as **Behavior change**, and a signat
 
 ## Unreleased
 
+* **Behavior change:** `download_game` skips chunks that already verify, so it resumes like
+  `repair_game` (the two now run the same pipeline; both are kept). Its events gain a
+  `VerificationStage` between allocation and the download stage, `DownloadEvent::Started`'s
+  `compressed_total` covers only the missing units, and a complete install emits no `DownloadStage`
+  and makes no chunk request. A chunk whose real content is all zeros in a newly allocated range is
+  re-fetched, as `repair_game` already did.
 * **Breaking:** `OwnedGames` gains `unresolved: Vec<ProductId>`, the owned products whose `gamesdb`
   lookup failed (a transport error, any non-2xx including a 404). `get_owned_games` used to drop
   them silently and return a shorter library; it still returns `Ok`, but now `unresolved` says what

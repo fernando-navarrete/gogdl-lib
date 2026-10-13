@@ -24,14 +24,6 @@ use crate::{
     secure_links::SecureLinksManager,
 };
 
-/// Which units `Downloader::pipeline` transfers.
-enum Units {
-    /// Every unit (`download`).
-    All,
-    /// Only those that fail checksum verification (`repair`).
-    Verified,
-}
-
 pub struct Downloader {
     pub client: HttpClient,
     pub secure_links: SecureLinksManager,
@@ -55,27 +47,6 @@ impl Downloader {
             checksums: Arc::default(),
         }
     }
-    /// Downloads every unit of `bundles`, whatever is already on disk.
-    pub async fn download(
-        &self,
-        bundles: Vec<ProductBundle>,
-        path: &str,
-        tx: mpsc::UnboundedSender<DownloadStageEvent>,
-    ) -> Result<(), DownloadError> {
-        self.pipeline(bundles, path, Units::All, tx).await
-    }
-
-    /// Downloads only the units that fail verification, and adds a
-    /// `VerificationStage` to the events.
-    pub async fn repair(
-        &self,
-        bundles: Vec<ProductBundle>,
-        path: &str,
-        tx: mpsc::UnboundedSender<DownloadStageEvent>,
-    ) -> Result<(), DownloadError> {
-        self.pipeline(bundles, path, Units::Verified, tx).await
-    }
-
     /// Runs one stage: hands `run` the sending half of a fresh channel and
     /// forwards what arrives on it to `tx`, wrapped as `wrap`, while `run`
     /// executes. `run` must consume the sender so the channel closes.
@@ -95,14 +66,14 @@ impl Downloader {
         out
     }
 
-    /// The stages `download` and `repair` share: size verification,
-    /// allocation, then (for `Units::Verified`) checksum verification, and
-    /// the transfer.
-    async fn pipeline(
+    /// Brings the install at `path` in line with `bundles`: size
+    /// verification, allocation, checksum verification, then the transfer of
+    /// only the units that fail it. Behind both `download_game` and
+    /// `repair_game`.
+    pub async fn download(
         &self,
         bundles: Vec<ProductBundle>,
         path: &str,
-        units: Units,
         tx: mpsc::UnboundedSender<DownloadStageEvent>,
     ) -> Result<(), DownloadError> {
         let path_resolver = Arc::new(PathResolver::new(PathBuf::from(path)).await?);
@@ -152,52 +123,45 @@ impl Downloader {
         }
         drop(files_allocation_error);
 
-        let download_units = match units {
-            Units::All => DownloadUnit::from_product_bundles(bundles),
-            Units::Verified => {
-                // Units in a range stage 2 just allocated hold zeros and can't
-                // match, so they go straight to the download list without an
-                // MD5. They still get the `ChecksumMismatch` that hashing the
-                // zeros used to produce, so a consumer counting verification
-                // events sees the same number. (A chunk whose real content is
-                // all zeros used to come out `Verified` here, and is now
-                // re-fetched.)
-                let (fresh_units, to_verify): (Vec<_>, Vec<_>) =
-                    DownloadUnit::from_product_bundles(bundles)
-                        .into_iter()
-                        .partition(|unit| {
-                            old_lengths
-                                .get(&unit.path)
-                                .is_some_and(|&old_len| unit.offset >= old_len)
-                        });
-                let fresh = &fresh_units;
-                let resolver = path_resolver.clone();
-                let unverified_units = Self::staged(
-                    &tx,
-                    DownloadStageEvent::VerificationStage,
-                    |stage_tx| async move {
-                        for unit in fresh {
-                            stage_tx
-                                .send(VerificationEvent::ChecksumMismatch(
-                                    unit.path.clone(),
-                                    unit.size,
-                                ))
-                                .ok();
-                        }
-                        self.verify_download_units(to_verify, resolver, stage_tx)
-                            .await
-                    },
-                )
-                .await;
-                let missing_units = [fresh_units, unverified_units].concat();
-
-                if missing_units.is_empty() {
-                    // All units verified, no missing chunks
-                    return Ok(());
+        // Units in a range stage 2 just allocated hold zeros and can't
+        // match, so they go straight to the download list without an MD5.
+        // They still get the `ChecksumMismatch` that hashing the zeros used
+        // to produce, so a consumer counting verification events sees the
+        // same number. (A chunk whose real content is all zeros used to come
+        // out `Verified` here, and is now re-fetched.)
+        let (fresh_units, to_verify): (Vec<_>, Vec<_>) =
+            DownloadUnit::from_product_bundles(bundles)
+                .into_iter()
+                .partition(|unit| {
+                    old_lengths
+                        .get(&unit.path)
+                        .is_some_and(|&old_len| unit.offset >= old_len)
+                });
+        let fresh = &fresh_units;
+        let resolver = path_resolver.clone();
+        let unverified_units = Self::staged(
+            &tx,
+            DownloadStageEvent::VerificationStage,
+            |stage_tx| async move {
+                for unit in fresh {
+                    stage_tx
+                        .send(VerificationEvent::ChecksumMismatch(
+                            unit.path.clone(),
+                            unit.size,
+                        ))
+                        .ok();
                 }
-                missing_units
-            }
-        };
+                self.verify_download_units(to_verify, resolver, stage_tx)
+                    .await
+            },
+        )
+        .await;
+        let download_units = [fresh_units, unverified_units].concat();
+
+        if download_units.is_empty() {
+            // All units verified, no missing chunks
+            return Ok(());
+        }
 
         // Download step
         Self::staged(&tx, DownloadStageEvent::DownloadStage, |stage_tx| {
@@ -936,7 +900,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn repair_after_a_dropped_download_completes_the_install() {
+    async fn download_over_a_half_finished_install_fetches_only_the_missing_chunks() {
         let h = harness(1).await;
         let a = b"the first chunk of the file, done before the drop";
         let b = b"the second chunk, cut off by the drop";
@@ -997,7 +961,7 @@ mod tests {
 
         let (tx, mut rx) = mpsc::unbounded_channel();
         h.downloader
-            .repair(vec![bundle()], h.dir.path().to_str().unwrap(), tx)
+            .download(vec![bundle()], h.dir.path().to_str().unwrap(), tx)
             .await
             .unwrap();
 
@@ -1043,12 +1007,12 @@ mod tests {
         }
     }
 
-    /// Runs `repair` and returns the `(verified, mismatched)` counts of its
+    /// Runs `download` and returns the `(verified, mismatched)` counts of its
     /// verification events.
-    async fn repair_counts(h: &Harness, bundle: ProductBundle) -> (usize, usize) {
+    async fn verification_counts(h: &Harness, bundle: ProductBundle) -> (usize, usize) {
         let (tx, mut rx) = mpsc::unbounded_channel();
         h.downloader
-            .repair(vec![bundle], h.dir.path().to_str().unwrap(), tx)
+            .download(vec![bundle], h.dir.path().to_str().unwrap(), tx)
             .await
             .unwrap();
         let (mut verified, mut mismatched) = (0, 0);
@@ -1067,7 +1031,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn repair_over_an_empty_directory_hashes_nothing() {
+    async fn download_over_an_empty_directory_hashes_nothing() {
         let h = harness(2).await;
         let (a, b, c) = (b"first chunk", b"second chunk", b"another file");
         let chunks = [chunk_of(1, a), chunk_of(2, b), chunk_of(3, c)];
@@ -1082,7 +1046,7 @@ mod tests {
             ("data/other.bin", vec![chunks[2].clone()]),
         ]);
 
-        let counts = repair_counts(&h, bundle).await;
+        let counts = verification_counts(&h, bundle).await;
 
         assert_eq!(
             counts,
@@ -1106,7 +1070,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn repair_hashes_only_below_a_files_old_length() {
+    async fn download_hashes_only_below_a_files_old_length() {
         let h = harness(1).await;
         let (a, b) = (
             b"the chunk that is already on disk",
@@ -1120,7 +1084,8 @@ mod tests {
         let file = h.dir.path().join("game.bin");
         std::fs::write(&file, a).unwrap();
 
-        let counts = repair_counts(&h, bundle_of(vec![("game.bin", vec![chunk_a, chunk_b])])).await;
+        let counts =
+            verification_counts(&h, bundle_of(vec![("game.bin", vec![chunk_a, chunk_b])])).await;
 
         assert_eq!(counts, (1, 1));
         assert_eq!(
@@ -1174,17 +1139,13 @@ mod tests {
         }
     }
 
-    /// Runs `download` (or `repair`) and returns its labelled stage events.
+    /// Runs `download` and returns its labelled stage events.
     /// Runs of `dl:Progress` collapse into one, since where a body is split
     /// into reads isn't deterministic.
-    async fn stages(h: &Harness, repair: bool, bundle: ProductBundle) -> Vec<String> {
+    async fn stages(h: &Harness, bundle: ProductBundle) -> Vec<String> {
         let (tx, mut rx) = mpsc::unbounded_channel();
         let path = h.dir.path().to_str().unwrap();
-        if repair {
-            h.downloader.repair(vec![bundle], path, tx).await.unwrap();
-        } else {
-            h.downloader.download(vec![bundle], path, tx).await.unwrap();
-        }
+        h.downloader.download(vec![bundle], path, tx).await.unwrap();
         let mut labels: Vec<String> = Vec::new();
         while let Ok(event) = rx.try_recv() {
             let label = label(&event);
@@ -1235,43 +1196,12 @@ mod tests {
         let h = harness(1).await;
         let bundle = stage_fixture(&h);
 
-        let labels = stages(&h, false, bundle).await;
+        let labels = stages(&h, bundle).await;
 
-        // No verification stage, and every chunk is transferred, `a.bin`'s
-        // included.
-        assert_eq!(
-            labels,
-            seq(&[
-                "size:Success a.bin",
-                "size:NotFound b.bin",
-                "size:Mismatch c.bin",
-                "alloc:Success b.bin",
-                "alloc:Success c.bin",
-                "dl:Preparing",
-                "dl:Prepared",
-                "dl:Started",
-                "dl:Downloading",
-                "dl:Progress",
-                "dl:Downloading",
-                "dl:Progress",
-                "dl:Downloading",
-                "dl:Progress",
-                "dl:Downloading",
-                "dl:Progress",
-            ])
-        );
-    }
-
-    #[tokio::test]
-    async fn repair_stage_sequence() {
-        let h = harness(1).await;
-        let bundle = stage_fixture(&h);
-
-        let labels = stages(&h, true, bundle).await;
-
-        // The chunks past each file's old length come first (they were just
-        // allocated, so they aren't hashed), then the hashed ones. Only the
-        // two missing chunks are transferred.
+        // `download_game` and `repair_game` both run this. The chunks past
+        // each file's old length come first (they were just allocated, so
+        // they aren't hashed), then the hashed ones. Only the two missing
+        // chunks are transferred.
         assert_eq!(
             labels,
             seq(&[
@@ -1296,43 +1226,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn repair_of_a_complete_install_emits_no_download_stage() {
+    async fn download_of_a_complete_install_emits_no_download_stage() {
         let h = harness(1).await;
         let raw = b"the complete file";
         let chunk = chunk_of(1, raw);
+        let path = chunk_path(&chunk.compressed_md5);
         std::fs::write(h.dir.path().join("a.bin"), raw).unwrap();
 
-        let labels = stages(&h, true, bundle_of(vec![("a.bin", vec![chunk])])).await;
+        let labels = stages(&h, bundle_of(vec![("a.bin", vec![chunk])])).await;
 
         assert_eq!(
             labels,
             seq(&["size:Success a.bin", "verify:Verified a.bin"])
         );
-    }
-
-    #[tokio::test]
-    async fn download_of_a_complete_install_still_downloads_everything() {
-        let h = harness(1).await;
-        let raw = b"the complete file";
-        let chunk = chunk_of(1, raw);
-        let path = chunk_path(&chunk.compressed_md5);
-        h.server.script(&path, vec![Reply::Body(zlib(raw))]);
-        std::fs::write(h.dir.path().join("a.bin"), raw).unwrap();
-
-        let labels = stages(&h, false, bundle_of(vec![("a.bin", vec![chunk])])).await;
-
-        assert_eq!(
-            labels,
-            seq(&[
-                "size:Success a.bin",
-                "dl:Preparing",
-                "dl:Prepared",
-                "dl:Started",
-                "dl:Downloading",
-                "dl:Progress",
-            ])
-        );
-        assert_eq!(h.server.requests(&path), 1);
+        assert_eq!(h.server.requests(&path), 0);
     }
 
     /// A clear while a chunk is in flight changes nothing for the download:

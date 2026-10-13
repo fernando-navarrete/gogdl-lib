@@ -432,15 +432,14 @@ in `v1.3.0` (steps 4–5 of `v1.3.0-LIBRARY.md`; once planned as the patches `v1
   stage sequence (`download_stage_sequence`, `repair_stage_sequence`, and the complete-install pair),
   written before the refactor and unchanged after it.
 
-- [ ] **`download` re-downloads every chunk regardless of what's already correct on disk, so `repair`
-  is the crate's only resume path.** `download` computes `missing_files`, then builds the transfer
-  list from `DownloadUnit::from_product_bundles(bundles)` (`src/downloader/engine.rs:207`). That
-  list covers every chunk of every file, including files that just verified as complete. Behavior
-  is unchanged. The rustdoc on `GogDl::download_game`/`repair_game` says which one resumes.
+- [x] **`download` re-downloads every chunk regardless of what's already correct on disk, so `repair`
+  is the crate's only resume path.** `download` built the transfer list from
+  `DownloadUnit::from_product_bundles(bundles)`, every chunk of every file, including files that
+  just verified as complete.
 
-  Deferred to `v1.3.0` (ROADMAP): skipping verified chunks adds a `VerificationStage` to
-  `download_game`'s events, a behavior change, so it can't ship in a `v1.2.x` patch. Until then
-  `repair_game` is the resume path.
+  *(Fixed in `v1.3.0`: `download` runs the verified pipeline `repair` did, so `download_game` and
+  `repair_game` are the same operation and both resume. `download_game`'s events gain a
+  `VerificationStage`, a behavior change.)*
 
 - [x] **`repair` checksums the chunks of files it has just allocated.** Stage 2 allocates every file
   that failed size verification (`set_len`, `src/fs/path_resolver.rs:81`). Stage 3 then MD5s

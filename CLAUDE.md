@@ -55,7 +55,7 @@ drains concurrently.
   `clear_cache` drops the owned products, game builds, downloadable products, depot manifests
   (for memory: a large game's are tens of MB) and cloud saves remote configs, and keeps the rest (details, links, summary, screenshots, product details, build metadata, the `gamesdb` types, secure links, save
   ids), auth and running jobs.
-- **Downloads:** `download_game` re-transfers everything; `repair_game` is the resume path;
+- **Downloads:** `download_game` and `repair_game` do the same (verify, then transfer only what is missing, so both resume);
   `get_product_bundles` isn't cached, but the depot manifests it fetches are, by hash, until
   `clear_cache`. Events: `DownloadStageEvent`, `DownloadEvent`,
   `VerificationEvent`. Dropping the future stops the work (no job uses `tokio::spawn`), and

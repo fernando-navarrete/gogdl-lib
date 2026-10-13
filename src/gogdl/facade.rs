@@ -456,20 +456,25 @@ impl GogDl {
         self.downloader.verify_download(bundles, path, tx).await?;
         Ok(())
     }
-    /// Downloads every chunk of `bundles` into `path` from scratch.
+    /// Installs `bundles` into `path`, transferring only the chunks that are
+    /// missing or fail their checksum.
     ///
-    /// **This does not resume.** Unlike [`repair_game`](Self::repair_game),
-    /// this re-transfers every chunk of every file in `bundles` regardless of
-    /// what is already correct on disk — including files left complete by a
-    /// previous, interrupted run. To resume an interrupted install, call
-    /// [`repair_game`](Self::repair_game) instead; it only re-downloads
-    /// chunks that fail verification.
+    /// **This resumes.** Since `v1.3.0` it verifies what is already on disk
+    /// first, so calling it again on an interrupted install continues it
+    /// without re-transferring correct data, and on a complete install it
+    /// transfers nothing. It is the same operation as
+    /// [`repair_game`](Self::repair_game); both are kept.
     ///
     /// Internally runs, in order: a file-size verification pass, disk-space
-    /// and file-allocation, then the chunk downloads — reported on `tx` as
+    /// and file-allocation, a checksum verification pass, then the chunk
+    /// downloads — reported on `tx` as
     /// [`DownloadStageEvent::FileSizeVerificationStage`],
-    /// [`FileAllocationStage`](DownloadStageEvent::FileAllocationStage) and
-    /// [`DownloadStage`](DownloadStageEvent::DownloadStage) respectively.
+    /// [`FileAllocationStage`](DownloadStageEvent::FileAllocationStage),
+    /// [`VerificationStage`](DownloadStageEvent::VerificationStage) (one
+    /// [`VerificationEvent`] per chunk; chunks that file allocation just
+    /// created as zeros are reported without being read) and
+    /// [`DownloadStage`](DownloadStageEvent::DownloadStage) respectively. The
+    /// download stage is skipped when every chunk verifies.
     /// Each chunk transport failure retries up to 6 times and each MD5
     /// mismatch up to 3 times, both with jittered exponential backoff; see
     /// [`crate::DownloadEvent`] for what the download stage reports as it goes.
@@ -485,8 +490,8 @@ impl GogDl {
     /// — and units not yet started are never attempted. The error this
     /// method returns is whichever unit failed first in *time*, not
     /// necessarily first in `bundles`' order, so a failed call leaves an
-    /// install in an indeterminate partial state; call
-    /// [`repair_game`](Self::repair_game) afterwards to resume.
+    /// install in an indeterminate partial state; call this method again
+    /// (or [`repair_game`](Self::repair_game)) to resume.
     ///
     /// Resolves only once the whole transfer finishes or fails — drain `tx`'s
     /// paired receiver concurrently on another task.
@@ -499,8 +504,9 @@ impl GogDl {
     /// [`DownloadEvent::ProgressRegression`](crate::DownloadEvent::ProgressRegression).
     /// Nothing is cleaned up: files stay allocated at full size, chunks
     /// already written stay, and a chunk that was mid-transfer may be
-    /// partially written. Call [`repair_game`](Self::repair_game) to continue;
-    /// it checksums every chunk and fetches only the ones that are wrong. A
+    /// partially written. Call this method again (or
+    /// [`repair_game`](Self::repair_game)) to continue; it checksums every
+    /// chunk and fetches only the ones that are wrong. A
     /// disk write already handed to tokio's blocking pool may complete just
     /// after the drop, and nothing else outlives it.
     ///
@@ -544,19 +550,12 @@ impl GogDl {
     /// Verifies `bundles` against what's on disk under `path`, then
     /// downloads only the chunks that are missing or fail their checksum.
     ///
-    /// **This is the resume path.** Since this crate has no separate
-    /// pause/resume mechanism, calling this on a partially-downloaded
-    /// install (e.g. after [`download_game`](Self::download_game) was
-    /// interrupted) is how you continue it without re-transferring
-    /// already-correct data.
-    ///
-    /// Reports the same stages as [`download_game`](Self::download_game),
-    /// plus an extra [`DownloadStageEvent::VerificationStage`] pass (one
-    /// [`VerificationEvent`] per chunk) between file allocation and the
-    /// download stage. Chunks that file allocation just created as zeros are
-    /// reported without being read; see
-    /// [`DownloadStageEvent::VerificationStage`]. Same retry policy as
-    /// `download_game`.
+    /// Since `v1.3.0` this does exactly what
+    /// [`download_game`](Self::download_game) does, with the same events, so
+    /// either continues an interrupted install without re-transferring
+    /// already-correct data. See
+    /// [`DownloadStageEvent::VerificationStage`] for how chunks that file
+    /// allocation just created as zeros are reported.
     ///
     /// Resolves only once the whole operation finishes or fails — drain
     /// `tx`'s paired receiver concurrently on another task.

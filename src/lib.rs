@@ -22,9 +22,9 @@
 //! a display rate you choose is the consumer's job, not this crate's; see
 //! [`DownloadEvent::Progress`].
 //!
-//! `download_game` and [`GogDl::repair_game`] have identical signatures but
-//! are not interchangeable — see their doc comments for which one resumes an
-//! interrupted install.
+//! `download_game` and [`GogDl::repair_game`] have identical signatures and,
+//! since `v1.3.0`, do the same thing: both verify what is on disk and resume
+//! an interrupted install.
 //!
 //! # Errors
 //!
