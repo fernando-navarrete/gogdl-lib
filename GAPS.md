@@ -1,17 +1,16 @@
 # GAPS.md
 
-Open findings for `gogdl-lib`. Current tree: **`main`**, `Cargo.toml` at `1.2.3`. The newest tag is **`v1.2.3`**. `v1.1.6` and
+Open findings for `gogdl-lib`. Current tree: **`main`**, `Cargo.toml` at `1.3.2`. The newest tag is **`v1.3.2`**. `v1.1.6` and
 `v1.2.0`–`v1.2.3` were cut on `feat/v1.2.0-download-management`, which has been fast-forwarded into
 `main`. Their decisions are in `devlog/v1.2.0-download-management.md` (`v1.1.x`: `devlog/v1.1.0-foundation.md`; CI/CD:
-`devlog/v1.2.x-ci-cd.md`). `v1.0.11` (`d5b43e6`) includes the owned-products
+`devlog/v1.2.x-ci-cd.md`; `v1.3.0`–`v1.3.2`: `devlog/v1.3.0-library.md`). `v1.0.11` (`d5b43e6`) includes the owned-products
 rename (`d6dbdc5`) and the owned-games filter (`e032b7d`). `feature/saves` was merged into `main`, so
-every tag is reachable from `main`. Consumer pins: the bridge (`gogdl_flutter`) is on `v1.2.3`, and
-**`lumen-cli`** is on **`v1.0.10`** (`Cargo.toml:12`), so its next bump picks up the
-`get_owned_games` behavior change below with no compile error.
+every tag is reachable from `main`. Consumer pins: the bridge (`gogdl_flutter`) is on `v1.2.3` until its `v1.4.0`, and
+**`lumen-cli`** is on **`v1.0.10`** (`feature/remote-config`; its `main` is on `v1.0.4`), so its next bump
+needs the `_ => {}` arms recorded in the `v1.3.0` devlog.
 
-`v1.3.0` is planned in `v1.3.0-LIBRARY.md`: among other things, `get_owned_games` will report failed
-lookups in `OwnedGames.unresolved` instead of dropping them, and `clear_cache` and `remove_products`
-ship with it.
+`v1.3.0`–`v1.3.2` shipped: `get_owned_games` reports failed lookups in `OwnedGames.unresolved`, and
+`clear_cache` and `remove_products` exist. See `devlog/v1.3.0-library.md`.
 
 **What changed since the last full pass of this document (`e4596b6`, `v1.0.4`), 13 commits in all:**
 
@@ -175,7 +174,7 @@ The paragraph below is the baseline it started from.)* `cargo build --lib` showe
 
   `DownloadManager` has it three times: `get_build_metadata` (`src/downloader/download_manager.rs:56-67`),
   the `get_depot_info` loop in `product_bundle.rs:68-71` and `get_owned_products` in
-  `downloadable_product.rs:56-59`. Same fix, planned for `v1.3.0` step 1 (`v1.3.0-LIBRARY.md`).
+  `downloadable_product.rs:56-59`. Same fix, fixed in `v1.3.0`.
   *(Fixed in `v1.3.0`: `SavesManager`, `DownloadManager` and `SecureLinksManager` hold their
   `DepotManager`, `GamesManager` and `SecureLinksManager` handles directly, outside the mutex, which
   now guards only caches. No lock is held across a fetch; a test per manager holds the games
@@ -249,7 +248,7 @@ The paragraph below is the baseline it started from.)* `cargo build --lib` showe
 ## Medium — library and install management
 
 Both are the bridge's `v1.4.0` requests (its GAPS §7.12–7.13, Lumen's `v1.4.0` D3 and D1), scheduled
-in `v1.3.0` (steps 4–5 of `v1.3.0-LIBRARY.md`; once planned as the patches `v1.2.4` and `v1.2.5`).
+in `v1.3.0` (once planned as the patches `v1.2.4` and `v1.2.5`).
 
 - [x] **Cached library data can't be refreshed.** A `GogDl` memoizes the owned products
   (`OwnedProducts::get_owned_products` re-fetches only while the list is empty,
@@ -766,7 +765,8 @@ the inverted margin's `map_or` spelling, not its direction.
 - [ ] **Renovate's Rust install is unobserved.** `constraints.rust` pins it, and MR 15's rewritten
   `Cargo.lock` shows cargo ran, but no log shows the version or install time. Set `LOG_LEVEL=debug` on
   the schedule for the run that opens the first toolchain MR or the next weekly MR.
-- [ ] **The `release` job's `needs` and on-`main` rule are untested.** First exercised by `v1.3.0`.
+- [x] **The `release` job's `needs` and on-`main` rule are untested.** *(Fixed in `v1.3.0`: the tag
+  pipelines for `v1.3.0`–`v1.3.2` passed the on-`main` check and created their releases.)* First exercised by `v1.3.0`.
   The same job in gogdl_flutter ran first, for its `v1.3.1`: it failed because the `git fetch` of
   `main` ran before the private CA was trusted. Reordered here too; gogdl_flutter's `v1.3.2` release
   went green with the fix.

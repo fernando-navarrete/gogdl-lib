@@ -10,9 +10,8 @@ numbered.
 - **Patch** (`1.x.y`): one tag per small, self-contained fix or addition.
 - **Minor** (`1.x.0`): a big update, meaning a feature set or cross-cutting refactor. Patches then
   continue from `.1` under that minor.
-- Tags use the existing `vX.Y.Z` format. `v1.1.0`–`v1.1.6` and `v1.2.0`–`v1.2.3` shipped. Next is
-  the stage **`v1.3.0`**, which also carries the two methods the bridge's `v1.4.0` needs. There is no
-  `v1.2.4` or `v1.2.5`. The old `-restart`/`-debug` tags stay, but nothing new is tagged that way.
+- Tags use the existing `vX.Y.Z` format. `v1.1.0`–`v1.1.6`, `v1.2.0`–`v1.2.3` and `v1.3.0`–`v1.3.2` shipped. Next is
+  the stage **`v1.4.0`**. There is no `v1.2.4` or `v1.2.5` (`clear_cache` and `remove_products` rode `v1.3.0`). The old `-restart`/`-debug` tags stay, but nothing new is tagged that way.
 - For each release, on a release branch: bump `version` in `Cargo.toml` to match the tag (the
   `v1.0.1` mismatch in GAPS "Low — style / clippy" must not happen again), tick the item(s) in
   `GAPS.md`, add a `CHANGELOG.md` entry. Open an MR titled `vX.Y.Z: ...`, merge it once green, then
@@ -29,12 +28,13 @@ numbered.
 
 Three repos depend on `gogdl-lib`:
 
-- **`gogdl_flutter`** (the Flutter/Rust bridge) pins `v1.2.3`, from the GitHub mirror. Its GAPS §7
+- **`gogdl_flutter`** (the Flutter/Rust bridge) pins `v1.2.3`, from the GitHub mirror, until its `v1.4.0` takes `v1.3.x`. Its GAPS §7
   is the list of requests it makes here, its `ROADMAP.md` orders them by the Lumen stage that needs
   them, and its `v1.4.0-LIBRARY-AND-ACCOUNT.md` is the plan for its current stage.
 - **Lumen** uses this crate only through the bridge. Its `v1.3.0-DOWNLOAD-MANAGEMENT.md` listed
   requests D4–D6 here, and its `v1.4.0-LIBRARY.md` ("Dependency changes") lists D1 and D3.
-- **`lumen-cli`** pins `v1.0.10` and exercises this crate directly. It has no roadmap of its own: it
+- **`lumen-cli`** pins `v1.0.10` on `feature/remote-config` (its `main` is on `v1.0.4`) and exercises this
+  crate directly. Its bump to `v1.3.x` needs the `_ => {}` arms recorded in the `v1.3.0` devlog. It has no roadmap of its own: it
   follows the newest tag and shows what works. Bumping it is the smoke test for each release.
 
 So every release after the foundation is ordered by the bridge release that needs it
@@ -47,7 +47,7 @@ later as its own patch.
 |---|---|---|---|
 | (none, internal) | `v1.2.0` ✅ | Test-constructible types (§7.1) | `v1.1.0` ✅ |
 | `v1.3.0` Download management | `v1.3.0` | Cancel-safe contract (§7.2), download error kinds (§7.3), free-space query and mount fix (§7.4, D4, D5), no save truncation (§7.6 part), per-product sizes (§7.10), Proton cleanup on failure (D6) | `v1.2.0` ✅ |
-| `v1.4.0` Library and account | `v1.4.0` | `clear_cache` (§7.12, D3), `remove_products` (§7.13, D1); also absorbs, without a Dart change, owned games that don't silently shrink, `download_game` skipping verified chunks, cheaper lookups | `v1.3.0` |
+| `v1.4.0` Library and account | `v1.4.0` | `clear_cache` (§7.12, D3), `remove_products` (§7.13, D1); also absorbs, without a Dart change, owned games that don't silently shrink, `download_game` skipping verified chunks, cheaper lookups | `v1.3.0` ✅ |
 | `v1.5.0` UI polish and packaging | `v1.5.0` | Login error kinds (§7.3 auth part), breaking error and API cleanup | `v1.4.0` |
 | `v1.6.0` Extras | — | Nothing | — |
 | Not on Lumen's roadmap yet (cloud saves) | `v1.6.0` | Save sync metadata, `cloudStorage.enabled`, file subsets (§7.6) | `v1.5.0` |
@@ -64,8 +64,7 @@ methods that exist here.
 
 **Settled (revised 2026-10-11):** the bridge's `v1.4.0` plan (its D1) leaves to this repo whether
 `clear_cache` and `remove_products` ride `v1.3.0` or ship ahead of it. They were planned as the
-additive patches `v1.2.4` and `v1.2.5`, then folded into `v1.3.0` (`v1.3.0-LIBRARY.md` D1, steps
-4–5). So the bridge's `v1.4.0` pins `v1.3.0` and absorbs its breaking parts there, and Lumen's
+additive patches `v1.2.4` and `v1.2.5`, then folded into `v1.3.0` (`devlog/v1.3.0-library.md`, D1). So the bridge's `v1.4.0` pins `v1.3.0` and absorbs its breaking parts there, and Lumen's
 Phase 6 waits for `v1.3.0`'s scope.
 
 **Settled:** Lumen's plan lists D4/D5 (free space) as blocking, while the bridge's `v1.3.0` plan ships
@@ -181,9 +180,9 @@ Follow-up patches (`v1.2.1+`), one per tag:
 
 The `v1.2.4` (`clear_cache`) and `v1.2.5` (`remove_products`) once planned here moved into `v1.3.0`.
 
-## v1.3.0 — Library and account (for bridge `v1.4.0` / Lumen `v1.4.0`)
+## v1.3.0 — Library and account (for bridge `v1.4.0` / Lumen `v1.4.0`) ✅
 
-Work plan: [v1.3.0-LIBRARY.md](v1.3.0-LIBRARY.md). Carries what the bridge's `v1.4.0` asks for
+Decisions and pitfalls: [devlog/v1.3.0-library.md](devlog/v1.3.0-library.md). Shipped as `v1.3.0`–`v1.3.2`. Carries what the bridge's `v1.4.0` asks for
 (`clear_cache`, `remove_products`, once planned as `v1.2.4`–`v1.2.5`), so the bridge's `v1.4.0` waits
 for it. The bridge absorbs the breaking parts without changing what Dart sees (a new translator stage
 for `VerificationStage`; `OwnedGames.unresolved`).
