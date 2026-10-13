@@ -1,0 +1,48 @@
+{
+  "_embedded": {
+    "screenshots": [
+      {
+        "_links": {
+          "self": {
+            "href": "https://images.gog-statics.com/47bafd0276592912baca53ab789412d1b3545fa59d1f90bd94fa374779fb57e3_{formatter}.jpg",
+            "templated": true,
+            "formatters": [
+              "product_card_screenshot_112",
+              "product_card_screenshot_748",
+              "product_card_screenshot_748_2x",
+              "1600"
+            ]
+          }
+        }
+      },
+      {
+        "_links": {
+          "self": {
+            "href": "https://images.gog-statics.com/62ab6078ac1da04100ec63a9b5577dbd596aa69afcfac55b3f2a5c7d9035afb6_{formatter}.jpg",
+            "templated": true,
+            "formatters": [
+              "product_card_screenshot_112",
+              "product_card_screenshot_748",
+              "product_card_screenshot_748_2x",
+              "1600"
+            ]
+          }
+        }
+      },
+      {
+        "_links": {
+          "self": {
+            "href": "https://images.gog-statics.com/c1b02c8693cccf406323743a4393e3165b3a02c69724c8b2c9acd50785d84486_{formatter}.jpg",
+            "templated": true,
+            "formatters": [
+              "product_card_screenshot_112",
+              "product_card_screenshot_748",
+              "product_card_screenshot_748_2x",
+              "1600"
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

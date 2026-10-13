@@ -536,9 +536,13 @@ in `v1.3.0` (steps 4–5 of `v1.3.0-LIBRARY.md`; once planned as the patches `v1
   reads only the Windows section (`remote_config.rs:63-73,90-99`). The saves side is consistent with
   the Wine-prefix design, but a native Linux build's saves are unreachable.
 
-- [ ] **`GameScreenshots::resolve_links` picks a magic formatter index.** `formatter.get(2)`
+- [x] **`GameScreenshots::resolve_links` picks a magic formatter index.** `formatter.get(2)`
   (`src/games/game_screenshots.rs:87`), with no explanation, silently drops the screenshot if fewer
   than 3 formatters exist.
+
+  Fixed in `v1.3.1`: the formatter is chosen by name (`product_card_screenshot_748_2x`, which is
+  what index 2 was for every product sampled), falls back to the last one listed, and only a link
+  with no formatter at all is dropped.
 
 - [x] **`DownloadEvent::Progress` reports compressed wire bytes while every sizing event reports
   uncompressed bytes.** `download_files` reports raw zlib `Bytes` frame lengths into `Progress`

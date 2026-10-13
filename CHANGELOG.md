@@ -4,6 +4,14 @@ One section per tag, newest first. Consumers pin this crate by git tag. A change
 behind an unchanged signature is called out as **Behavior change**, and a signature change as
 **Breaking**. The `v0.x` and `-restart` tags predate this file and aren't covered.
 
+## 1.3.1
+
+* `GameScreenshots::resolve_links` picks its formatter by name (`product_card_screenshot_748_2x`)
+  instead of `formatters.get(2)`. A link that doesn't list it uses its last formatter (GOG lists
+  them smallest to largest) instead of being dropped; only a templated link with no formatter at
+  all is dropped. The resolved URLs are unchanged for every product sampled, whose links all list
+  the same four formatters. A fix; no signature changes.
+
 ## 1.3.0
 
 Library and account: what the bridge's `v1.4.0` asks of this crate. **Breaking** (see below), so
