@@ -196,7 +196,11 @@ fn auth_error(e: &AuthError) {
         | AuthError::TokenExpired
         | AuthError::AuthDecodeError(..)
         | AuthError::AuthEncodeError(..)
-        | AuthError::ClientError { .. } => {}
+        | AuthError::InvalidLoginCode { .. }
+        | AuthError::SessionRevoked { .. }
+        | AuthError::NetworkError(..)
+        | AuthError::Rejected { .. }
+        | AuthError::InvalidResponse(..) => {}
     }
 }
 

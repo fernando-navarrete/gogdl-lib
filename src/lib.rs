@@ -34,7 +34,10 @@
 //! [`ProtonError`] — all re-exported here so you can match on them). Auth
 //! failures usually arrive nested, e.g.
 //! `GogDlError::ClientError(ClientError::AuthError(_))`, since there is no
-//! flattened top-level auth variant.
+//! flattened top-level auth variant. Any authenticated method can return
+//! [`AuthError::SessionRevoked`] (the refresh token is dead: log in again),
+//! and [`GogDl::login_with_code`] returns [`AuthError::InvalidLoginCode`]
+//! for a wrong or expired code.
 //!
 //! The exception is cloud saves: [`GogDl::get_save_files`],
 //! [`GogDl::get_remote_config`], [`GogDl::download_save_files`] and

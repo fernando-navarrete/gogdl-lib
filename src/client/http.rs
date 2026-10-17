@@ -11,7 +11,7 @@ use crate::{
     client::retry::{MAX_ATTEMPTS, retry_or_return},
     client::{
         TokenObserver,
-        auth::{AuthError, AuthManager},
+        auth::{AuthError, AuthManager, TokenFailure},
         error::ClientError,
     },
 };
@@ -27,6 +27,13 @@ impl HttpClient {
         Self {
             client,
             auth_manager: AuthManager::new(),
+        }
+    }
+    #[cfg(test)]
+    pub fn with_auth_manager(client: Client, auth_manager: AuthManager) -> Self {
+        Self {
+            client,
+            auth_manager,
         }
     }
     pub async fn fetch_no_retry<T: DeserializeOwned>(
@@ -74,36 +81,25 @@ impl HttpClient {
     /// Credentials belong in `form`, not in `url`. Every `reqwest::Error` is
     /// stripped of its URL before it is returned, so no error from here can
     /// print a secret, even one a caller put in the query string.
-    pub async fn post_token<T: DeserializeOwned>(
+    pub(crate) async fn post_token<T: DeserializeOwned>(
         &self,
         url: &str,
         form: &[(&str, &str)],
-    ) -> Result<T, ClientError> {
-        let url = reqwest::Url::parse(url)?;
+    ) -> Result<T, TokenFailure> {
+        let network = |e: reqwest::Error| TokenFailure::Network(e.without_url());
         let response = self
             .client
             .post(url)
             .form(form)
             .send()
             .await
-            .map_err(|e| ClientError::NetworkError(e.without_url()))?;
-
-        if !response.status().is_success() {
-            let response_status = response.status();
-            let response_text = response
-                .text()
-                .await
-                .map_err(|e| ClientError::NetworkError(e.without_url()))?;
-            return Err(ClientError::HttpError {
-                status: response_status,
-                body: response_text,
-            });
+            .map_err(network)?;
+        let status = response.status();
+        let text = response.text().await.map_err(network)?;
+        if !status.is_success() {
+            return Err(TokenFailure::Status { status, body: text });
         }
-        let response_text = response
-            .text()
-            .await
-            .map_err(|e| ClientError::NetworkError(e.without_url()))?;
-        Ok(serde_json::from_str(&response_text)?)
+        serde_json::from_str(&text).map_err(TokenFailure::Decode)
     }
     pub async fn stream_chunk<'a>(
         &'a self,
@@ -450,9 +446,59 @@ mod tests {
             .await
             .err()
             .unwrap();
-        assert!(matches!(err, ClientError::NetworkError(_)));
-        for text in [err.to_string(), format!("{err:?}")] {
+        assert!(matches!(err, TokenFailure::Network(_)));
+        let TokenFailure::Network(e) = err else {
+            unreachable!()
+        };
+        for text in [e.to_string(), format!("{e:?}")] {
             assert!(!text.contains("URL-SENTINEL"), "leaked: {text}");
+        }
+    }
+
+    // A dead refresh token reaches the caller of an authenticated fetch as
+    // `SessionRevoked`, whether the access token expired locally or the
+    // resource answered 401.
+    #[tokio::test]
+    async fn a_dead_session_surfaces_from_an_authenticated_fetch() {
+        let fixture = include_str!("../../tests/fixtures/token_error_refresh_garbage.json");
+        for (valid_until, resource_requests) in [(0, 0), (i64::MAX, 1)] {
+            let server = ChunkServer::start().await;
+            server.script(
+                "/token",
+                vec![Reply::StatusBody(400, fixture.as_bytes().to_vec())],
+            );
+            server.script("/rel", vec![Reply::Status(401)]);
+            let client = HttpClient::with_auth_manager(
+                reqwest::Client::new(),
+                AuthManager::with_token_url(format!("{}/token", server.base_url())),
+            );
+            let auth = crate::Auth::from_string(&format!(
+                r#"{{"access_token":"a","refresh_token":"r","expires_in":3600,"token_type":"bearer","session_id":"s","user_id":"1","valid_until":{valid_until}}}"#
+            ))
+            .unwrap();
+            client
+                .restore_auth_from_string(&auth.to_string().unwrap())
+                .await
+                .unwrap();
+            let err = client
+                .fetch::<serde_json::Value>(
+                    &format!("{}/rel", server.base_url()),
+                    false,
+                    true,
+                    None,
+                )
+                .await
+                .err()
+                .unwrap();
+            assert!(
+                matches!(
+                    err,
+                    ClientError::AuthError(AuthError::SessionRevoked { .. })
+                ),
+                "{err:?}"
+            );
+            assert_eq!(server.requests("/token"), 1);
+            assert_eq!(server.requests("/rel"), resource_requests);
         }
     }
 }

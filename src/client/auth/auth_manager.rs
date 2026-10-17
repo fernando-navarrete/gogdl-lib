@@ -4,8 +4,8 @@ use tokio::sync::Mutex;
 
 use crate::{
     client::{
-        ClientError, HttpClient,
-        auth::{Auth, AuthError, TokenObserver},
+        HttpClient,
+        auth::{Auth, AuthError, Grant, TokenObserver},
     },
     constants::{CLIENT_ID, CLIENT_SECRET, LOGIN_URL, REDIRECT_URI, TOKEN_URL},
 };
@@ -14,6 +14,7 @@ use crate::{
 pub struct AuthManager {
     inner: Arc<Mutex<AuthManagerInner>>,
     refresh_lock: Arc<Mutex<()>>,
+    token_url: String,
 }
 
 pub struct AuthManagerInner {
@@ -29,6 +30,14 @@ impl AuthManager {
                 token_observer: None,
             })),
             refresh_lock: Arc::new(Mutex::new(())),
+            token_url: TOKEN_URL.to_string(),
+        }
+    }
+    #[cfg(test)]
+    pub fn with_token_url(url: String) -> Self {
+        Self {
+            token_url: url,
+            ..Self::new()
         }
     }
     pub fn get_login_url(&self) -> &str {
@@ -47,11 +56,11 @@ impl AuthManager {
     ) -> Result<String, AuthError> {
         let auth = Self::exchange(
             client,
-            TOKEN_URL,
+            &self.token_url,
+            Grant::AuthorizationCode,
             &[
                 ("client_id", CLIENT_ID),
                 ("client_secret", CLIENT_SECRET),
-                ("grant_type", "authorization_code"),
                 ("code", code),
                 ("redirect_uri", REDIRECT_URI),
             ],
@@ -94,11 +103,11 @@ impl AuthManager {
 
         let auth = Self::exchange(
             client,
-            TOKEN_URL,
+            &self.token_url,
+            Grant::RefreshToken,
             &[
                 ("client_id", CLIENT_ID),
                 ("client_secret", CLIENT_SECRET),
-                ("grant_type", "refresh_token"),
                 ("refresh_token", &tokens.refresh_token),
             ],
         )
@@ -121,20 +130,19 @@ impl AuthManager {
     /// POSTs a token grant to `url` and stamps `valid_until`. The grant goes
     /// in a form body and the transport error has its URL stripped, so
     /// neither the code nor the refresh token can reach an error string.
+    /// A failure is classified by `grant` (see [`AuthError::from_token_failure`]).
     async fn exchange(
         client: &HttpClient,
         url: &str,
+        grant: Grant,
         form: &[(&str, &str)],
     ) -> Result<Auth, AuthError> {
-        let mut auth: Auth = match client.post_token(url, form).await {
-            Ok(auth) => auth,
-            Err(ClientError::AuthError(e)) => return Err(e),
-            Err(e) => {
-                return Err(AuthError::ClientError {
-                    inner: e.to_string(),
-                });
-            }
-        };
+        let mut form = form.to_vec();
+        form.push(("grant_type", grant.as_str()));
+        let mut auth: Auth = client
+            .post_token(url, &form)
+            .await
+            .map_err(|failure| AuthError::from_token_failure(grant, failure))?;
         auth.valid_until = Some(auth.expires_in as i64 + chrono::Utc::now().timestamp());
         Ok(auth)
     }
@@ -162,101 +170,109 @@ mod tests {
 
     const REFRESH: &str = "REFRESH-SENTINEL";
     const CODE: &str = "CODE-SENTINEL";
+    const LOGIN_FIXTURE: &str =
+        include_str!("../../../tests/fixtures/token_error_bad_login_code.json");
+    const REFRESH_FIXTURE: &str =
+        include_str!("../../../tests/fixtures/token_error_refresh_garbage.json");
 
     fn no_secrets(err: &AuthError) {
         for text in [err.to_string(), format!("{err:?}")] {
-            assert!(text.contains("rror"), "not an error string: {text}");
+            assert!(!text.is_empty());
             for secret in [REFRESH, CODE, CLIENT_SECRET] {
                 assert!(!text.contains(secret), "{secret} leaked: {text}");
             }
         }
     }
 
-    #[tokio::test]
-    async fn a_failed_refresh_exchange_leaks_no_secret() {
-        let server = ChunkServer::start().await;
-        for reply in [Reply::Close, Reply::Status(400)] {
-            server.script("/token", vec![reply]);
-            let url = format!("{}/token", server.base_url());
-            let err = AuthManager::exchange(
-                &HttpClient::new_with_client(reqwest::Client::new()),
-                &url,
-                &[
-                    ("client_secret", CLIENT_SECRET),
-                    ("grant_type", "refresh_token"),
-                    ("refresh_token", REFRESH),
-                ],
-            )
-            .await
-            .err()
-            .unwrap();
-            no_secrets(&err);
-        }
+    fn form(grant: Grant) -> Vec<(&'static str, &'static str)> {
+        vec![
+            ("client_secret", CLIENT_SECRET),
+            match grant {
+                Grant::AuthorizationCode => ("code", CODE),
+                Grant::RefreshToken => ("refresh_token", REFRESH),
+            },
+        ]
     }
 
-    // Captured from the real endpoint (v1.4.0 plan, step 1): every dead grant is
-    // `400 invalid_grant`. Today each lands in the same stringified
-    // `ClientError { inner }`; step 3 flips this to `InvalidLoginCode` and
-    // `SessionRevoked`.
-    #[tokio::test]
-    async fn token_error_fixtures_are_opaque_client_errors_today() {
-        let login: &[(&str, &str)] = &[
-            ("grant_type", "authorization_code"),
-            ("code", CODE),
-            ("client_secret", CLIENT_SECRET),
-        ];
-        let refresh: &[(&str, &str)] = &[
-            ("grant_type", "refresh_token"),
-            ("refresh_token", REFRESH),
-            ("client_secret", CLIENT_SECRET),
-        ];
-        let cases = [
-            (
-                include_str!("../../../tests/fixtures/token_error_bad_login_code.json"),
-                login,
-            ),
-            (
-                include_str!("../../../tests/fixtures/token_error_refresh_garbage.json"),
-                refresh,
-            ),
-        ];
+    async fn exchange_against(reply: Reply, grant: Grant) -> AuthError {
         let server = ChunkServer::start().await;
-        for (body, form) in cases {
-            server.script(
-                "/token",
-                vec![Reply::StatusBody(400, body.as_bytes().to_vec())],
-            );
-            let url = format!("{}/token", server.base_url());
-            let err = AuthManager::exchange(
-                &HttpClient::new_with_client(reqwest::Client::new()),
-                &url,
-                form,
-            )
-            .await
-            .err()
-            .unwrap();
-            let AuthError::ClientError { inner } = &err else {
-                panic!("expected ClientError, got {err:?}");
-            };
-            assert!(inner.contains("status: 400"), "{inner}");
-            assert!(inner.contains("invalid_grant"), "{inner}");
-            no_secrets(&err);
-        }
-    }
-
-    #[tokio::test]
-    async fn a_failed_login_exchange_leaks_no_secret() {
-        let server = ChunkServer::start().await;
-        server.script("/token", vec![Reply::Close]);
+        server.script("/token", vec![reply]);
         let url = format!("{}/token", server.base_url());
         let err = AuthManager::exchange(
             &HttpClient::new_with_client(reqwest::Client::new()),
             &url,
-            &[("client_secret", CLIENT_SECRET), ("code", CODE)],
+            grant,
+            &form(grant),
         )
         .await
         .err()
         .unwrap();
         no_secrets(&err);
+        err
+    }
+
+    fn reply(status: u16, body: &str) -> Reply {
+        Reply::StatusBody(status, body.as_bytes().to_vec())
+    }
+
+    // Captured from the real endpoint (v1.4.0 plan, step 1): every dead grant is
+    // `400 invalid_grant`, and the grant decides the kind.
+    #[tokio::test]
+    async fn token_error_fixtures_map_to_their_kinds() {
+        let err = exchange_against(reply(400, LOGIN_FIXTURE), Grant::AuthorizationCode).await;
+        let AuthError::InvalidLoginCode { description } = &err else {
+            panic!("expected InvalidLoginCode, got {err:?}");
+        };
+        assert_eq!(
+            description,
+            "Code doesn't exist or is invalid for the client"
+        );
+
+        let err = exchange_against(reply(400, REFRESH_FIXTURE), Grant::RefreshToken).await;
+        let AuthError::SessionRevoked { description } = &err else {
+            panic!("expected SessionRevoked, got {err:?}");
+        };
+        assert!(
+            description.starts_with("Invalid refresh token"),
+            "{description}"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_grant_picks_the_kind_not_the_body() {
+        let err = exchange_against(reply(400, REFRESH_FIXTURE), Grant::AuthorizationCode).await;
+        assert!(matches!(err, AuthError::InvalidLoginCode { .. }), "{err:?}");
+        let err = exchange_against(reply(400, LOGIN_FIXTURE), Grant::RefreshToken).await;
+        assert!(matches!(err, AuthError::SessionRevoked { .. }), "{err:?}");
+    }
+
+    #[tokio::test]
+    async fn other_failures_fall_back_to_rejected() {
+        let err = exchange_against(Reply::Status(503), Grant::RefreshToken).await;
+        assert!(
+            matches!(&err, AuthError::Rejected { status, body } if status.as_u16() == 503 && body.is_empty()),
+            "{err:?}"
+        );
+        for body in [r#"{"error":"server_error"}"#, "<html>nope</html>"] {
+            let err = exchange_against(reply(400, body), Grant::RefreshToken).await;
+            assert!(
+                matches!(&err, AuthError::Rejected { status, body: got } if status.as_u16() == 400 && got == body),
+                "{err:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_transport_failure_is_a_network_error() {
+        for grant in [Grant::AuthorizationCode, Grant::RefreshToken] {
+            let err = exchange_against(Reply::Close, grant).await;
+            assert!(matches!(err, AuthError::NetworkError(_)), "{err:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn an_undecodable_success_is_an_invalid_response() {
+        let err = exchange_against(Reply::Body(b"{}".to_vec()), Grant::RefreshToken).await;
+        assert!(matches!(err, AuthError::InvalidResponse(_)), "{err:?}");
     }
 }

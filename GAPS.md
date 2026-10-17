@@ -491,7 +491,7 @@ in `v1.3.0` (once planned as the patches `v1.2.4` and `v1.2.5`).
   enums, `FileSystemError` and the download, Proton and saves error enums are now
   `#[non_exhaustive]`; `src/variant_guard.rs` keeps the "a new variant is looked at" guard in-crate.
 
-- [ ] **A dead refresh token and a routine expiry both surface as the same opaque, unstructured
+- [x] **A dead refresh token and a routine expiry both surface as the same opaque, unstructured
   error.** `login_with_code` (`src/client/auth/auth_manager.rs:50-58`) and `refresh_auth`
   (`:99-107`) call `fetch_no_retry(&url, false, false, None)` and match
   `Err(ClientError::AuthError(e))` first. With `require_auth` hardcoded `false`, `inner_fetch` can
@@ -500,6 +500,9 @@ in `v1.3.0` (once planned as the patches `v1.2.4` and `v1.2.5`).
   on a network error (see the credentials item above). The saves grant exchange inherits the
   problem: a revoked refresh token there is an undifferentiated `HttpError`. This needs a
   status-aware `AuthError` variant, or at minimum deleting the dead arm.
+  Fixed in `v1.4.0`: `InvalidLoginCode`, `SessionRevoked`, `NetworkError`, `Rejected` and
+  `InvalidResponse` replace `ClientError { inner }`, classified by grant in one place; the dead arm
+  is gone. The saves grant follows in step 4.
 
 - [ ] **Five dead variants per error enum.** `Http`/`UrlParseError`/`NetworkError`/`DecodeError`/
   `DeflateError` on `DepotError`, `GamesError` and `SecureLinksError`, and the first four on

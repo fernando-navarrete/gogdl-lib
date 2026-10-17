@@ -204,7 +204,9 @@ impl GogDl {
     ///
     /// # Errors
     /// [`GogDlError::ClientError`] wrapping [`crate::AuthError::AuthDecodeError`] if
-    /// `json_str` isn't a valid serialized [`crate::Auth`].
+    /// `json_str` isn't a valid serialized [`crate::Auth`]. A restored session
+    /// that GOG has since revoked is not detected here: the first
+    /// authenticated call fails with [`crate::AuthError::SessionRevoked`].
     pub async fn restore_auth(&self, json_str: &str) -> Result<(), GogDlError> {
         self.client.restore_auth_from_string(json_str).await?;
         Ok(())
@@ -221,7 +223,13 @@ impl GogDl {
     /// [`restore_auth`](Self::restore_auth) on the next run.
     ///
     /// # Errors
-    /// [`GogDlError::ClientError`] on a rejected code or a transport failure.
+    /// [`GogDlError::ClientError`] wrapping a [`crate::AuthError`]:
+    /// [`InvalidLoginCode`](crate::AuthError::InvalidLoginCode) for a wrong or
+    /// expired code, [`NetworkError`](crate::AuthError::NetworkError) when
+    /// GOG can't be reached, [`Rejected`](crate::AuthError::Rejected) for any
+    /// other non-success reply and
+    /// [`InvalidResponse`](crate::AuthError::InvalidResponse) for an
+    /// unreadable success.
     pub async fn login_with_code(&self, code: &str) -> Result<String, GogDlError> {
         let auth_string = self.client.login_with_code(code).await?;
         Ok(auth_string)

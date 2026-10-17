@@ -110,7 +110,8 @@ impl SavesAuth {
                     ("refresh_token", refresh_token),
                 ],
             )
-            .await?)
+            .await
+            .map_err(ClientError::from)?)
     }
     /// The URL under `base` (in production [`CLOUD_STORAGE_URL`]) of the
     /// object called `name` in this user's storage area for the game
