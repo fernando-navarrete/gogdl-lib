@@ -4,6 +4,15 @@ One section per tag, newest first. Consumers pin this crate by git tag. A change
 behind an unchanged signature is called out as **Behavior change**, and a signature change as
 **Breaking**. The `v0.x` and `-restart` tags predate this file and aren't covered.
 
+## 1.4.3
+
+Dependency trim; no signature, error or event changes.
+
+* `rand` is built with only `sys_rng` and `tar` without `xattr` (the crate never unpacks xattrs, which
+  `tar` leaves off by default). Retry jitter, the upload request id and the Proton staging suffix draw
+  from the OS through one `sys_rng()`. Five crates leave `Cargo.lock` (`chacha20`, `cpufeatures`,
+  `xattr`, `rustix`, `linux-raw-sys`); none is added.
+
 ## 1.4.2
 
 Internal cleanup of the download hot path; no signature, error or event changes.

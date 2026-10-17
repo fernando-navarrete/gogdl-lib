@@ -5,11 +5,12 @@ use std::{
 
 use chrono::{DateTime, SecondsFormat, Utc};
 use flate2::{Compression, write::GzEncoder};
+use rand::RngExt;
 use tokio::sync::mpsc;
 
 use crate::{
     SavesError,
-    client::HttpClient,
+    client::{HttpClient, retry::sys_rng},
     constants::CLOUD_STORAGE_URL,
     saves::{
         checksum::md5_hex, save_location::ResolvedSaveLocation, saves_auth::SavesAuth,
@@ -95,7 +96,7 @@ impl SavesUploader {
             .object_url(&self.storage_url, &self.client_id, name)?;
         url.query_pairs_mut().append_pair(
             "_gog_request_id",
-            &format!("{:032x}", rand::random::<u128>()),
+            &format!("{:032x}", sys_rng().random::<u128>()),
         );
         let bearer = format!("Bearer {}", self.auth.access_token);
 

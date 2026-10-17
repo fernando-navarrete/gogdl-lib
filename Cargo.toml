@@ -1,6 +1,6 @@
 [package]
 name = "gogdl-lib"
-version = "1.4.2"
+version = "1.4.3"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "Rust client for GOG's Galaxy backend: auth, library, downloads, cloud saves, Proton-GE"
@@ -22,8 +22,8 @@ hex = "0.4.3"
 futures-util = "0.3.34"
 bytes = "1.12.0"
 sysinfo = "0.39.6"
-rand = "0.10.2"
-tar = "0.4.44"
+rand = { version = "0.10.2", default-features = false, features = ["sys_rng"] }
+tar = { version = "0.4.44", default-features = false }
 tokio-util = { version = "0.7.19", features = ["io-util"] }
 
 [dev-dependencies]

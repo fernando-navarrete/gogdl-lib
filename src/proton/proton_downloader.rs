@@ -2,13 +2,14 @@ use std::ffi::{OsStr, OsString};
 use std::path::{Component, Path, PathBuf};
 
 use flate2::read::GzDecoder;
+use rand::RngExt;
 use tar::Archive;
 use tokio::{io::AsyncWriteExt, sync::mpsc};
 use tokio_util::io::SyncIoBridge;
 
 use crate::{
     ProtonError, ProtonGeRelease,
-    client::{ClientError, HttpClient},
+    client::{ClientError, HttpClient, retry::sys_rng},
     fs::{PathResolver, sanitize_filename},
     proton::ProtonDownloadEvent,
 };
@@ -72,7 +73,7 @@ impl StagingDir {
     fn create(dest: &Path, safe_tag: &str) -> std::io::Result<Self> {
         let path = dest.join(format!(
             "{STAGING_PREFIX}{safe_tag}-{:016x}",
-            rand::random::<u64>()
+            sys_rng().random::<u64>()
         ));
         std::fs::create_dir(&path)?;
         let staging = Self { path };

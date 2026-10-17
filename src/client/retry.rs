@@ -14,18 +14,27 @@
 
 use std::time::Duration;
 
+use rand::{RngExt, rand_core::UnwrapErr, rngs::SysRng};
+
 /// How many times a request or chunk is tried before its error is returned.
 pub(crate) const MAX_ATTEMPTS: u32 = 6;
 
 /// How many times a chunk is tried when its decompressed MD5 doesn't match.
 pub(crate) const MAX_HASH_ATTEMPTS: u32 = 3;
 
+/// The OS entropy source behind every random value in the crate. Without `rand`'s `thread_rng`
+/// feature there is no `rand::random`, and the calls are rare enough (a retry, an upload, a Proton
+/// install) that a `getrandom` call each costs nothing. Panics if the OS can't supply entropy.
+pub(crate) fn sys_rng() -> UnwrapErr<SysRng> {
+    UnwrapErr(SysRng)
+}
+
 /// Sleeps for a random time up to this attempt's ceiling (see the module docs).
 pub(crate) async fn backoff(attempt: u32) {
     let ceiling = Duration::from_millis(500)
         .saturating_mul(2u32.saturating_pow(attempt))
         .min(Duration::from_secs(20));
-    tokio::time::sleep(rand::random_range(Duration::ZERO..=ceiling)).await;
+    tokio::time::sleep(sys_rng().random_range(Duration::ZERO..=ceiling)).await;
 }
 
 /// Whether a failed `attempt` (counting from 0) is followed by another one under `bound`.

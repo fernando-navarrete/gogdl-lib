@@ -712,11 +712,12 @@ in `v1.3.0` (once planned as the patches `v1.2.4` and `v1.2.5`).
   `get_free_space()`'s `Err(_)` to a unit `CouldNotResolveFreeSpace`. That throws away the
   `FileSystemError::NoDiskMatchingPath(PathBuf)` that names the path (`src/fs/path_resolver.rs:54`).
 
-- [ ] **`rand` with default features is a heavy dependency for retry jitter and upload request
+- [x] **`rand` with default features is a heavy dependency for retry jitter and upload request
   IDs.** `rand = "0.10.2"` pulls `chacha20`/`cpufeatures`/`getrandom`, which is more than a sleep
   duration and `saves_uploader.rs:92`'s `_gog_request_id` need. `tar` brings `filetime` and `xattr`
   (with `rustix`/`linux-raw-sys`) by default. The crate never reads xattrs, so
   `default-features = false` is worth checking there too.
+  Fixed in `v1.4.3`: `rand` keeps only `sys_rng` and `tar` drops `xattr`; five crates leave the lockfile.
 
 - [x] **`DownloadEvent::Preparing`/`Prepared` are emitted back-to-back with no work between them.**
   `engine.rs:253-255`. Collapse them, or do real work in between.
