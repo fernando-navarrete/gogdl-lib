@@ -3,8 +3,8 @@ use std::{io::Read, sync::Arc};
 use bytes::Bytes;
 use flate2::read::ZlibDecoder;
 use futures_util::{StreamExt, future::BoxFuture};
-use reqwest::Client;
 use reqwest::header::HeaderMap;
+use reqwest::{Client, RequestBuilder, Response};
 use serde::de::DeserializeOwned;
 
 use crate::{
@@ -87,81 +87,31 @@ impl HttpClient {
         form: &[(&str, &str)],
     ) -> Result<T, TokenFailure> {
         let network = |e: reqwest::Error| TokenFailure::Network(e.without_url());
-        let response = self
-            .client
-            .post(url)
-            .form(form)
-            .send()
+        let response = send_checked(self.client.post(url).form(form))
             .await
-            .map_err(network)?;
-        let status = response.status();
+            .map_err(|failure| match failure {
+                SendFailure::Network(e) => network(e),
+                SendFailure::Status { status, body } => TokenFailure::Status { status, body },
+            })?;
         let text = response.text().await.map_err(network)?;
-        if !status.is_success() {
-            return Err(TokenFailure::Status { status, body: text });
-        }
         serde_json::from_str(&text).map_err(TokenFailure::Decode)
     }
-    pub async fn stream_chunk<'a>(
-        &'a self,
-        url: &str,
-        mut f: impl FnMut(Bytes) -> BoxFuture<'a, std::io::Result<()>>,
-    ) -> Result<(), ClientError> {
-        let url = reqwest::Url::parse(url)?;
-        let request = self.client.get(url);
-
-        let response = request.send().await?;
-
-        if !response.status().is_success() {
-            let response_status = response.status();
-            let response_text = response.text().await?;
-            return Err(ClientError::HttpError {
-                status: response_status,
-                body: response_text,
-            });
-        }
-
-        let mut stream = response.bytes_stream();
-
-        while let Some(chunk) = stream.next().await {
-            let chunk = match chunk {
-                Ok(chunk) => chunk,
-                Err(e) => return Err(ClientError::NetworkError(e)),
-            };
-            if let Err(e) = f(chunk).await {
-                return Err(ClientError::ChunkStreamCallbackError(e));
-            }
-        }
-        Ok(())
-    }
-    /// Like [`stream_chunk`](Self::stream_chunk), but sends `headers` with the
-    /// request and hands back the response headers once the body has been
+    /// GETs `url` (with `headers`, if any), passes each body chunk to `f` as
+    /// it arrives, and hands back the response headers once the body has been
     /// fully streamed. Not retried.
-    pub async fn stream_chunk_with_headers<'a>(
+    ///
+    /// # Errors
+    /// [`ClientError::ChunkStreamCallbackError`] if `f` fails.
+    pub async fn stream_url<'a>(
         &'a self,
         url: &str,
         headers: Option<&[(&str, &str)]>,
         mut f: impl FnMut(Bytes) -> BoxFuture<'a, std::io::Result<()>>,
     ) -> Result<HeaderMap, ClientError> {
         let url = reqwest::Url::parse(url)?;
-        let mut request = self.client.get(url);
-        if let Some(headers) = headers {
-            for (key, value) in headers {
-                request = request.header(*key, *value);
-            }
-        }
+        let mut response = send_checked(apply_headers(self.client.get(url), headers)).await?;
 
-        let response = request.send().await?;
-
-        if !response.status().is_success() {
-            let response_status = response.status();
-            let response_text = response.text().await?;
-            return Err(ClientError::HttpError {
-                status: response_status,
-                body: response_text,
-            });
-        }
-
-        let response_headers = response.headers().clone();
+        let response_headers = std::mem::take(response.headers_mut());
         let mut stream = response.bytes_stream();
 
         while let Some(chunk) = stream.next().await {
@@ -188,12 +138,10 @@ impl HttpClient {
         const CHUNK_SIZE: usize = 16 * 1024;
 
         let url = reqwest::Url::parse(url)?;
-        let mut request = self.client.put(url).header("Content-Length", body.len());
-        if let Some(headers) = headers {
-            for (key, value) in headers {
-                request = request.header(*key, *value);
-            }
-        }
+        let request = apply_headers(
+            self.client.put(url).header("Content-Length", body.len()),
+            headers,
+        );
 
         let mut remaining = Bytes::from(body);
         let chunks = futures_util::stream::iter(std::iter::from_fn(move || {
@@ -205,19 +153,7 @@ impl HttpClient {
             Some(Ok::<_, std::io::Error>(chunk))
         }));
 
-        let response = request
-            .body(reqwest::Body::wrap_stream(chunks))
-            .send()
-            .await?;
-
-        if !response.status().is_success() {
-            let response_status = response.status();
-            let response_text = response.text().await?;
-            return Err(ClientError::HttpError {
-                status: response_status,
-                body: response_text,
-            });
-        }
+        send_checked(request.body(reqwest::Body::wrap_stream(chunks))).await?;
         Ok(())
     }
     pub async fn restore_auth_from_string(&self, json_str: &str) -> Result<(), ClientError> {
@@ -270,22 +206,7 @@ impl HttpClient {
         headers: Option<&[(&str, &str)]>,
     ) -> Result<T, ClientError> {
         let url = reqwest::Url::parse(url)?;
-        let mut request = self.client.get(url);
-        if let Some(headers) = headers {
-            for (key, value) in headers {
-                request = request.header(*key, *value);
-            }
-        }
-        let response = request.send().await?;
-
-        if !response.status().is_success() {
-            let response_status = response.status();
-            let response_text = response.text().await?;
-            return Err(ClientError::HttpError {
-                status: response_status,
-                body: response_text,
-            });
-        }
+        let response = send_checked(apply_headers(self.client.get(url), headers)).await?;
         let response_text = response.text().await?;
         let result: T = serde_json::from_str(&response_text)?;
         Ok(result)
@@ -297,24 +218,8 @@ impl HttpClient {
         headers: Option<&[(&str, &str)]>,
     ) -> Result<T, ClientError> {
         let url = reqwest::Url::parse(url)?;
-        let mut request = self.client.get(url);
-        request = request.bearer_auth(auth_token);
-        if let Some(headers) = headers {
-            for (key, value) in headers {
-                request = request.header(*key, *value);
-            }
-        }
-
-        let response = request.send().await?;
-
-        if !response.status().is_success() {
-            let response_status = response.status();
-            let response_text = response.text().await?;
-            return Err(ClientError::HttpError {
-                status: response_status,
-                body: response_text,
-            });
-        }
+        let request = apply_headers(self.client.get(url).bearer_auth(auth_token), headers);
+        let response = send_checked(request).await?;
 
         let response_bytes = response.bytes().await?;
         let mut z = ZlibDecoder::new(&response_bytes[..]);
@@ -335,24 +240,8 @@ impl HttpClient {
         headers: Option<&[(&str, &str)]>,
     ) -> Result<T, ClientError> {
         let url = reqwest::Url::parse(url)?;
-        let mut request = self.client.get(url);
-        request = request.bearer_auth(auth_token);
-        if let Some(headers) = headers {
-            for (key, value) in headers {
-                request = request.header(*key, *value);
-            }
-        }
-
-        let response = request.send().await?;
-
-        if !response.status().is_success() {
-            let response_status = response.status();
-            let response_text = response.text().await?;
-            return Err(ClientError::HttpError {
-                status: response_status,
-                body: response_text,
-            });
-        }
+        let request = apply_headers(self.client.get(url).bearer_auth(auth_token), headers);
+        let response = send_checked(request).await?;
         let response_text = response.text().await?;
         let result: T = serde_json::from_str(&response_text)?;
         Ok(result)
@@ -368,6 +257,45 @@ impl HttpClient {
         let auth = self.auth_manager.get_auth().await?;
         Ok(auth.refresh_token)
     }
+}
+
+/// Why a request from [`send_checked`] failed.
+enum SendFailure {
+    Network(reqwest::Error),
+    Status {
+        status: reqwest::StatusCode,
+        body: String,
+    },
+}
+
+impl From<SendFailure> for ClientError {
+    fn from(failure: SendFailure) -> Self {
+        match failure {
+            SendFailure::Network(e) => ClientError::NetworkError(e),
+            SendFailure::Status { status, body } => ClientError::HttpError { status, body },
+        }
+    }
+}
+
+/// Sends `request`; a non-success status becomes [`SendFailure::Status`] with
+/// the body read as text.
+async fn send_checked(request: RequestBuilder) -> Result<Response, SendFailure> {
+    let response = request.send().await.map_err(SendFailure::Network)?;
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().await.map_err(SendFailure::Network)?;
+        return Err(SendFailure::Status { status, body });
+    }
+    Ok(response)
+}
+
+fn apply_headers(mut request: RequestBuilder, headers: Option<&[(&str, &str)]>) -> RequestBuilder {
+    if let Some(headers) = headers {
+        for (key, value) in headers {
+            request = request.header(*key, *value);
+        }
+    }
+    request
 }
 
 #[cfg(test)]

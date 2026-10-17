@@ -1,5 +1,6 @@
 use serde::Deserialize;
 
+use crate::constants::GITHUB_API_HEADERS;
 use crate::proton::{ProtonGeRelease, ProtonManager, error::ProtonError};
 
 /// One page of Proton-GE releases, as returned by
@@ -32,16 +33,7 @@ impl ProtonGeReleasesPage {
         );
         let releases_page: ProtonGeReleasesPage = proton_manager
             .client
-            .fetch(
-                &url,
-                false,
-                false,
-                Some(&[
-                    ("Accept", "application/vnd.github.v3+json"),
-                    ("User-Agent", "gogdl"),
-                    ("X-GitHub-Api-Version", "2026-03-10"),
-                ]),
-            )
+            .fetch(&url, false, false, Some(&GITHUB_API_HEADERS))
             .await?;
 
         Ok(releases_page)

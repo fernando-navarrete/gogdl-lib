@@ -219,7 +219,7 @@ impl ProtonDownloader {
             let writer_ref = &writer_slot;
             let result = self
                 .client
-                .stream_chunk(&asset.browser_download_url, |chunk: Bytes| {
+                .stream_url(&asset.browser_download_url, None, |chunk: Bytes| {
                     tx.send(ProtonDownloadEvent::Progress(chunk.len())).ok();
                     let writer = writer_ref;
                     Box::pin(async move { writer.lock().await.write_all(&chunk).await })
@@ -272,7 +272,7 @@ impl ProtonDownloader {
             };
 
         let (staging, root_component) = match download_result {
-            Ok(()) => extract_result,
+            Ok(_) => extract_result,
             Err(ClientError::ChunkStreamCallbackError(io_err))
                 if is_pipe_closed_by_reader(&io_err) && extract_result.is_err() =>
             {

@@ -3,6 +3,7 @@ use serde::Deserialize;
 
 use crate::{
     ProtonError,
+    constants::GITHUB_API_HEADERS,
     proton::{GithubAsset, ProtonManager},
 };
 
@@ -77,7 +78,7 @@ impl ProtonGeRelease {
 
     /// Fetches a single release from
     /// `GET /repos/GloriousEggroll/proton-ge-custom/releases/tags/{tag}`,
-    /// with the same `Accept`/`User-Agent`/`X-GitHub-Api-Version` headers as
+    /// with the same `GITHUB_API_HEADERS` as
     /// [`ProtonGeReleasesPage`](crate::ProtonGeReleasesPage)'s page fetch.
     /// Not cached. See
     /// [`GogDl::get_proton_release_by_tag`](crate::GogDl::get_proton_release_by_tag)
@@ -93,16 +94,7 @@ impl ProtonGeRelease {
         );
         let release: ProtonGeRelease = proton_manager
             .client
-            .fetch(
-                &url,
-                false,
-                false,
-                Some(&[
-                    ("Accept", "application/vnd.github.v3+json"),
-                    ("User-Agent", "gogdl"),
-                    ("X-GitHub-Api-Version", "2026-03-10"),
-                ]),
-            )
+            .fetch(&url, false, false, Some(&GITHUB_API_HEADERS))
             .await?;
 
         Ok(release)

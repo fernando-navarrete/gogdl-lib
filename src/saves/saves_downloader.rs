@@ -125,7 +125,7 @@ impl SavesDownloader {
         let mut compressed = Vec::with_capacity(file.bytes as usize);
         let response_headers = self
             .client
-            .stream_chunk_with_headers(url.as_str(), Some(&[("Authorization", &bearer)]), |chunk| {
+            .stream_url(url.as_str(), Some(&[("Authorization", &bearer)]), |chunk| {
                 tx.send(SavesDownloadEvent::Progress(chunk.len())).ok();
                 compressed.extend_from_slice(&chunk);
                 Box::pin(std::future::ready(Ok(())))

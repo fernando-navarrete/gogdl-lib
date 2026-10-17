@@ -4,6 +4,15 @@ One section per tag, newest first. Consumers pin this crate by git tag. A change
 behind an unchanged signature is called out as **Behavior change**, and a signature change as
 **Breaking**. The `v0.x` and `-restart` tags predate this file and aren't covered.
 
+## 1.4.1
+
+Internal cleanup of the HTTP client; no signature, error or event changes.
+
+* One `stream_url(url, headers)` replaces `stream_chunk` and `stream_chunk_with_headers`, and one
+  `send_checked` holds the status check that every request shared (`post_token` still strips the URL
+  from its errors).
+* The GitHub `Accept`/`User-Agent`/`X-GitHub-Api-Version` headers are one constant.
+
 ## 1.4.0
 
 Errors and API cleanup: what the bridge's `v1.5.0` asks of this crate. **Breaking** (see below), so

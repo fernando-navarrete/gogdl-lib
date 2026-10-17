@@ -686,17 +686,19 @@ in `v1.3.0` (once planned as the patches `v1.2.4` and `v1.2.5`).
   copies a `Vec<Chunk>`. `.into_iter().flatten().collect()` does the filter and the unwrap with
   zero clones.
 
-- [ ] **`HttpClient::stream_chunk` is a misnamed generic "GET a URL and stream it", and
+- [x] **`HttpClient::stream_chunk` is a misnamed generic "GET a URL and stream it", and
   `2457bad` copied it instead of extending it.** `stream_chunk` (`http.rs:79-110`) has nothing
   chunk-specific and also carries multi-hundred-MB Proton tarballs. `stream_chunk_with_headers`
   (`:114-152`) is the same body plus a header loop and a `headers().clone()`. The three `get_json*`/
   `get_and_decode` helpers (`:242-334`) likewise repeat one send/status-check/read block. One
   `stream_url(url, headers) -> HeaderMap` would replace the first pair, and a shared
   `send_checked(request)` would replace the status-check block in all six, including `put_stream`.
+  Fixed in `v1.4.1`: `stream_url` and `send_checked` (and an `apply_headers` for the repeated header loop).
 
-- [ ] **The GitHub request headers are duplicated.** `Accept`/`User-Agent`/`X-GitHub-Api-Version`
+- [x] **The GitHub request headers are duplicated.** `Accept`/`User-Agent`/`X-GitHub-Api-Version`
   appear verbatim in `proton_ge_release.rs:77-81` and `proton_ge_releases_page.rs:39-43`. Make them a
   shared `const`.
+  Fixed in `v1.4.1`: `GITHUB_API_HEADERS` in `src/constants/mod.rs`.
 
 - [x] **Vestigial `let _ = body;` in `HttpClient::fetch`.** `http.rs:53` discards a `body` that
   `:59` then returns as `body: body`. Already gone: `624d3d6`, `v1.1.3`.

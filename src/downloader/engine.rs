@@ -261,7 +261,7 @@ impl Downloader {
 
                         let decoder_ref = &decoder_slot;
                         let stream_result = self.client
-                            .stream_chunk(&url, |chunk: Bytes| {
+                            .stream_url(&url, None, |chunk: Bytes| {
                                 progress.report(chunk.len());
                                 let decoder = decoder_ref;
                                 Box::pin(async move { decoder.lock().await.write_all(&chunk).await })
