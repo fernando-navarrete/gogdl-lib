@@ -141,8 +141,8 @@ Pipelines run on merge requests, `main`, `vX.Y.Z` tags and manual web runs; a br
 nothing. `main` is protected (no direct pushes; merge requests only, fast-forward with squash, pipelines
 must succeed, all threads resolved) and so are the `v*` tags (only a maintainer creates one; none is
 updated or deleted without unprotecting it first). The manual `downstream` job (play it from any MR pipeline) builds
-`lumen-cli` and the bridge's `rust/` against this checkout through a `[patch]`, and is the check for
-a breaking change.
+the bridge's `rust/` (cloned from its GitHub mirror, `lumen-cli` is no longer checked) against this
+checkout through a `[patch]`, and is the check for a breaking change.
 
 ## Releasing
 

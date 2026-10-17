@@ -51,7 +51,7 @@ cargo metadata --locked --format-version 1 \
    `downstream`, and `renovate`) since the bad version was published, and at local dates
    (`ls -l --time-style=full-iso ~/.cargo/registry/src/*/<crate>-<version>`).
 3. **Rotate secrets** if it could have run, for everything the machine or job could reach:
-   `RENOVATE_TOKEN` and `GITHUB_COM_TOKEN`, the GitHub mirror token (in GitLab's mirroring settings), `DOWNSTREAM_DEPLOY_KEY_B64`, and local tokens and SSH keys. The job token expires
+   `RENOVATE_TOKEN` and `GITHUB_COM_TOKEN`, the GitHub mirror token (in GitLab's mirroring settings), and local tokens and SSH keys. The job token expires
    with the job.
 4. **Pin a known-good version** with `cargo update -p <crate> --precise <version>`, through an MR as
    usual.
