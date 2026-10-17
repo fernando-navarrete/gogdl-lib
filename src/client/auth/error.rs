@@ -47,6 +47,9 @@ pub enum AuthError {
     /// `refresh_token` grant ("Invalid refresh token, client_id:…"). The
     /// session is dead and the user has to log in again. It can come out of
     /// any authenticated method, since the refresh happens inside the request.
+    /// The cloud saves methods return it too (wrapped in
+    /// [`SavesError::ClientError`](crate::SavesError)): they post the same
+    /// grant with the game's client id.
     #[error("Session revoked: {description}")]
     SessionRevoked {
         /// GOG's `error_description`, empty if the reply had none. It names
@@ -130,16 +133,6 @@ impl AuthError {
                     _ => AuthError::Rejected { status, body },
                 }
             }
-        }
-    }
-}
-
-impl From<TokenFailure> for crate::ClientError {
-    fn from(failure: TokenFailure) -> Self {
-        match failure {
-            TokenFailure::Network(e) => Self::NetworkError(e),
-            TokenFailure::Status { status, body } => Self::HttpError { status, body },
-            TokenFailure::Decode(e) => Self::DeserializationError(e),
         }
     }
 }

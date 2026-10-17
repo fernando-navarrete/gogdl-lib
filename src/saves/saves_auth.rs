@@ -1,8 +1,8 @@
 use serde::Deserialize;
 
 use crate::{
-    ClientError,
-    client::{Expiring, HttpClient},
+    AuthError, ClientError,
+    client::{Expiring, Grant, HttpClient},
     constants::TOKEN_URL,
     saves::{error::SavesError, saves_manager::SavesManager},
 };
@@ -92,7 +92,9 @@ impl SavesAuth {
     /// POSTs the game-scoped refresh grant to `url`. The grant goes in a form
     /// body and the transport error has its URL stripped, so neither the
     /// session's refresh token nor the game's `client_secret` can reach an
-    /// error string.
+    /// error string. A failure is classified like the session's own refresh
+    /// (see [`AuthError::from_token_failure`]), so a dead session is
+    /// [`AuthError::SessionRevoked`].
     async fn exchange(
         client: &HttpClient,
         url: &str,
@@ -111,7 +113,9 @@ impl SavesAuth {
                 ],
             )
             .await
-            .map_err(ClientError::from)?)
+            .map_err(|failure| {
+                ClientError::from(AuthError::from_token_failure(Grant::RefreshToken, failure))
+            })?)
     }
     /// The URL under `base` (in production [`CLOUD_STORAGE_URL`]) of the
     /// object called `name` in this user's storage area for the game
@@ -174,7 +178,7 @@ mod tests {
     async fn a_failed_exchange_leaks_neither_the_refresh_token_nor_the_client_secret() {
         use crate::test_support::{ChunkServer, Reply};
         let server = ChunkServer::start().await;
-        for reply in [Reply::Close, Reply::Status(400)] {
+        for (reply, network) in [(Reply::Close, true), (Reply::Status(400), false)] {
             server.script("/token", vec![reply]);
             let err = SavesAuth::exchange(
                 &HttpClient::new_with_client(reqwest::Client::new()),
@@ -186,6 +190,19 @@ mod tests {
             .await
             .err()
             .unwrap();
+            let SavesError::ClientError(ClientError::AuthError(kind)) = &err else {
+                panic!("expected an AuthError, got {err:?}");
+            };
+            assert_eq!(
+                matches!(kind, AuthError::NetworkError(_)),
+                network,
+                "{err:?}"
+            );
+            assert_eq!(
+                matches!(kind, AuthError::Rejected { .. }),
+                !network,
+                "{err:?}"
+            );
             for text in [err.to_string(), format!("{err:?}")] {
                 assert!(text.contains("rror"), "not an error string: {text}");
                 assert!(!text.contains("SECRET-SENTINEL"), "leaked: {text}");
@@ -195,12 +212,16 @@ mod tests {
     }
 
     // Captured from the real endpoint (v1.4.0 plan, step 1): a dead refresh token
-    // is `400 invalid_grant` for a game's client too. Today it reaches the caller as
-    // a raw `HttpError`; step 4 classifies it as `SessionRevoked`.
+    // is `400 invalid_grant` for a game's client too.
     #[tokio::test]
-    async fn a_dead_session_is_a_raw_http_error_today() {
+    async fn a_dead_session_is_session_revoked() {
         use crate::test_support::{ChunkServer, Reply};
         let body = include_str!("../../tests/fixtures/token_error_saves_refresh_garbage.json");
+        let expected =
+            serde_json::from_str::<serde_json::Value>(body).unwrap()["error_description"]
+                .as_str()
+                .unwrap()
+                .to_string();
         let server = ChunkServer::start().await;
         server.script(
             "/token",
@@ -216,11 +237,13 @@ mod tests {
         .await
         .err()
         .unwrap();
-        let SavesError::ClientError(ClientError::HttpError { status, body: got }) = &err else {
-            panic!("expected a raw HttpError, got {err:?}");
+        let SavesError::ClientError(ClientError::AuthError(AuthError::SessionRevoked {
+            description,
+        })) = &err
+        else {
+            panic!("expected SessionRevoked, got {err:?}");
         };
-        assert_eq!(status.as_u16(), 400);
-        assert_eq!(got, body);
+        assert_eq!(description, &expected);
         for text in [err.to_string(), format!("{err:?}")] {
             assert!(!text.contains("SECRET-SENTINEL"), "leaked: {text}");
             assert!(!text.contains("REFRESH-SENTINEL"), "leaked: {text}");

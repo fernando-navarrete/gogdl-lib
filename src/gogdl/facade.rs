@@ -679,13 +679,21 @@ impl GogDl {
     ///   [`crate::AuthError::NotAuthenticated`] if no session is logged in,
     ///   or [`crate::AuthError::TokenExpired`] if the session's access token
     ///   has expired.
+    /// - [`SavesError::ClientError`] wrapping [`crate::ClientError::AuthError`]
+    ///   if the token exchange fails, classified as for the session's own
+    ///   refresh: [`crate::AuthError::SessionRevoked`] if GOG rejects the
+    ///   refresh token (the user has to log in again),
+    ///   [`crate::AuthError::NetworkError`] if it fails in transit (the
+    ///   session may be fine), [`crate::AuthError::Rejected`] for any other
+    ///   non-success reply, or [`crate::AuthError::InvalidResponse`] if the
+    ///   reply doesn't decode.
     /// - [`SavesError::ClientError`] wrapping
-    ///   [`crate::ClientError::HttpError`] if GOG rejects the token exchange
-    ///   (e.g. a revoked refresh token) or the storage request returns any
-    ///   non-success status, including 401;
-    ///   [`crate::ClientError::NetworkError`] if either request fails in
-    ///   transit; or [`crate::ClientError::DeserializationError`] if a
-    ///   response doesn't match the expected shape.
+    ///   [`crate::ClientError::HttpError`] if the storage request returns any
+    ///   non-success status, including 401 (which does not evict the cached
+    ///   grant);
+    ///   [`crate::ClientError::NetworkError`] if it fails in transit; or
+    ///   [`crate::ClientError::DeserializationError`] if a response doesn't
+    ///   match the expected shape.
     pub async fn get_save_files(
         &self,
         game_id: i32,

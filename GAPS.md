@@ -192,7 +192,9 @@ The paragraph below is the baseline it started from.)* `cargo build --lib` showe
     `saves_uploader.rs:104-123`). A 401 surfaces as a plain `HttpError` and never evicts the cached
     `SavesAuth`, so every call returns the same 401 until `valid_until` passes.
 
-  Both behaviors are stated in the rustdoc, so this is documented, not fixed. The grant is also
+  Both behaviors are stated in the rustdoc, so this is documented, not fixed. (`v1.4.0`: a dead
+  session on the token exchange is now `AuthError::SessionRevoked`, like every other method; the
+  no-refresh and 401-doesn't-evict parts above stay open for `v1.5.0`.) The grant is also
   fetched once per call and reused across the whole sequential batch, so a batch can still outlive
   its grant (the wrong-sign margin that let it start on an already-expired one was fixed in `v1.1.2`).
 
