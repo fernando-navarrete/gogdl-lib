@@ -5,7 +5,7 @@ Open findings for `gogdl-lib`. Current tree: **`main`**, `Cargo.toml` at `1.3.2`
 `main`. Their decisions are in `devlog/v1.2.0-download-management.md` (`v1.1.x`: `devlog/v1.1.0-foundation.md`; CI/CD:
 `devlog/v1.2.x-ci-cd.md`; `v1.3.0`–`v1.3.2`: `devlog/v1.3.0-library.md`). `v1.0.11` (`d5b43e6`) includes the owned-products
 rename (`d6dbdc5`) and the owned-games filter (`e032b7d`). `feature/saves` was merged into `main`, so
-every tag is reachable from `main`. Consumer pins: the bridge (`gogdl_flutter`) is on `v1.2.3` until its `v1.4.0`, and
+every tag is reachable from `main`. Consumer pins: the bridge (`gogdl_flutter`) is on `v1.3.2` (its `v1.4.0` is done; its `v1.5.0` takes `v1.4.0`), and
 **`lumen-cli`** is on **`v1.0.10`** (`feature/remote-config`; its `main` is on `v1.0.4`), so its next bump
 needs the `_ => {}` arms recorded in the `v1.3.0` devlog.
 
@@ -678,8 +678,8 @@ in `v1.3.0` (once planned as the patches `v1.2.4` and `v1.2.5`).
   appear verbatim in `proton_ge_release.rs:77-81` and `proton_ge_releases_page.rs:39-43`. Make them a
   shared `const`.
 
-- [ ] **Vestigial `let _ = body;` in `HttpClient::fetch`.** `http.rs:53` discards a `body` that
-  `:59` then returns as `body: body`.
+- [x] **Vestigial `let _ = body;` in `HttpClient::fetch`.** `http.rs:53` discards a `body` that
+  `:59` then returns as `body: body`. Already gone: `624d3d6`, `v1.1.3`.
 
 - [x] **The free-space check discards its own error detail, in three places.** Fixed on this branch
   for `v1.2.0`: the errors carry `required`/`available` and the path.

@@ -28,11 +28,11 @@ numbered.
 
 Three repos depend on `gogdl-lib`:
 
-- **`gogdl_flutter`** (the Flutter/Rust bridge) pins `v1.2.3`, from the GitHub mirror, until its `v1.4.0` takes `v1.3.x`. Its GAPS §7
+- **`gogdl_flutter`** (the Flutter/Rust bridge) pins `v1.3.2`, from the GitHub mirror; its `v1.4.0` is done and its `v1.5.0` takes `v1.4.0`. Its GAPS §7
   is the list of requests it makes here, its `ROADMAP.md` orders them by the Lumen stage that needs
-  them, and its `v1.4.0-LIBRARY-AND-ACCOUNT.md` is the plan for its current stage.
+  them.
 - **Lumen** uses this crate only through the bridge. Its `v1.3.0-DOWNLOAD-MANAGEMENT.md` listed
-  requests D4–D6 here, and its `v1.4.0-LIBRARY.md` ("Dependency changes") lists D1 and D3.
+  requests D4–D6 here, its `v1.4.0-LIBRARY.md` ("Dependency changes") listed D1 and D3, and its `v1.5.0-POLISH-AND-PACKAGING.md` lists D1 (login error kinds).
 - **`lumen-cli`** pins `v1.0.10` on `feature/remote-config` (its `main` is on `v1.0.4`) and exercises this
   crate directly. Its bump to `v1.3.x` needs the `_ => {}` arms recorded in the `v1.3.0` devlog. It has no roadmap of its own: it
   follows the newest tag and shows what works. Bumping it is the smoke test for each release.
@@ -47,7 +47,7 @@ later as its own patch.
 |---|---|---|---|
 | (none, internal) | `v1.2.0` ✅ | Test-constructible types (§7.1) | `v1.1.0` ✅ |
 | `v1.3.0` Download management | `v1.3.0` | Cancel-safe contract (§7.2), download error kinds (§7.3), free-space query and mount fix (§7.4, D4, D5), no save truncation (§7.6 part), per-product sizes (§7.10), Proton cleanup on failure (D6) | `v1.2.0` ✅ |
-| `v1.4.0` Library and account | `v1.4.0` | `clear_cache` (§7.12, D3), `remove_products` (§7.13, D1); also absorbs, without a Dart change, owned games that don't silently shrink, `download_game` skipping verified chunks, cheaper lookups | `v1.3.0` ✅ |
+| `v1.4.0` Library and account | `v1.4.0` ✅ | `clear_cache` (§7.12, D3), `remove_products` (§7.13, D1); also absorbs, without a Dart change, owned games that don't silently shrink, `download_game` skipping verified chunks, cheaper lookups | `v1.3.0` ✅ |
 | `v1.5.0` UI polish and packaging | `v1.5.0` | Login error kinds (§7.3 auth part), breaking error and API cleanup | `v1.4.0` |
 | `v1.6.0` Extras | — | Nothing | — |
 | Not on Lumen's roadmap yet (cloud saves) | `v1.6.0` | Save sync metadata, `cloudStorage.enabled`, file subsets (§7.6) | `v1.5.0` |
@@ -230,18 +230,20 @@ Follow-up patches (`v1.3.1+`), one per tag:
 The bridge's `v1.5.0` is its breaking cleanup, so the breaking error changes here ship with it and
 the bridge migrates once.
 
-- A status-aware `AuthError`: invalid or expired login code, revoked refresh token, and network
-  failure are separate variants. This is what Lumen's login screen needs for "accurate errors"
+- A status-aware `AuthError`: `ClientError { inner }` is replaced by `InvalidLoginCode`,
+  `SessionRevoked`, `NetworkError`, `Rejected` and `InvalidResponse`, so an invalid or expired login
+  code, a revoked refresh token and a network failure are separate variants. The saves grant reports
+  the same kinds (a behavior change). `#[non_exhaustive]` goes on the six remaining error enums. This is what Lumen's login screen needs for "accurate errors"
   (bridge §7.3 auth part, GAPS "Medium — duplication & consistency").
 - `GogDlError::SavesError(#[from] SavesError)`, and the four saves methods return `GogDlError`
   (GAPS "Medium — cloud saves").
-- Discuss deprecating one of `download_game`/`repair_game`, which do the same since `v1.3.0`.
+- Deprecate `repair_game` in favor of `download_game` (they do the same since `v1.3.0`); it is removed in `v1.5.0`.
 - Remove `DownloadEvent::Preparing` and `Prepared`, deprecated in `v1.2.3`.
 - **Breaking:** remove `GameBuilds.game_title` (always empty; GOG's builds listing has no title).
 - Remove the dead `Http`/`UrlParseError`/`NetworkError`/`DecodeError`/`DeflateError` variants, and
   `FileSystemError`'s `FileMetadataError` and `FileCreationError`, which no public method returns.
-- Remove `SaveFile::relative_path`, and either export or un-`pub` the path sanitizers from
-  `a813975` (GAPS "Low — style / clippy").
+- Remove `SaveFile::relative_path`, and make the `src/fs/` items from
+  `a813975` `pub(crate)` (GAPS "Low — style / clippy").
 - **Breaking** for bridge `v1.5.0`: the error enums and the removed items.
 
 Follow-up patches (`v1.4.1+`), one per tag:
