@@ -717,8 +717,8 @@ in `v1.3.0` (once planned as the patches `v1.2.4` and `v1.2.5`).
 - [x] **`DownloadEvent::Preparing`/`Prepared` are emitted back-to-back with no work between them.**
   `engine.rs:253-255`. Collapse them, or do real work in between.
 
-  Deprecated in `v1.2.3`, removed in `v1.4.0`: both are `#[deprecated]` and still sent, followed by
-  `DownloadEvent::Started`.
+  Deprecated in `v1.2.3`, removed in `v1.4.0`: `DownloadEvent::Started` is now the download stage's
+  first event.
 
 - [x] **`v1.0.1`'s tag doesn't match its `Cargo.toml`, and `main` is ahead of the newest tag.**
   `v1.0.1` (`8682797`) was tagged with `version = "1.0.0"` still in `Cargo.toml`, so a `Cargo.lock`

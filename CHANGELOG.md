@@ -4,6 +4,37 @@ One section per tag, newest first. Consumers pin this crate by git tag. A change
 behind an unchanged signature is called out as **Behavior change**, and a signature change as
 **Breaking**. The `v0.x` and `-restart` tags predate this file and aren't covered.
 
+## 1.4.0
+
+Errors and API cleanup: what the bridge's `v1.5.0` asks of this crate. **Breaking** (see below), so
+consumers adopt it together with the change that fixes their `match`es and call sites.
+
+* **Breaking:** `AuthError::ClientError { inner }` is replaced by `InvalidLoginCode { description }`,
+  `SessionRevoked { description }`, `NetworkError(reqwest::Error)`, `Rejected { status, body }` and
+  `InvalidResponse(serde_json::Error)`. The grant decides between the first two: `invalid_grant` on
+  the `authorization_code` grant is a bad or expired login code, on the `refresh_token` grant a
+  revoked session (log in again). A dead refresh token reaches the caller of every authenticated
+  method as `SessionRevoked`.
+* **Breaking:** `#[non_exhaustive]` on `GogDlError`, `ClientError`, `AuthError`, `GamesError`,
+  `DepotError` and `SecureLinksError`, so a `match` outside the crate needs a `_` arm.
+* **Breaking:** `GogDlError::SavesError(#[from] SavesError)`; `get_save_files`, `get_remote_config`,
+  `download_save_files` and `upload_save_files` return `GogDlError` like every other method.
+* **Breaking:** the dead `UrlParseError`, `NetworkError`, `Http`, `DecodeError` and `DeflateError`
+  variants are removed from `GamesError`, `DepotError` and `SecureLinksError`, the first four from
+  `DownloadError`, and `FileSystemError::FileMetadataError` and `FileCreationError` go too. No public
+  method returned them.
+* **Breaking:** `DownloadEvent::Preparing` and `Prepared` (deprecated in `v1.2.3`) are removed;
+  `Started` is now the first event of the download stage. **Behavior change:** the event sequence.
+* **Breaking:** `GameBuilds.game_title` (always empty) and `SaveFile::relative_path` are removed.
+* **Behavior change:** the cloud saves grant classifies a failure like the main login does, so a dead
+  session is `SavesError::ClientError(ClientError::AuthError(SessionRevoked { .. }))` instead of a raw
+  HTTP error. The signature is unchanged.
+* **Deprecated:** `repair_game`; use `download_game`, which verifies and resumes. It is removed in
+  `v1.5.0`. A consumer that builds with `clippy -D warnings` fails on the warning.
+* Internal: the `src/fs/` items and the methods documented as not reachable from outside the crate
+  are `pub(crate)`, and `SavesAuth`'s unread fields are dropped. Nothing outside the crate could
+  name them.
+
 ## 1.3.2
 
 * `GameDetails.id` is the id passed to `get_game_details` (it was always `0`), on the fresh and the
