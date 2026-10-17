@@ -10,7 +10,7 @@
   "osvVulnerabilityAlerts": true,
   "vulnerabilityAlerts": { "minimumReleaseAge": null, "enabled": true },
   "ignoreDeps": ["gogdl-lib-ci"],
-  "constraints": { "rust": "1.98.1" },
+  "constraints": { "rust": "1.99.0" },
   "lockFileMaintenance": {
     "description": "Off: it runs a plain `cargo update`, which bypasses the 7-day age check for every transitive crate.",
     "enabled": false

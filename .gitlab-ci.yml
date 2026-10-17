@@ -45,7 +45,7 @@ stages:
 default:
   interruptible: true # with "Auto-cancel redundant pipelines" on, a new push cancels the older run
   image:
-    name: gogdl-lib-ci:rust-1.98.1-r3
+    name: gogdl-lib-ci:rust-1.99.0-r3
     pull_policy: if-not-present
 
 # Everything that gets cached must live inside the project dir. The toolchain is in the image

@@ -142,7 +142,7 @@ impl SecureLinksManager {
             self.fetches.fetch_add(1, Relaxed);
             if self
                 .failing_fetches
-                .fetch_update(Relaxed, Relaxed, |n| n.checked_sub(1))
+                .try_update(Relaxed, Relaxed, |n| n.checked_sub(1))
                 .is_ok()
             {
                 return Err(SecureLinksError::NoSecureLink);
