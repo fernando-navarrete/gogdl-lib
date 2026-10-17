@@ -193,6 +193,39 @@ mod tests {
         }
     }
 
+    // Captured from the real endpoint (v1.4.0 plan, step 1): a dead refresh token
+    // is `400 invalid_grant` for a game's client too. Today it reaches the caller as
+    // a raw `HttpError`; step 4 classifies it as `SessionRevoked`.
+    #[tokio::test]
+    async fn a_dead_session_is_a_raw_http_error_today() {
+        use crate::test_support::{ChunkServer, Reply};
+        let body = include_str!("../../tests/fixtures/token_error_saves_refresh_garbage.json");
+        let server = ChunkServer::start().await;
+        server.script(
+            "/token",
+            vec![Reply::StatusBody(400, body.as_bytes().to_vec())],
+        );
+        let err = SavesAuth::exchange(
+            &HttpClient::new_with_client(reqwest::Client::new()),
+            &format!("{}/token", server.base_url()),
+            "client",
+            "SECRET-SENTINEL",
+            "REFRESH-SENTINEL",
+        )
+        .await
+        .err()
+        .unwrap();
+        let SavesError::ClientError(ClientError::HttpError { status, body: got }) = &err else {
+            panic!("expected a raw HttpError, got {err:?}");
+        };
+        assert_eq!(status.as_u16(), 400);
+        assert_eq!(got, body);
+        for text in [err.to_string(), format!("{err:?}")] {
+            assert!(!text.contains("SECRET-SENTINEL"), "leaked: {text}");
+            assert!(!text.contains("REFRESH-SENTINEL"), "leaked: {text}");
+        }
+    }
+
     #[test]
     fn object_url_addresses_the_object_in_the_users_storage_area() {
         let url = auth()

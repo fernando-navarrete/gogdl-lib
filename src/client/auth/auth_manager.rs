@@ -194,6 +194,56 @@ mod tests {
         }
     }
 
+    // Captured from the real endpoint (v1.4.0 plan, step 1): every dead grant is
+    // `400 invalid_grant`. Today each lands in the same stringified
+    // `ClientError { inner }`; step 3 flips this to `InvalidLoginCode` and
+    // `SessionRevoked`.
+    #[tokio::test]
+    async fn token_error_fixtures_are_opaque_client_errors_today() {
+        let login: &[(&str, &str)] = &[
+            ("grant_type", "authorization_code"),
+            ("code", CODE),
+            ("client_secret", CLIENT_SECRET),
+        ];
+        let refresh: &[(&str, &str)] = &[
+            ("grant_type", "refresh_token"),
+            ("refresh_token", REFRESH),
+            ("client_secret", CLIENT_SECRET),
+        ];
+        let cases = [
+            (
+                include_str!("../../../tests/fixtures/token_error_bad_login_code.json"),
+                login,
+            ),
+            (
+                include_str!("../../../tests/fixtures/token_error_refresh_garbage.json"),
+                refresh,
+            ),
+        ];
+        let server = ChunkServer::start().await;
+        for (body, form) in cases {
+            server.script(
+                "/token",
+                vec![Reply::StatusBody(400, body.as_bytes().to_vec())],
+            );
+            let url = format!("{}/token", server.base_url());
+            let err = AuthManager::exchange(
+                &HttpClient::new_with_client(reqwest::Client::new()),
+                &url,
+                form,
+            )
+            .await
+            .err()
+            .unwrap();
+            let AuthError::ClientError { inner } = &err else {
+                panic!("expected ClientError, got {err:?}");
+            };
+            assert!(inner.contains("status: 400"), "{inner}");
+            assert!(inner.contains("invalid_grant"), "{inner}");
+            no_secrets(&err);
+        }
+    }
+
     #[tokio::test]
     async fn a_failed_login_exchange_leaks_no_secret() {
         let server = ChunkServer::start().await;
