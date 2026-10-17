@@ -27,11 +27,10 @@ struct SummaryRecord {
 }
 
 impl GameSummary {
-    /// Not reachable from outside the crate — `GamesManager` is not
-    /// exported. Call
+    /// Call
     /// [`GogDl::get_game_summary`](crate::GogDl::get_game_summary) instead,
     /// which delegates here internally.
-    pub async fn get_game_summary(
+    pub(crate) async fn get_game_summary(
         games_manager: &GamesManager,
         game_id: ProductId,
     ) -> Result<GameSummary, GamesError> {

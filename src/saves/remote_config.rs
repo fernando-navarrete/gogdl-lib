@@ -21,8 +21,7 @@ pub struct RemoteConfig {
 }
 
 impl RemoteConfig {
-    /// Not reachable from outside the crate — `SavesManager` is not
-    /// exported. Call
+    /// Call
     /// [`GogDl::get_remote_config`](crate::GogDl::get_remote_config)
     /// instead, which delegates here internally and documents the full
     /// contract.
@@ -39,7 +38,7 @@ impl RemoteConfig {
     /// Cached per `client_id` until `SavesManager::clear_cache`. The manager's
     /// `inner` lock is held only for the lookup and the insert, never across
     /// the fetch, so concurrent calls for an uncached game may each fetch.
-    pub async fn get_remote_config(
+    pub(crate) async fn get_remote_config(
         saves_manager: &SavesManager,
         game_id: i32,
         build_name: &str,

@@ -45,11 +45,10 @@ pub struct ScreenshotLink {
 const SCREENSHOT_FORMATTER: &str = "product_card_screenshot_748_2x";
 
 impl GameScreenshots {
-    /// Not reachable from outside the crate — `GamesManager` is not
-    /// exported. Call
+    /// Call
     /// [`GogDl::get_game_screenshots`](crate::GogDl::get_game_screenshots)
     /// instead, which delegates here internally.
-    pub async fn get_game_screenshots(
+    pub(crate) async fn get_game_screenshots(
         games_manager: &GamesManager,
         game_id: ProductId,
     ) -> Result<GameScreenshots, GamesError> {

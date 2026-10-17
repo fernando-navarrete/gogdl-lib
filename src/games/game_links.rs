@@ -52,11 +52,10 @@ fn is_game_product_type(product_type: &str) -> bool {
 }
 
 impl GameLinks {
-    /// Not reachable from outside the crate — `GamesManager` is not
-    /// exported. Call
+    /// Call
     /// [`GogDl::get_game_links`](crate::GogDl::get_game_links) instead,
     /// which delegates here internally.
-    pub async fn get_game_links(
+    pub(crate) async fn get_game_links(
         games_manager: &GamesManager,
         game_id: ProductId,
     ) -> Result<GameLinks, GamesError> {

@@ -27,34 +27,6 @@ pub struct SaveFile {
 
 impl SaveFile {
     /// The file's path relative to the directory the caller keeps this
-    /// game's saves in, assuming [`name`](Self::name) is laid out as
-    /// `saves/<location>/<path>`: the `saves/` prefix (tolerated if absent)
-    /// and the segment after it are always dropped.
-    ///
-    /// `saves/__default/profile/slot1.sav` becomes `profile/slot1.sav`. That
-    /// assumption does not hold for every game. A game whose location is
-    /// itself named `saves`, like Cyberpunk 2077, stores
-    /// `saves/AutoSave-0/sav.dat`, and this method drops `AutoSave-0` along
-    /// with the prefix, so every slot collapses onto `sav.dat`. Prefer
-    /// [`relative_path_in`](Self::relative_path_in), which only drops a
-    /// segment that is a declared location.
-    ///
-    /// The result is still untrusted text — it is resolved against the
-    /// caller's directory by `PathResolver`, which rejects anything that
-    /// escapes it.
-    ///
-    /// # Errors
-    /// [`SavesError::InvalidSaveFileName`] if nothing is left after the
-    /// location segment.
-    pub fn relative_path(&self) -> Result<&str, SavesError> {
-        let name = self.name.strip_prefix("saves/").unwrap_or(&self.name);
-        match name.split_once('/') {
-            Some((_location, relative)) if !relative.is_empty() => Ok(relative),
-            _ => Err(SavesError::InvalidSaveFileName(self.name.clone())),
-        }
-    }
-
-    /// The file's path relative to the directory the caller keeps this
     /// game's saves in, dropping a leading segment of [`name`](Self::name)
     /// only when it really is one of the game's declared `locations`
     /// (from [`RemoteConfig::get_locations`](crate::RemoteConfig::get_locations)).
@@ -119,8 +91,7 @@ impl SaveFile {
         }
     }
 
-    /// Not reachable from outside the crate — `SavesManager` is not
-    /// exported. Call
+    /// Call
     /// [`GogDl::get_save_files`](crate::GogDl::get_save_files) instead,
     /// which delegates here internally and documents the full contract.
     ///
@@ -129,7 +100,7 @@ impl SaveFile {
     /// `cloudstorage.gog.com/v1/{user_id}/{client_id}` with the game-scoped
     /// access token as a bearer token, deserializing the JSON array into
     /// [`SaveFile`]s. The request is made once, without retries.
-    pub async fn get_save_files(
+    pub(crate) async fn get_save_files(
         saves_manager: &SavesManager,
         game_id: i32,
         build_name: &str,
@@ -194,34 +165,6 @@ mod tests {
             hash: String::new(),
             name: name.to_string(),
             content_type: String::new(),
-        }
-    }
-
-    #[test]
-    fn relative_path_strips_prefix_and_location() {
-        let file = save_file("saves/__default/profile/slot1.sav");
-        assert_eq!(file.relative_path().unwrap(), "profile/slot1.sav");
-    }
-
-    #[test]
-    fn relative_path_handles_file_directly_under_location() {
-        let file = save_file("saves/__default/config.ini");
-        assert_eq!(file.relative_path().unwrap(), "config.ini");
-    }
-
-    #[test]
-    fn relative_path_tolerates_missing_saves_prefix() {
-        let file = save_file("__default/config.ini");
-        assert_eq!(file.relative_path().unwrap(), "config.ini");
-    }
-
-    #[test]
-    fn relative_path_rejects_name_with_nothing_after_location() {
-        for name in ["saves/__default", "saves/__default/", "config.ini"] {
-            assert!(matches!(
-                save_file(name).relative_path(),
-                Err(SavesError::InvalidSaveFileName(_))
-            ));
         }
     }
 

@@ -18,11 +18,10 @@ impl ProtonGeReleasesPage {
     pub fn releases(&self) -> &[ProtonGeRelease] {
         &self.releases
     }
-    /// Not reachable from outside the crate — `ProtonManager` is not
-    /// exported. Call
+    /// Call
     /// [`GogDl::get_proton_releases`](crate::GogDl::get_proton_releases)
     /// instead, which delegates here internally.
-    pub async fn get_releases_page(
+    pub(crate) async fn get_releases_page(
         page: u32,
         per_page: u32,
         proton_manager: &ProtonManager,

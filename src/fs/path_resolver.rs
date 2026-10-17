@@ -8,13 +8,13 @@ use tokio::sync::OnceCell;
 
 use crate::fs::error::FileSystemError;
 
-pub struct PathResolver {
+pub(crate) struct PathResolver {
     canonical_base: PathBuf,
     dir_cache: DashMap<String, Arc<OnceCell<PathBuf>>>,
 }
 
 impl PathResolver {
-    pub async fn new(base: PathBuf) -> Result<Self, FileSystemError> {
+    pub(crate) async fn new(base: PathBuf) -> Result<Self, FileSystemError> {
         if let Err(e) = fs::create_dir_all(&base).await {
             return Err(FileSystemError::PathResolverCreationError(e));
         };
@@ -29,22 +29,22 @@ impl PathResolver {
     }
 
     /// The canonicalized base directory this resolver was constructed with.
-    pub fn base(&self) -> &Path {
+    pub(crate) fn base(&self) -> &Path {
         &self.canonical_base
     }
 
-    pub async fn get_file_size(&self, path: &Path) -> io::Result<u64> {
+    pub(crate) async fn get_file_size(&self, path: &Path) -> io::Result<u64> {
         Ok(fs::metadata(path).await?.len())
     }
 
     /// Checks that `required` bytes fit on the disk holding the base directory, with the same
     /// lookup as [`free_space_at`].
-    pub fn check_free_space(&self, required: u64) -> Result<(), FreeSpaceShortfall> {
+    pub(crate) fn check_free_space(&self, required: u64) -> Result<(), FreeSpaceShortfall> {
         let disks = Disks::new_with_refreshed_list();
         check_fits(&self.canonical_base, required, disk_entries(&disks))
     }
 
-    pub async fn allocate_file(
+    pub(crate) async fn allocate_file(
         &self,
         raw_relative_path: &str,
         total_size: u64,
@@ -66,7 +66,7 @@ impl PathResolver {
         Ok(path)
     }
 
-    pub async fn resolve(
+    pub(crate) async fn resolve(
         &self,
         raw_dir: &str,
         raw_filename: &str,
@@ -96,7 +96,10 @@ impl PathResolver {
         Ok(validated_dir.join(safe_filename))
     }
 
-    pub async fn resolve_path(&self, raw_relative_path: &str) -> Result<PathBuf, FileSystemError> {
+    pub(crate) async fn resolve_path(
+        &self,
+        raw_relative_path: &str,
+    ) -> Result<PathBuf, FileSystemError> {
         let normalized = normalize_separators(raw_relative_path);
         let path = Path::new(normalized.as_ref());
 
@@ -118,7 +121,7 @@ impl PathResolver {
 
         self.resolve(&raw_dir, &raw_filename).await
     }
-    pub async fn open_file(
+    pub(crate) async fn open_file(
         &self,
         raw_relative_path: &str,
         write: bool,
@@ -130,7 +133,7 @@ impl PathResolver {
         }
     }
 
-    pub async fn resolve_existing_path(
+    pub(crate) async fn resolve_existing_path(
         &self,
         raw_relative_path: &str,
     ) -> Result<Option<PathBuf>, FileSystemError> {
@@ -196,7 +199,7 @@ impl PathResolver {
 /// Where a manifest path lands under the install directory: separators normalized and every
 /// component sanitized, so `..` and root components vanish. The one place that decides it, so
 /// whatever the downloader wrote is found again by the same name.
-pub fn install_relative_path(raw_relative_path: &str) -> Result<PathBuf, FileSystemError> {
+pub(crate) fn install_relative_path(raw_relative_path: &str) -> Result<PathBuf, FileSystemError> {
     let normalized = normalize_separators(raw_relative_path);
     let path = Path::new(normalized.as_ref());
 
@@ -228,7 +231,7 @@ pub fn install_relative_path(raw_relative_path: &str) -> Result<PathBuf, FileSys
 /// Available bytes on the disk holding `path`, which needn't exist and is never created: the
 /// nearest existing ancestor stands in for it. The same lookup as
 /// [`PathResolver::check_free_space`], so a caller's pre-check and the download's own agree.
-pub async fn free_space_at(path: &Path) -> Result<u64, FileSystemError> {
+pub(crate) async fn free_space_at(path: &Path) -> Result<u64, FileSystemError> {
     free_space_of(&nearest_existing_ancestor(path).await?)
 }
 
@@ -248,7 +251,7 @@ fn disk_entries(disks: &Disks) -> impl Iterator<Item = (&Path, u64)> {
 
 /// Why a free-space pre-flight check failed, with the numbers the caller reports.
 #[derive(Debug, PartialEq, Eq)]
-pub enum FreeSpaceShortfall {
+pub(crate) enum FreeSpaceShortfall {
     /// No disk matches the path.
     Unresolved(PathBuf),
     /// The disk holding the path has less than `required` bytes available.
@@ -312,7 +315,7 @@ fn normalize_separators(input: &str) -> std::borrow::Cow<'_, str> {
     }
 }
 
-pub fn sanitize_relative_path(input: &str) -> PathBuf {
+pub(crate) fn sanitize_relative_path(input: &str) -> PathBuf {
     let normalized = normalize_separators(input);
     let path = Path::new(normalized.as_ref());
     let mut safe = PathBuf::new();
@@ -328,7 +331,7 @@ pub fn sanitize_relative_path(input: &str) -> PathBuf {
     safe
 }
 
-pub fn sanitize_filename(name: &str) -> String {
+pub(crate) fn sanitize_filename(name: &str) -> String {
     let mut result: String = name
         .chars()
         .map(|c| match c {

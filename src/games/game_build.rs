@@ -42,8 +42,7 @@ pub struct GameBuild {
 ///
 /// # Constructing in tests
 ///
-/// Deserialize it from the builds listing. `game_title` is skipped by serde, so
-/// it stays empty.
+/// Deserialize it from the builds listing.
 ///
 /// ```
 /// use gogdl_lib::GameBuilds;
@@ -55,16 +54,9 @@ pub struct GameBuild {
 /// )
 /// .unwrap();
 /// assert_eq!(builds.items.len(), 1);
-/// assert_eq!(builds.game_title, "");
 /// ```
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct GameBuilds {
-    /// Always the empty string: GOG's builds listing carries no title and
-    /// filling it would take a second request (use
-    /// [`GogDl::get_game_details`](crate::GogDl::get_game_details) for the
-    /// title). Removed in `v1.4.0`.
-    #[serde(skip)]
-    pub game_title: String,
     /// The number of builds in `items`.
     pub count: i32,
     /// The builds themselves, in the order GOG returned them.
@@ -72,11 +64,10 @@ pub struct GameBuilds {
 }
 
 impl GameBuilds {
-    /// Not reachable from outside the crate — `GamesManager` is not
-    /// exported. Call
+    /// Call
     /// [`GogDl::get_game_builds`](crate::GogDl::get_game_builds) instead,
     /// which delegates here internally.
-    pub async fn get_game_builds(
+    pub(crate) async fn get_game_builds(
         games_manager: &GamesManager,
         game_id: ProductId,
     ) -> Result<Self, GamesError> {

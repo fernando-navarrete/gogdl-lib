@@ -17,8 +17,7 @@ pub struct GameSaveIds {
 }
 
 impl GameSaveIds {
-    /// Not reachable from outside the crate — `SavesManager` is not
-    /// exported. Called through `SavesManager::get_game_save_ids`.
+    /// Called through `SavesManager::get_game_save_ids`.
     ///
     /// Returns the credentials for `(game_id, build_name)` from the
     /// manager's `ids_cache` if present; otherwise finds the build whose
@@ -36,7 +35,7 @@ impl GameSaveIds {
     ///   matching `version_name`.
     /// - [`SavesError::GamesError`] if listing the game's builds fails.
     /// - [`SavesError::DepotError`] if fetching the build metadata fails.
-    pub async fn get_game_save_ids(
+    pub(crate) async fn get_game_save_ids(
         saves_manager: &SavesManager,
         game_id: i32,
         build_name: &str,

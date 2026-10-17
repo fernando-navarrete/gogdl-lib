@@ -159,6 +159,7 @@ impl SecureLinksManager {
     }
     /// Whether `game_id` has a cached, unexpired link set. `false` if
     /// nothing is cached for it yet, or a fetch for it is still running.
+    #[cfg(test)]
     pub async fn is_valid(&self, game_id: &str) -> bool {
         let lock = self.inner.lock().await;
         lock.links_cache

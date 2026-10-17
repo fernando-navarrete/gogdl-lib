@@ -45,11 +45,12 @@ fn keep_games(
 }
 
 impl OwnedGames {
-    /// Not reachable from outside the crate — `GamesManager` is not
-    /// exported. Call
+    /// Call
     /// [`GogDl::get_owned_games`](crate::GogDl::get_owned_games) instead,
     /// which delegates here internally.
-    pub async fn get_owned_games(games_manager: &GamesManager) -> Result<OwnedGames, GamesError> {
+    pub(crate) async fn get_owned_games(
+        games_manager: &GamesManager,
+    ) -> Result<OwnedGames, GamesError> {
         let owned_products = games_manager.get_owned_products().await?;
 
         // `product_type` answers from the cache or fetches and caches on

@@ -653,16 +653,24 @@ in `v1.3.0` (once planned as the patches `v1.2.4` and `v1.2.5`).
   file without reproducing GOG's exact gzip stream. Correct the doc, and verify against `hash` when
   there's no ETag.
 
-- [ ] **`SaveFile::relative_path` is still public, although its own doc says it is wrong for some
-  games.** It collapses every Cyberpunk slot onto `sav.dat` (`save_files.rs:34-40`) and nothing in
-  the crate calls it. Mark it `#[deprecated]` in favor of `relative_path_in`, or remove it.
+- [x] **`SaveFile::relative_path` is still public, although its own doc says it is wrong for some
+  games.** Fixed in `v1.4.0`: removed. It collapsed every Cyberpunk slot onto `sav.dat`; use
+  `relative_path_in`. Its four tests are deleted, since `relative_path_in` tests cover the same cases.
 
-- [ ] **`a813975` ("Expose Save Location APIs and path sanitizers") exposes nothing outside the
-  crate.** It made `PathResolver`, `sanitize_filename` and `sanitize_relative_path` `pub`
-  (`src/fs/mod.rs:5`) and loosened `save_location`/`save_files` items. But `mod fs` and
-  `mod save_location` are private and `lib.rs` re-exports none of them, so the change is crate-wide
-  visibility only. If a consumer (for example, `lumen-cli` sanitizing a Proton tag the same way) was
-  meant to use them, they still can't. Otherwise the commit title misdescribes it.
+- [x] **`a813975` ("Expose Save Location APIs and path sanitizers") exposes nothing outside the
+  crate.** Fixed in `v1.4.0` (D5): `PathResolver`, `FreeSpaceShortfall`, `free_space_at`,
+  `install_relative_path`, `sanitize_filename` and `sanitize_relative_path` are `pub(crate)`; only
+  `FileSystemError` is public. The 14 methods documented "Not reachable from outside the crate"
+  (`GameBuilds::get_game_builds`, `SaveFile::get_save_files`, ...) are `pub(crate)` too. That
+  surfaced dead code: `SavesAuth`'s four unread fields are gone and `SecureLinksManager::is_valid` is
+  `#[cfg(test)]`.
+
+- [ ] **`pub` items in private modules that nothing re-exports.** `-W unreachable_pub` flags 139
+  sites after `v1.4.0` step 8 (mostly the managers' methods in `games_manager.rs`,
+  `download_manager.rs`, `saves_manager.rs`, `auth_manager.rs`, `depot_manager.rs`, plus `secure_links`,
+  `constants`, `downloader/util`, `engine.rs`). It is visibility only. `DownloadableProduct.depots` is
+  still a `pub` field of the unexported `Depot`. Make them `pub(crate)` and add
+  `#![warn(unreachable_pub)]` to `lib.rs` so it stays that way.
 
 - [ ] **The download hot path allocates and locks once per network read.** To share `stream_chunk`
   with the Proton downloader, `f4d7388` changed its callback from `AsyncFnMut(Bytes)` to

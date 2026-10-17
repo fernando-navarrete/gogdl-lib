@@ -22,17 +22,8 @@ use crate::{
 pub struct SavesAuth {
     /// Short-lived bearer token sent on every authenticated request.
     pub access_token: String,
-    /// Long-lived token used to obtain a new `access_token` once it expires.
-    /// Rotates on every refresh.
-    pub refresh_token: String,
     /// Access token lifetime in seconds, as reported at issue/refresh time.
     pub expires_in: i32,
-    /// Token type as reported by GOG (currently always `"bearer"`).
-    pub token_type: String,
-    /// GOG session identifier tied to this auth grant.
-    pub session_id: String,
-    /// OAuth scope string, if GOG returned one.
-    pub scope: Option<String>,
     /// The authenticated account's GOG user ID.
     pub user_id: String,
     /// Unix timestamp (seconds) at which `access_token` expires, computed
@@ -42,8 +33,7 @@ pub struct SavesAuth {
 }
 
 impl SavesAuth {
-    /// Not reachable from outside the crate — `SavesManager` is not
-    /// exported. Called through `SavesManager::get_saves_auth`; the
+    /// Called through `SavesManager::get_saves_auth`; the
     /// public-facing contract of the grant (caching, expiry, no refresh) is
     /// documented on [`GogDl::get_save_files`](crate::GogDl::get_save_files).
     ///
@@ -52,7 +42,7 @@ impl SavesAuth {
     /// `SavesManager::get_game_save_ids`, performs the exchange, and caches
     /// the result. Holds the manager's `inner` lock only for the cache lookup
     /// and insert, not across the token exchange.
-    pub async fn get_saves_auth(
+    pub(crate) async fn get_saves_auth(
         saves_manager: &SavesManager,
         game_id: i32,
         build_name: &str,
@@ -164,11 +154,7 @@ mod tests {
     fn auth() -> SavesAuth {
         SavesAuth {
             access_token: String::new(),
-            refresh_token: String::new(),
             expires_in: 0,
-            token_type: String::new(),
-            session_id: String::new(),
-            scope: None,
             user_id: "42".to_string(),
             valid_until: None,
         }

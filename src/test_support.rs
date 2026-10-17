@@ -273,11 +273,7 @@ pub fn zlib(data: &[u8]) -> Vec<u8> {
 pub fn saves_auth() -> crate::saves::saves_auth::SavesAuth {
     crate::saves::saves_auth::SavesAuth {
         access_token: "token".into(),
-        refresh_token: String::new(),
         expires_in: 3600,
-        token_type: "bearer".into(),
-        session_id: String::new(),
-        scope: None,
         user_id: "42".into(),
         valid_until: None,
     }

@@ -21,11 +21,10 @@ pub struct DownloadableProduct {
 }
 
 impl DownloadableProduct {
-    /// Not reachable from outside the crate — `DownloadManager` is not
-    /// exported. Call
+    /// Call
     /// [`GogDl::get_downloadable_products`](crate::GogDl::get_downloadable_products)
     /// instead, which delegates here internally.
-    pub async fn get_downloadable_products(
+    pub(crate) async fn get_downloadable_products(
         download_manager: &DownloadManager,
         game_id: i32,
         build_name: &str,

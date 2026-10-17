@@ -24,11 +24,10 @@ enum DetailsResponse {
 }
 
 impl GameDetails {
-    /// Not reachable from outside the crate — `GamesManager` is not
-    /// exported. Call
+    /// Call
     /// [`GogDl::get_game_details`](crate::GogDl::get_game_details) instead,
     /// which delegates here internally.
-    pub async fn get_game_details(
+    pub(crate) async fn get_game_details(
         games_manager: &GamesManager,
         game_id: ProductId,
     ) -> Result<GameDetails, GamesError> {

@@ -52,11 +52,10 @@ struct Product {
 }
 
 impl ProductDetails {
-    /// Not reachable from outside the crate — `DepotManager` is not
-    /// exported. Call
+    /// Call
     /// [`GogDl::get_product_details`](crate::GogDl::get_product_details)
     /// instead, which delegates here internally.
-    pub async fn get_product_details(
+    pub(crate) async fn get_product_details(
         download_manager: &DepotManager,
         product_id: &str,
     ) -> Result<ProductDetails, DepotError> {

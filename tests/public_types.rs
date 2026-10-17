@@ -20,8 +20,6 @@ fn game_builds_deserialize_from_a_captured_listing() {
         serde_json::from_str(include_str!("fixtures/game_builds.json")).unwrap();
     assert_eq!(builds.count, 2);
     assert_eq!(builds.items.len(), 2);
-    // `game_title` is `#[serde(skip)]`, so it is always empty.
-    assert_eq!(builds.game_title, "");
     let newest = &builds.items[0];
     assert_eq!(newest.build_id, "58989493373906337");
     assert_eq!(newest.version_name, "2.31a");
