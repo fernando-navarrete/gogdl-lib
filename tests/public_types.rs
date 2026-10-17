@@ -8,8 +8,8 @@
 
 use gogdl_lib::{
     Chunk, DepotFile, DownloadError, DownloadEvent, DownloadStageEvent, FileAllocationEvent,
-    FileSizeVerificationEvent, FileSystemError, GameBuild, GameBuilds, OwnedGames, ProductDetails,
-    ProductRemoval, ProductSize, ProtonDownloadEvent, ProtonError, ProtonGeRelease,
+    FileSizeVerificationEvent, FileSystemError, GameBuild, GameBuilds, GogDlError, OwnedGames,
+    ProductDetails, ProductRemoval, ProductSize, ProtonDownloadEvent, ProtonError, ProtonGeRelease,
     ProtonGeReleasesPage, SavesDownloadEvent, SavesError, SavesUploadEvent, VerificationEvent,
 };
 use std::{io, path::PathBuf};
@@ -318,6 +318,10 @@ fn file_system_errors_can_be_built_and_matched() {
     assert!(matches!(
         SavesError::from(FileSystemError::PathResolutionError(io::Error::other("x"))),
         SavesError::FileSystemError(FileSystemError::PathResolutionError(_))
+    ));
+    assert!(matches!(
+        GogDlError::from(SavesError::BuildNotFound),
+        GogDlError::SavesError(SavesError::BuildNotFound)
     ));
 }
 

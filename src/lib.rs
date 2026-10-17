@@ -31,18 +31,13 @@
 //! Every fallible [`GogDl`] method returns [`GogDlError`], which wraps the
 //! per-layer error enum it failed in ([`AuthError`], [`ClientError`],
 //! [`DepotError`], [`DownloadError`], [`FileSystemError`], [`GamesError`], [`SecureLinksError`],
-//! [`ProtonError`] — all re-exported here so you can match on them). Auth
+//! [`ProtonError`], [`SavesError`] — all re-exported here so you can match on them). Auth
 //! failures usually arrive nested, e.g.
 //! `GogDlError::ClientError(ClientError::AuthError(_))`, since there is no
 //! flattened top-level auth variant. Any authenticated method can return
 //! [`AuthError::SessionRevoked`] (the refresh token is dead: log in again),
 //! and [`GogDl::login_with_code`] returns [`AuthError::InvalidLoginCode`]
 //! for a wrong or expired code.
-//!
-//! The exception is cloud saves: [`GogDl::get_save_files`],
-//! [`GogDl::get_remote_config`], [`GogDl::download_save_files`] and
-//! [`GogDl::upload_save_files`] return [`SavesError`] directly, which
-//! `GogDlError` has no variant for, so they need their own error path.
 //!
 //! # Proton-GE releases
 //!

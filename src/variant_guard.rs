@@ -171,7 +171,8 @@ fn gogdl_error(e: &GogDlError) {
         | GogDlError::SecureLinksError(..)
         | GogDlError::DownloadError(..)
         | GogDlError::ClientError(..)
-        | GogDlError::ProtonError(..) => {}
+        | GogDlError::ProtonError(..)
+        | GogDlError::SavesError(..) => {}
     }
 }
 

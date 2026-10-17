@@ -2,12 +2,11 @@ use thiserror::Error;
 
 use crate::{
     client::ClientError, depot::DepotError, downloader::DownloadError, games::GamesError,
-    proton::ProtonError, secure_links::SecureLinksError,
+    proton::ProtonError, saves::SavesError, secure_links::SecureLinksError,
 };
 
 /// The top-level error type returned by every fallible [`crate::GogDl`]
-/// method except the four cloud saves ones, which return
-/// [`SavesError`](crate::SavesError) directly. Wraps whichever per-layer
+/// method. Wraps whichever per-layer
 /// error enum the failure originated in; there is no flattened variant, so an
 /// auth failure typically arrives as e.g.
 /// `GogDlError::ClientError(ClientError::AuthError(_))`.
@@ -41,4 +40,8 @@ pub enum GogDlError {
     /// A Proton-GE release lookup failed — see [`ProtonError`].
     #[error("Proton error: {0}")]
     ProtonError(#[from] ProtonError),
+
+    /// A cloud saves operation failed — see [`SavesError`].
+    #[error("Saves error: {0}")]
+    SavesError(#[from] SavesError),
 }

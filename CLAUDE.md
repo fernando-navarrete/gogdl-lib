@@ -33,9 +33,7 @@ mirror of `main` and the `v*` tags, set up in GitLab's Settings → Repository �
 
 ## Capabilities and entry points
 
-All are methods on `GogDl`. Every fallible one returns `GogDlError` **except the four cloud saves
-ones, which return `SavesError`** (`GogDlError::SavesError` is planned for `v1.4.0`, GAPS "Medium —
-cloud saves"). The long-running ones report progress on an `mpsc::UnboundedSender` the caller
+All are methods on `GogDl`. Every fallible one returns `GogDlError`. The long-running ones report progress on an `mpsc::UnboundedSender` the caller
 drains concurrently.
 
 | Area | Methods |

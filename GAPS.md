@@ -198,7 +198,7 @@ The paragraph below is the baseline it started from.)* `cargo build --lib` showe
   fetched once per call and reused across the whole sequential batch, so a batch can still outlive
   its grant (the wrong-sign margin that let it start on an already-expired one was fixed in `v1.1.2`).
 
-- [ ] **The four saves methods return `SavesError`, not `GogDlError`, contradicting the crate
+- [x] **The four saves methods return `SavesError`, not `GogDlError`, contradicting the crate
   docs.** `src/lib.rs:30` says "Every fallible [`GogDl`] method returns [`GogDlError`]", and its
   list of wrapped enums (`:31-33`) omits `SavesError`. But `get_save_files`, `get_remote_config`,
   `download_save_files` and `upload_save_files` (`src/gogdl/facade.rs:494,543,640,708`) all return
@@ -208,6 +208,9 @@ The paragraph below is the baseline it started from.)* `cargo build --lib` showe
 
   The crate docs and `GogDlError`'s rustdoc were amended in `v1.1.5` to say so. The variant is
   breaking, so it stays open for `v1.4.0` (ROADMAP).
+
+  Fixed in `v1.4.0`: `GogDlError::SavesError(#[from] SavesError)`; the four saves methods return
+  `GogDlError`, and the crate docs lose the exception.
 
 ## Medium — owned games
 

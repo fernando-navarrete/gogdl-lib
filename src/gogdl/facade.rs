@@ -16,7 +16,7 @@ use crate::games::{
 };
 use crate::gogdl::error::GogDlError;
 use crate::proton::{ProtonDownloadEvent, ProtonGeRelease, ProtonGeReleasesPage, ProtonManager};
-use crate::saves::{SavesError, SavesManager};
+use crate::saves::SavesManager;
 use crate::secure_links::SecureLinksManager;
 use crate::{DownloadStageEvent, RemoteConfig, SaveFile, SavesDownloadEvent, SavesUploadEvent};
 
@@ -670,16 +670,17 @@ impl GogDl {
     /// storage request is retried, including on network errors.
     ///
     /// # Errors
-    /// - [`SavesError::BuildNotFound`] if no build of `game_id` has a
+    /// Every error is a [`GogDlError::SavesError`] wrapping one of these:
+    /// - [`crate::SavesError::BuildNotFound`] if no build of `game_id` has a
     ///   `version_name` equal to `build_name`.
-    /// - [`SavesError::GamesError`] if listing the game's builds fails
+    /// - [`crate::SavesError::GamesError`] if listing the game's builds fails
     ///   ([`ProductNotAGame`](crate::GamesError::ProductNotAGame) for a non-game).
-    /// - [`SavesError::DepotError`] if fetching the build metadata fails.
-    /// - [`SavesError::ClientError`] wrapping
+    /// - [`crate::SavesError::DepotError`] if fetching the build metadata fails.
+    /// - [`crate::SavesError::ClientError`] wrapping
     ///   [`crate::AuthError::NotAuthenticated`] if no session is logged in,
     ///   or [`crate::AuthError::TokenExpired`] if the session's access token
     ///   has expired.
-    /// - [`SavesError::ClientError`] wrapping [`crate::ClientError::AuthError`]
+    /// - [`crate::SavesError::ClientError`] wrapping [`crate::ClientError::AuthError`]
     ///   if the token exchange fails, classified as for the session's own
     ///   refresh: [`crate::AuthError::SessionRevoked`] if GOG rejects the
     ///   refresh token (the user has to log in again),
@@ -687,7 +688,7 @@ impl GogDl {
     ///   session may be fine), [`crate::AuthError::Rejected`] for any other
     ///   non-success reply, or [`crate::AuthError::InvalidResponse`] if the
     ///   reply doesn't decode.
-    /// - [`SavesError::ClientError`] wrapping
+    /// - [`crate::SavesError::ClientError`] wrapping
     ///   [`crate::ClientError::HttpError`] if the storage request returns any
     ///   non-success status, including 401 (which does not evict the cached
     ///   grant);
@@ -698,8 +699,8 @@ impl GogDl {
         &self,
         game_id: i32,
         build_name: &str,
-    ) -> Result<Vec<SaveFile>, SavesError> {
-        self.saves.get_save_files(game_id, build_name).await
+    ) -> Result<Vec<SaveFile>, GogDlError> {
+        Ok(self.saves.get_save_files(game_id, build_name).await?)
     }
     /// Fetches a game's Galaxy client remote configuration from
     /// `remote-config.gog.com`.
@@ -731,26 +732,27 @@ impl GogDl {
     /// session access token first.
     ///
     /// # Errors
-    /// - [`SavesError::BuildNotFound`] if no build of `game_id` has a
+    /// Every error is a [`GogDlError::SavesError`] wrapping one of these:
+    /// - [`crate::SavesError::BuildNotFound`] if no build of `game_id` has a
     ///   `version_name` equal to `build_name`.
-    /// - [`SavesError::GamesError`] if listing the game's builds fails
+    /// - [`crate::SavesError::GamesError`] if listing the game's builds fails
     ///   ([`ProductNotAGame`](crate::GamesError::ProductNotAGame) for a non-game).
-    /// - [`SavesError::DepotError`] if fetching the build metadata fails.
-    /// - [`SavesError::ClientError`] wrapping
+    /// - [`crate::SavesError::DepotError`] if fetching the build metadata fails.
+    /// - [`crate::SavesError::ClientError`] wrapping
     ///   [`crate::ClientError::HttpError`] if GOG publishes no remote config
     ///   for the game or otherwise rejects the request,
     ///   [`crate::ClientError::NetworkError`] if it fails in transit, or
     ///   [`crate::ClientError::DeserializationError`] if the document
     ///   doesn't match the expected shape.
     ///
-    /// [`SavesError::CloudStorageNotSupported`] is never returned here — it
+    /// [`crate::SavesError::CloudStorageNotSupported`] is never returned here — it
     /// comes from [`RemoteConfig::get_locations`] on the returned value.
     pub async fn get_remote_config(
         &self,
         game_id: i32,
         build_name: &str,
-    ) -> Result<RemoteConfig, SavesError> {
-        self.saves.get_remote_config(game_id, build_name).await
+    ) -> Result<RemoteConfig, GogDlError> {
+        Ok(self.saves.get_remote_config(game_id, build_name).await?)
     }
     /// Downloads a game's cloud saves into the Wine prefix `prefix`,
     /// reporting progress one file at a time through `tx`.
@@ -830,31 +832,32 @@ impl GogDl {
     /// token are as for [`get_save_files`](Self::get_save_files).
     ///
     /// # Errors
+    /// Every error is a [`GogDlError::SavesError`] wrapping one of these:
     /// - Everything [`get_remote_config`](Self::get_remote_config) and
     ///   [`get_save_files`](Self::get_save_files) can return. The remote
     ///   config is required: without the game's locations there is no
     ///   directory to download into.
-    /// - [`SavesError::CloudStorageNotSupported`] if the game declares no
+    /// - [`crate::SavesError::CloudStorageNotSupported`] if the game declares no
     ///   cloud save location.
-    /// - [`SavesError::InvalidSaveLocation`] or
-    ///   [`SavesError::UnknownSaveLocationVariable`] if a location is not a
+    /// - [`crate::SavesError::InvalidSaveLocation`] or
+    ///   [`crate::SavesError::UnknownSaveLocationVariable`] if a location is not a
     ///   `<?VARIABLE?>` this crate knows, e.g. the macOS-only
     ///   `<?APPLICATION_SUPPORT?>`.
-    /// - [`SavesError::WineUserDirNotFound`] if a location needs the user
+    /// - [`crate::SavesError::WineUserDirNotFound`] if a location needs the user
     ///   directory and none can be found in `prefix`.
-    /// - [`SavesError::InvalidSaveFileName`] if a listed name has no path
+    /// - [`crate::SavesError::InvalidSaveFileName`] if a listed name has no path
     ///   left once its `saves/` prefix and location segment are removed.
-    /// - [`SavesError::FileSystemError`] if a location's directory, or a
+    /// - [`crate::SavesError::FileSystemError`] if a location's directory, or a
     ///   directory for one of the files, cannot be created or resolved.
-    /// - [`SavesError::ClientError`] wrapping
+    /// - [`crate::SavesError::ClientError`] wrapping
     ///   [`crate::ClientError::HttpError`] if GOG rejects a download (e.g. an
     ///   expired token), or [`crate::ClientError::NetworkError`] if one fails
     ///   in transit.
-    /// - [`SavesError::HashMismatch`] if a file's bytes do not match its
+    /// - [`crate::SavesError::HashMismatch`] if a file's bytes do not match its
     ///   `ETag`; that file is not written.
-    /// - [`SavesError::InvalidHeader`] if a file's modification time header
+    /// - [`crate::SavesError::InvalidHeader`] if a file's modification time header
     ///   cannot be parsed; that file is not written.
-    /// - [`SavesError::Io`] if decompressing or writing a file fails.
+    /// - [`crate::SavesError::Io`] if decompressing or writing a file fails.
     pub async fn download_save_files(
         &self,
         game_id: i32,
@@ -862,10 +865,11 @@ impl GogDl {
         prefix: &Path,
         install_path: &Path,
         tx: mpsc::UnboundedSender<SavesDownloadEvent>,
-    ) -> Result<(), SavesError> {
-        self.saves
+    ) -> Result<(), GogDlError> {
+        Ok(self
+            .saves
             .download_save_files(game_id, build_name, prefix, install_path, tx)
-            .await
+            .await?)
     }
     /// Uploads a game's saves from the Wine prefix `prefix` to its cloud
     /// saves, reporting progress one file at a time through `tx`. The
@@ -914,20 +918,21 @@ impl GogDl {
     /// token are as for [`get_save_files`](Self::get_save_files).
     ///
     /// # Errors
+    /// Every error is a [`GogDlError::SavesError`] wrapping one of these:
     /// - Everything [`get_remote_config`](Self::get_remote_config) can
-    ///   return, plus [`SavesError::CloudStorageNotSupported`] if the game
+    ///   return, plus [`crate::SavesError::CloudStorageNotSupported`] if the game
     ///   declares no cloud save location.
-    /// - [`SavesError::InvalidSaveLocation`] or
-    ///   [`SavesError::UnknownSaveLocationVariable`] if a location is not a
+    /// - [`crate::SavesError::InvalidSaveLocation`] or
+    ///   [`crate::SavesError::UnknownSaveLocationVariable`] if a location is not a
     ///   `<?VARIABLE?>` this crate knows, e.g. the macOS-only
     ///   `<?APPLICATION_SUPPORT?>`.
-    /// - [`SavesError::WineUserDirNotFound`] if a location needs the user
+    /// - [`crate::SavesError::WineUserDirNotFound`] if a location needs the user
     ///   directory and none can be found in `prefix`.
-    /// - [`SavesError::Io`] if a location's directory cannot be walked or a
+    /// - [`crate::SavesError::Io`] if a location's directory cannot be walked or a
     ///   file cannot be read or compressed.
-    /// - [`SavesError::InvalidSaveFileName`] if a file's path is not valid
+    /// - [`crate::SavesError::InvalidSaveFileName`] if a file's path is not valid
     ///   UTF-8.
-    /// - [`SavesError::ClientError`] wrapping
+    /// - [`crate::SavesError::ClientError`] wrapping
     ///   [`crate::ClientError::HttpError`] if GOG rejects an upload, or
     ///   [`crate::ClientError::NetworkError`] if one fails in transit.
     pub async fn upload_save_files(
@@ -937,9 +942,10 @@ impl GogDl {
         prefix: &Path,
         install_path: &Path,
         tx: mpsc::UnboundedSender<SavesUploadEvent>,
-    ) -> Result<(), SavesError> {
-        self.saves
+    ) -> Result<(), GogDlError> {
+        Ok(self
+            .saves
             .upload_save_files(game_id, build_name, prefix, install_path, tx)
-            .await
+            .await?)
     }
 }
