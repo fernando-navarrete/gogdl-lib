@@ -100,8 +100,6 @@ fn saves_upload_event(e: &SavesUploadEvent) {
 fn file_system_error(e: &FileSystemError) {
     match e {
         FileSystemError::PathResolverCreationError(..)
-        | FileSystemError::FileMetadataError(..)
-        | FileSystemError::FileCreationError(..)
         | FileSystemError::PathResolutionError(..)
         | FileSystemError::FileOpenError(..)
         | FileSystemError::FileRemovalError(..)
@@ -112,11 +110,7 @@ fn file_system_error(e: &FileSystemError) {
 #[allow(dead_code)]
 fn download_error(e: &DownloadError) {
     match e {
-        DownloadError::UrlParseError(..)
-        | DownloadError::NetworkError(..)
-        | DownloadError::Http { .. }
-        | DownloadError::DecodeError(..)
-        | DownloadError::DeflateError(..)
+        DownloadError::DeflateError(..)
         | DownloadError::GamesError(..)
         | DownloadError::DepotError(..)
         | DownloadError::BuildNotFound
@@ -208,37 +202,21 @@ fn auth_error(e: &AuthError) {
 #[allow(dead_code)]
 fn games_error(e: &GamesError) {
     match e {
-        GamesError::UrlParseError(..)
-        | GamesError::NetworkError(..)
-        | GamesError::Http { .. }
-        | GamesError::DecodeError(..)
-        | GamesError::DeflateError(..)
-        | GamesError::ProductNotAGame
-        | GamesError::ClientError(..) => {}
+        GamesError::ProductNotAGame | GamesError::ClientError(..) => {}
     }
 }
 
 #[allow(dead_code)]
 fn depot_error(e: &DepotError) {
     match e {
-        DepotError::UrlParseError(..)
-        | DepotError::NetworkError(..)
-        | DepotError::Http { .. }
-        | DepotError::DecodeError(..)
-        | DepotError::DeflateError(..)
-        | DepotError::ClientError(..) => {}
+        DepotError::ClientError(..) => {}
     }
 }
 
 #[allow(dead_code)]
 fn secure_links_error(e: &SecureLinksError) {
     match e {
-        SecureLinksError::UrlParseError(..)
-        | SecureLinksError::NetworkError(..)
-        | SecureLinksError::Http { .. }
-        | SecureLinksError::DecodeError(..)
-        | SecureLinksError::DeflateError(..)
-        | SecureLinksError::GamesError(..)
+        SecureLinksError::GamesError(..)
         | SecureLinksError::ProductNotOwned(..)
         | SecureLinksError::NoSecureLink
         | SecureLinksError::ClientError(..)

@@ -33,12 +33,8 @@ impl PathResolver {
         &self.canonical_base
     }
 
-    pub async fn get_file_size(&self, path: &Path) -> Result<u64, FileSystemError> {
-        let metadata = match fs::metadata(path).await {
-            Ok(metadata) => metadata,
-            Err(e) => return Err(FileSystemError::FileMetadataError(e)),
-        };
-        Ok(metadata.len())
+    pub async fn get_file_size(&self, path: &Path) -> io::Result<u64> {
+        Ok(fs::metadata(path).await?.len())
     }
 
     /// Checks that `required` bytes fit on the disk holding the base directory, with the same
@@ -62,10 +58,10 @@ impl PathResolver {
             .await
         {
             Ok(file) => file,
-            Err(e) => return Err(FileSystemError::FileCreationError(e)),
+            Err(e) => return Err(FileSystemError::FileOpenError(e)),
         };
         if let Err(err) = file.set_len(total_size).await {
-            return Err(FileSystemError::FileMetadataError(err));
+            return Err(FileSystemError::FileOpenError(err));
         };
         Ok(path)
     }

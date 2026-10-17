@@ -492,7 +492,7 @@ in `v1.3.0` (once planned as the patches `v1.2.4` and `v1.2.5`).
   `DownloadUnit` is **not**: no public signature exposes it (only `DepotFile::to_download_units` and
   `DownloadUnit::from_product_bundles` touched it, now `pub(crate)`), so exporting it would only
   have published `FileType` and `_compressed_size`. `FileMetadataError` and `FileCreationError` are
-  never returned by a public method; they're documented as such and removed in `v1.4.0`. The event
+  never returned by a public method; they're documented as such and were removed in `v1.4.0`. The event
   enums, `FileSystemError` and the download, Proton and saves error enums are now
   `#[non_exhaustive]`; `src/variant_guard.rs` keeps the "a new variant is looked at" guard in-crate.
 
@@ -509,7 +509,11 @@ in `v1.3.0` (once planned as the patches `v1.2.4` and `v1.2.5`).
   `InvalidResponse` replace `ClientError { inner }`, classified by grant in one place; the dead arm
   is gone. The saves grant follows in step 4.
 
-- [ ] **Five dead variants per error enum.** `Http`/`UrlParseError`/`NetworkError`/`DecodeError`/
+- [x] **Five dead variants per error enum.**
+  *(Fixed in `v1.4.0`: all removed, with `FileSystemError`'s `FileMetadataError` and
+  `FileCreationError`. No `?` relied on them. `PathResolver::get_file_size` now returns
+  `io::Result` (its caller ignored the error), and `allocate_file` reports its open and pre-size
+  failures as `FileOpenError`.)* `Http`/`UrlParseError`/`NetworkError`/`DecodeError`/
   `DeflateError` on `DepotError`, `GamesError` and `SecureLinksError`, and the first four on
   `DownloadError`, can't be constructed. Every network call goes through `HttpClient` and arrives as
   `XError::ClientError(..)`. `DownloadError::DeflateError` is the exception: `engine.rs`

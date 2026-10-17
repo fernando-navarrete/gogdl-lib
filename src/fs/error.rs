@@ -15,24 +15,12 @@ pub enum FileSystemError {
     #[error("Path resolver creation error: {0}")]
     PathResolverCreationError(io::Error),
 
-    /// Not currently returned by any public method: a metadata failure during a download's
-    /// allocation or size checks is reported as a stage event instead. Kept so the enum doesn't
-    /// change shape in a minor; slated for removal in `v1.4.0`.
-    #[error("File metadata error: {0}")]
-    FileMetadataError(io::Error),
-
-    /// Not currently returned by any public method: an allocation failure during a download is
-    /// reported as a stage event instead. Kept so the enum doesn't change shape in a minor; slated
-    /// for removal in `v1.4.0`.
-    #[error("File creation error: {0}")]
-    FileCreationError(io::Error),
-
     /// A relative path could not be resolved under the base directory: it has no file name, it would
     /// escape the base, a component is not a directory, or no ancestor of a queried path exists.
     #[error("Path resolution error: {0}")]
     PathResolutionError(io::Error),
 
-    /// Opening a file for writing a downloaded chunk failed.
+    /// Opening a file for writing a downloaded chunk, or pre-sizing it, failed.
     #[error("File open error: {0}")]
     FileOpenError(io::Error),
 
