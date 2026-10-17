@@ -6,9 +6,10 @@
 //! Nothing here runs.
 
 use crate::{
-    DownloadError, DownloadEvent, DownloadStageEvent, FileAllocationEvent,
-    FileSizeVerificationEvent, FileSystemError, ProtonDownloadEvent, ProtonError,
-    SavesDownloadEvent, SavesError, SavesUploadEvent, VerificationEvent,
+    AuthError, ClientError, DepotError, DownloadError, DownloadEvent, DownloadStageEvent,
+    FileAllocationEvent, FileSizeVerificationEvent, FileSystemError, GamesError, GogDlError,
+    ProtonDownloadEvent, ProtonError, SavesDownloadEvent, SavesError, SavesUploadEvent,
+    SecureLinksError, VerificationEvent,
 };
 
 #[allow(dead_code)]
@@ -159,5 +160,83 @@ fn saves_error(e: &SavesError) {
         | SavesError::UnknownSaveLocationVariable(..)
         | SavesError::InvalidSaveLocation(..)
         | SavesError::InvalidSaveFileName(..) => {}
+    }
+}
+
+#[allow(dead_code)]
+fn gogdl_error(e: &GogDlError) {
+    match e {
+        GogDlError::GameError(..)
+        | GogDlError::DepotError(..)
+        | GogDlError::SecureLinksError(..)
+        | GogDlError::DownloadError(..)
+        | GogDlError::ClientError(..)
+        | GogDlError::ProtonError(..) => {}
+    }
+}
+
+#[allow(dead_code)]
+fn client_error(e: &ClientError) {
+    match e {
+        ClientError::UrlParseError(..)
+        | ClientError::NetworkError(..)
+        | ClientError::HttpError { .. }
+        | ClientError::DeserializationError(..)
+        | ClientError::DecodeError(..)
+        | ClientError::ChunkStreamCallbackError(..)
+        | ClientError::MaxRetriesReached
+        | ClientError::AuthError(..) => {}
+    }
+}
+
+#[allow(dead_code)]
+fn auth_error(e: &AuthError) {
+    match e {
+        AuthError::NotAuthenticated
+        | AuthError::TokenExpired
+        | AuthError::AuthDecodeError(..)
+        | AuthError::AuthEncodeError(..)
+        | AuthError::ClientError { .. } => {}
+    }
+}
+
+#[allow(dead_code)]
+fn games_error(e: &GamesError) {
+    match e {
+        GamesError::UrlParseError(..)
+        | GamesError::NetworkError(..)
+        | GamesError::Http { .. }
+        | GamesError::DecodeError(..)
+        | GamesError::DeflateError(..)
+        | GamesError::ProductNotAGame
+        | GamesError::ClientError(..) => {}
+    }
+}
+
+#[allow(dead_code)]
+fn depot_error(e: &DepotError) {
+    match e {
+        DepotError::UrlParseError(..)
+        | DepotError::NetworkError(..)
+        | DepotError::Http { .. }
+        | DepotError::DecodeError(..)
+        | DepotError::DeflateError(..)
+        | DepotError::ClientError(..) => {}
+    }
+}
+
+#[allow(dead_code)]
+fn secure_links_error(e: &SecureLinksError) {
+    match e {
+        SecureLinksError::UrlParseError(..)
+        | SecureLinksError::NetworkError(..)
+        | SecureLinksError::Http { .. }
+        | SecureLinksError::DecodeError(..)
+        | SecureLinksError::DeflateError(..)
+        | SecureLinksError::GamesError(..)
+        | SecureLinksError::ProductNotOwned(..)
+        | SecureLinksError::NoSecureLink
+        | SecureLinksError::ClientError(..)
+        | SecureLinksError::IncorrectGameId(..) => {}
     }
 }

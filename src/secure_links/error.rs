@@ -12,7 +12,10 @@ use crate::{client::ClientError, games::GamesError};
 /// through [`ClientError`](crate::ClientError), which is what actually
 /// arrives on failure. They're kept for API stability; don't rely on
 /// matching them.
+///
+/// `#[non_exhaustive]`: a `match` outside the crate needs a wildcard arm.
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum SecureLinksError {
     /// Unconstructible — see the enum-level note.
     #[error("Url parse error: {0}")]

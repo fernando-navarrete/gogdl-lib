@@ -2,7 +2,10 @@ use thiserror::Error;
 
 /// Errors from the auth layer: local token state and the login/refresh
 /// round-trip to GOG.
+///
+/// `#[non_exhaustive]`: a `match` outside the crate needs a wildcard arm.
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum AuthError {
     /// No [`Auth`](crate::Auth) has been established yet — call
     /// [`GogDl::login_with_code`](crate::GogDl::login_with_code) or

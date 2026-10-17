@@ -4,7 +4,10 @@ use crate::client::auth::AuthError;
 
 /// Errors from the underlying HTTP client: transport, response decoding, and
 /// the auth layer it wraps around every request.
+///
+/// `#[non_exhaustive]`: a `match` outside the crate needs a wildcard arm.
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum ClientError {
     /// A URL built from GOG-supplied data (an endpoint template or CDN link)
     /// failed to parse.

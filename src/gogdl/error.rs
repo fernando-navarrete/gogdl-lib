@@ -11,7 +11,10 @@ use crate::{
 /// error enum the failure originated in; there is no flattened variant, so an
 /// auth failure typically arrives as e.g.
 /// `GogDlError::ClientError(ClientError::AuthError(_))`.
+///
+/// `#[non_exhaustive]`: a `match` outside the crate needs a wildcard arm.
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum GogDlError {
     /// A catalog lookup failed — see [`GamesError`].
     #[error("Game error: {0}")]
