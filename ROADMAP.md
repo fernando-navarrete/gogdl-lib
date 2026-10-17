@@ -53,11 +53,11 @@ later as its own patch.
 | Not on Lumen's roadmap yet (cloud saves) | `v1.6.0` | Save sync metadata, `cloudStorage.enabled`, file subsets (§7.6) | `v1.5.0` |
 | Not on Lumen's roadmap yet | `v1.7.0` | Language/OS selection (§7.7), Proton integrity (§7.8), `i64` ids (§7.9), stream retries and upload timeout (§7.11) | `v1.6.0` |
 
-Things consumers need that don't need a change here: resume is already `repair_game` (Lumen
+Things consumers need that don't need a change here: resume is already `download_game` (Lumen
 `v1.3.0` "B"), and dropping a game job's future already stops it (no `tokio::spawn`), which
 `v1.2.0` only has to document. Update detection uses `get_game_builds` as it is today. Sign out
 needs no `logout`: a fresh `GogDl` is unauthenticated, so Lumen builds a new backend (bridge §7.5,
-Lumen's dropped D2). Installing DLC on an installed game is `repair_game` with the larger product
+Lumen's dropped D2). Installing DLC on an installed game is `download_game` with the larger product
 set. The bridge's `v1.4.1`–`v1.4.3` patches (parallel, tolerant `get_downloadable_products`, one
 `get_game_links` for boxart and background, Proton pages with `has_more`) are bridge-side over
 methods that exist here.
@@ -268,7 +268,8 @@ should be tagged before that starts.
   cached `SavesAuth`.
 - Verify against `SaveFile.hash` when there's no `ETag`, and move (de)compression off the async
   runtime (GAPS "Low — style / clippy").
-- **Breaking** for bridge `v1.6.0`: the transfer signatures.
+- **Breaking:** remove `repair_game`, deprecated in `v1.4.0`.
+- **Breaking** for bridge `v1.6.0`: the transfer signatures and the removed `repair_game`.
 
 ## v1.6.0 — Upstream-driven (for bridge `v1.7.0`)
 

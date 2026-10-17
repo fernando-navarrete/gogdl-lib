@@ -274,9 +274,8 @@ impl GogDl {
     /// ids, and build metadata (keyed by the build's link). Auth and the [`TokenObserver`] are untouched.
     ///
     /// Running jobs are not affected: [`verify_files`](Self::verify_files),
-    /// [`download_game`](Self::download_game) and
-    /// [`repair_game`](Self::repair_game) work from the bundles they were
-    /// given. A call already in flight when this runs may store its own
+    /// [`download_game`](Self::download_game) work from the bundles they
+    /// were given. A call already in flight when this runs may store its own
     /// complete result afterwards, which is current as of its fetch.
     pub async fn clear_cache(&self) {
         self.games.clear_cache().await;
@@ -382,8 +381,7 @@ impl GogDl {
     /// [`get_downloadable_products`](Self::get_downloadable_products)) into
     /// the concrete [`ProductBundle`]s — depot manifests fetched from the
     /// CDN — that [`verify_files`](Self::verify_files),
-    /// [`download_game`](Self::download_game) and
-    /// [`repair_game`](Self::repair_game) consume.
+    /// [`download_game`](Self::download_game) consume.
     ///
     /// The build metadata and each depot manifest (by its hash) are cached, so a second call for
     /// the same build fetches neither, until [`clear_cache`](Self::clear_cache) drops the
@@ -439,8 +437,7 @@ impl GogDl {
     /// Checksums every chunk of `bundles` already on disk under `path` and
     /// reports the result of each on `tx`, without downloading anything.
     ///
-    /// Like [`download_game`](Self::download_game) and
-    /// [`repair_game`](Self::repair_game), this resolves only once every
+    /// Like [`download_game`](Self::download_game), this resolves only once every
     /// unit has been checked — drain `tx`'s paired receiver concurrently on
     /// another task, since events accumulate in the unbounded channel
     /// otherwise.
@@ -470,8 +467,8 @@ impl GogDl {
     /// **This resumes.** Since `v1.3.0` it verifies what is already on disk
     /// first, so calling it again on an interrupted install continues it
     /// without re-transferring correct data, and on a complete install it
-    /// transfers nothing. It is the same operation as
-    /// [`repair_game`](Self::repair_game); both are kept.
+    /// transfers nothing. This is the resume path: there is no separate
+    /// repair call ([`repair_game`](Self::repair_game) is a deprecated alias).
     ///
     /// Internally runs, in order: a file-size verification pass, disk-space
     /// and file-allocation, a checksum verification pass, then the chunk
@@ -499,7 +496,7 @@ impl GogDl {
     /// method returns is whichever unit failed first in *time*, not
     /// necessarily first in `bundles`' order, so a failed call leaves an
     /// install in an indeterminate partial state; call this method again
-    /// (or [`repair_game`](Self::repair_game)) to resume.
+    /// to resume.
     ///
     /// Resolves only once the whole transfer finishes or fails — drain `tx`'s
     /// paired receiver concurrently on another task.
@@ -512,8 +509,7 @@ impl GogDl {
     /// [`DownloadEvent::ProgressRegression`](crate::DownloadEvent::ProgressRegression).
     /// Nothing is cleaned up: files stay allocated at full size, chunks
     /// already written stay, and a chunk that was mid-transfer may be
-    /// partially written. Call this method again (or
-    /// [`repair_game`](Self::repair_game)) to continue; it checksums every
+    /// partially written. Call this method again to continue; it checksums every
     /// chunk and fetches only the ones that are wrong. A
     /// disk write already handed to tokio's blocking pool may complete just
     /// after the drop, and nothing else outlives it.
@@ -534,8 +530,7 @@ impl GogDl {
         Ok(())
     }
     /// Available bytes on the disk that would hold an install at `path`: the
-    /// figure [`download_game`](Self::download_game),
-    /// [`repair_game`](Self::repair_game) and
+    /// figure [`download_game`](Self::download_game) and
     /// [`download_proton_release`](Self::download_proton_release) compare
     /// their required size against before writing anything, so a caller's own
     /// "does it fit" check agrees with theirs.
@@ -555,36 +550,23 @@ impl GogDl {
             .map_err(|e| GogDlError::DownloadError(DownloadError::FileSystemError(e)))
     }
 
-    /// Verifies `bundles` against what's on disk under `path`, then
-    /// downloads only the chunks that are missing or fail their checksum.
+    /// Deprecated alias of [`download_game`](Self::download_game).
     ///
-    /// Since `v1.3.0` this does exactly what
-    /// [`download_game`](Self::download_game) does, with the same events, so
-    /// either continues an interrupted install without re-transferring
-    /// already-correct data. See
-    /// [`DownloadStageEvent::VerificationStage`] for how chunks that file
-    /// allocation just created as zeros are reported.
-    ///
-    /// Resolves only once the whole operation finishes or fails — drain
-    /// `tx`'s paired receiver concurrently on another task.
-    ///
-    /// # Cancelling
-    /// Same as [`download_game`](Self::download_game): drop the future to
-    /// cancel it, and call this method again to continue. During the
-    /// verification pass a drop also discards the results of the chunk
-    /// checksums already running on tokio's blocking pool (one per worker at
-    /// most), which finish reading their chunk first.
-    ///
-    /// # Errors
-    /// Same [`GogDlError::DownloadError`] variants as
-    /// [`download_game`](Self::download_game).
+    /// Since `v1.3.0` the two run the same pipeline with the same events,
+    /// errors and cancelling, so this verifies `bundles` against what is on
+    /// disk under `path` and downloads only what is missing or fails its
+    /// checksum. It is removed in `v1.5.0`.
+    #[deprecated(
+        since = "1.4.0",
+        note = "use download_game, which verifies and resumes"
+    )]
     pub async fn repair_game(
         &self,
         bundles: Vec<ProductBundle>,
         path: &str,
         tx: mpsc::UnboundedSender<DownloadStageEvent>,
     ) -> Result<(), GogDlError> {
-        self.downloader.repair_game(bundles, path, tx).await?;
+        self.downloader.download_game(bundles, path, tx).await?;
         Ok(())
     }
     /// Deletes a product's files from an install, for a DLC the player unselected. Fetches the

@@ -1,6 +1,5 @@
 /// Progress events for the download stage — the part of
-/// [`GogDl::download_game`](crate::GogDl::download_game)/
-/// [`GogDl::repair_game`](crate::GogDl::repair_game) that actually transfers
+/// [`GogDl::download_game`](crate::GogDl::download_game) that actually transfers
 /// chunk bytes, wrapped in
 /// [`DownloadStageEvent::DownloadStage`](crate::DownloadStageEvent::DownloadStage).
 ///
@@ -23,10 +22,9 @@ pub enum DownloadEvent {
     /// `Downloading`.
     ///
     /// `compressed_total` is the sum of the manifest's compressed chunk sizes
-    /// over the units this stage will transfer: every chunk for
-    /// [`GogDl::download_game`](crate::GogDl::download_game), and only the
-    /// chunks that failed verification for
-    /// [`GogDl::repair_game`](crate::GogDl::repair_game). It is the
+    /// over the units this stage will transfer: only the chunks
+    /// that failed verification for
+    /// [`GogDl::download_game`](crate::GogDl::download_game). It is the
     /// denominator for [`Progress`](Self::Progress): once the stage succeeds,
     /// the `Progress` deltas minus the
     /// [`ProgressRegression`](Self::ProgressRegression) deltas add up to it.

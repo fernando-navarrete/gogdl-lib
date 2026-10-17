@@ -1,6 +1,6 @@
 /// One chunk's result during a checksum-verification pass — used by
 /// [`GogDl::verify_files`](crate::GogDl::verify_files) directly, and by
-/// [`GogDl::repair_game`](crate::GogDl::repair_game)'s
+/// [`GogDl::download_game`](crate::GogDl::download_game)'s
 /// [`DownloadStageEvent::VerificationStage`](crate::DownloadStageEvent::VerificationStage).
 /// Every payload is `(relative path, uncompressed chunk size)`. Anything
 /// other than `Verified` means the chunk needs downloading.

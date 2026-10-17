@@ -10,7 +10,7 @@
 //!
 //! # Long-running operations
 //!
-//! [`GogDl::download_game`], [`GogDl::repair_game`], [`GogDl::verify_files`],
+//! [`GogDl::download_game`], [`GogDl::verify_files`],
 //! [`GogDl::download_proton_release`], [`GogDl::download_save_files`] and
 //! [`GogDl::upload_save_files`] report progress by sending events
 //! into an [`mpsc::UnboundedSender`](tokio::sync::mpsc::UnboundedSender) you
@@ -22,9 +22,10 @@
 //! a display rate you choose is the consumer's job, not this crate's; see
 //! [`DownloadEvent::Progress`].
 //!
-//! `download_game` and [`GogDl::repair_game`] have identical signatures and,
-//! since `v1.3.0`, do the same thing: both verify what is on disk and resume
-//! an interrupted install.
+//! `download_game` verifies what is on disk and transfers only what is
+//! missing, so calling it again resumes an interrupted install.
+//! `repair_game` is the same operation under its old name, deprecated since
+//! `v1.4.0` and removed in `v1.5.0`.
 //!
 //! # Errors
 //!

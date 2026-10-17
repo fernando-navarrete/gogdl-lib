@@ -12,8 +12,7 @@ use crate::{
 };
 
 /// Errors from [`GogDl::verify_files`](crate::GogDl::verify_files),
-/// [`GogDl::download_game`](crate::GogDl::download_game) and
-/// [`GogDl::repair_game`](crate::GogDl::repair_game), and the catalog/depot
+/// [`GogDl::download_game`](crate::GogDl::download_game), and the catalog/depot
 /// lookups they depend on.
 ///
 /// `#[non_exhaustive]`: a `match` outside the crate needs a wildcard arm.

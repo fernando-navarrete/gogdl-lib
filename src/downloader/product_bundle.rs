@@ -7,8 +7,7 @@ use crate::{
 
 /// One product's resolved depot manifest — the unit
 /// [`GogDl::verify_files`](crate::GogDl::verify_files),
-/// [`GogDl::download_game`](crate::GogDl::download_game) and
-/// [`GogDl::repair_game`](crate::GogDl::repair_game) consume. Produced by
+/// [`GogDl::download_game`](crate::GogDl::download_game) consume. Produced by
 /// [`GogDl::get_product_bundles`](crate::GogDl::get_product_bundles).
 ///
 /// Not [`Clone`] — hold onto the `Vec<ProductBundle>` you get back if you

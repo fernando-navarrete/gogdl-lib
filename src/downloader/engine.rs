@@ -68,8 +68,7 @@ impl Downloader {
 
     /// Brings the install at `path` in line with `bundles`: size
     /// verification, allocation, checksum verification, then the transfer of
-    /// only the units that fail it. Behind both `download_game` and
-    /// `repair_game`.
+    /// only the units that fail it. Behind `download_game`.
     pub async fn download(
         &self,
         bundles: Vec<ProductBundle>,
@@ -197,8 +196,8 @@ impl Downloader {
     /// Transfers `download_units`, `self.threads` at a time.
     ///
     /// Every unit runs inside this future (`try_for_each_concurrent`), never
-    /// under `tokio::spawn`. That is what makes dropping `download_game` or
-    /// `repair_game` cancel the whole transfer: a spawned task would outlive
+    /// under `tokio::spawn`. That is what makes dropping `download_game`
+    /// cancel the whole transfer: a spawned task would outlive
     /// the drop and keep writing into the install. The cancel contract in
     /// those methods' rustdoc depends on it, so keep it that way.
     async fn download_files(
@@ -1189,7 +1188,7 @@ mod tests {
 
         let labels = stages(&h, bundle).await;
 
-        // `download_game` and `repair_game` both run this. The chunks past
+        // `download_game` runs this. The chunks past
         // each file's old length come first (they were just allocated, so
         // they aren't hashed), then the hashed ones. Only the two missing
         // chunks are transferred.

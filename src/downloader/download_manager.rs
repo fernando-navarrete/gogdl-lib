@@ -112,16 +112,6 @@ impl DownloadManager {
         downloader.download(bundles, path, tx).await?;
         Ok(())
     }
-    pub async fn repair_game(
-        &self,
-        bundles: Vec<ProductBundle>,
-        path: &str,
-        tx: mpsc::UnboundedSender<DownloadStageEvent>,
-    ) -> Result<(), DownloadError> {
-        let downloader = Downloader::new(self.client.clone(), self.secure_links.clone());
-        downloader.download(bundles, path, tx).await?;
-        Ok(())
-    }
     /// Deletes the files only `remove`'s manifests list. An id in both lists is kept, and an empty
     /// `remove` returns before anything is fetched.
     pub async fn remove_products(

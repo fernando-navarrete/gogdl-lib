@@ -2,8 +2,7 @@
 /// (wrapped in
 /// [`DownloadStageEvent::FileSizeVerificationStage`](crate::DownloadStageEvent::FileSizeVerificationStage)),
 /// run before allocation on every
-/// [`GogDl::download_game`](crate::GogDl::download_game)/
-/// [`GogDl::repair_game`](crate::GogDl::repair_game) call. Every payload is
+/// [`GogDl::download_game`](crate::GogDl::download_game) call. Every payload is
 /// `(relative path, expected uncompressed size)`. Any variant other than
 /// `FileSizeVerificationSuccess` means the file goes on to the allocation
 /// stage.
@@ -38,7 +37,6 @@ pub enum FileSizeVerificationEvent {
     FileSizeMismatch(String, u64),
     /// The file exists and already has the expected size. Note this checks
     /// size only, not content — a same-size but corrupt file passes this
-    /// stage and is only caught by `repair_game`'s later checksum pass, not
-    /// by `download_game`.
+    /// stage and is only caught by `download_game`'s later checksum pass.
     FileSizeVerificationSuccess(String, u64),
 }

@@ -4,11 +4,10 @@ use crate::downloader::progress_reporting::FileSizeVerificationEvent;
 use crate::downloader::progress_reporting::VerificationEvent;
 
 /// The top-level progress event sent by
-/// [`GogDl::download_game`](crate::GogDl::download_game) and
-/// [`GogDl::repair_game`](crate::GogDl::repair_game), tagging which pipeline
+/// [`GogDl::download_game`](crate::GogDl::download_game), tagging which pipeline
 /// stage an inner event belongs to.
 ///
-/// `download_game` and `repair_game` emit, in order: `FileSizeVerificationStage`,
+/// `download_game` emits, in order: `FileSizeVerificationStage`,
 /// `FileAllocationStage` (then `FileAllocationError` and an early return if
 /// any file failed to allocate), `VerificationStage`, `DownloadStage`. Only
 /// units that fail verification are fed into `DownloadStage`, and it is
