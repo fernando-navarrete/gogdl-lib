@@ -38,8 +38,7 @@ pub enum ClientError {
     #[error("Decode error: {0}")]
     DecodeError(std::io::Error),
 
-    /// The caller-supplied streaming callback (used internally by chunk
-    /// downloads) returned an I/O error.
+    /// Writing a streamed response body to its sink failed.
     #[error("Chunk stream callback error: {0}")]
     ChunkStreamCallbackError(std::io::Error),
 

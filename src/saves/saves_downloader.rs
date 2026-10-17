@@ -125,11 +125,14 @@ impl SavesDownloader {
         let mut compressed = Vec::with_capacity(file.bytes as usize);
         let response_headers = self
             .client
-            .stream_url(url.as_str(), Some(&[("Authorization", &bearer)]), |chunk| {
-                tx.send(SavesDownloadEvent::Progress(chunk.len())).ok();
-                compressed.extend_from_slice(&chunk);
-                Box::pin(std::future::ready(Ok(())))
-            })
+            .stream_url(
+                url.as_str(),
+                Some(&[("Authorization", &bearer)]),
+                &mut compressed,
+                |len| {
+                    tx.send(SavesDownloadEvent::Progress(len)).ok();
+                },
+            )
             .await?;
 
         // The ETag is the MD5 of the stored (gzipped) bytes. Without one

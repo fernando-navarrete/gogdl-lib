@@ -4,6 +4,15 @@ One section per tag, newest first. Consumers pin this crate by git tag. A change
 behind an unchanged signature is called out as **Behavior change**, and a signature change as
 **Breaking**. The `v0.x` and `-restart` tags predate this file and aren't covered.
 
+## 1.4.2
+
+Internal cleanup of the download hot path; no signature, error or event changes.
+
+* `stream_url` writes into an `AsyncWrite` sink instead of calling a boxed callback, so the chunk
+  decoder, the Proton duplex writer and the saves buffer lose their per-read `Box::pin` and
+  `tokio::sync::Mutex`. Progress is still reported once per received chunk.
+* `allocate_missing_files` and `verify_download_units` no longer clone every surviving item twice.
+
 ## 1.4.1
 
 Internal cleanup of the HTTP client; no signature, error or event changes.

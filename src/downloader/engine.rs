@@ -1,10 +1,9 @@
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use async_compression::tokio::write::ZlibDecoder;
-use bytes::Bytes;
 use futures_util::{StreamExt, TryStreamExt, stream};
 use tokio::io::{AsyncWriteExt, BufWriter};
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::mpsc;
 
 use crate::ClientError;
 use crate::client::retry::{MAX_ATTEMPTS, MAX_HASH_ATTEMPTS, retry_now_or_return, retry_or_return};
@@ -230,7 +229,7 @@ impl Downloader {
                                 .map_err(DownloadError::DeflateError)?;
                         let sink =
                             HashingWriter::new(BufWriter::with_capacity(1024 * 1024, offset_writer));
-                        let decoder_slot = Mutex::new(ZlibDecoder::new(sink));
+                        let mut decoder = ZlibDecoder::new(sink);
 
                         let links = match secure_links_manager.get_secure_links(&download_unit.product_id).await {
                             Ok(links) => links,
@@ -259,13 +258,8 @@ impl Downloader {
                             FileType::Other => url_format.parse_url_redist(&download_unit.compressed_md5),
                         };
 
-                        let decoder_ref = &decoder_slot;
                         let stream_result = self.client
-                            .stream_url(&url, None, |chunk: Bytes| {
-                                progress.report(chunk.len());
-                                let decoder = decoder_ref;
-                                Box::pin(async move { decoder.lock().await.write_all(&chunk).await })
-                            })
+                            .stream_url(&url, None, &mut decoder, |len| progress.report(len))
                             .await;
                         match stream_result {
                                 Ok(_) => {},
@@ -291,7 +285,6 @@ impl Downloader {
                                 }
                             };
 
-                        let mut decoder = decoder_slot.into_inner();
                         if let Err(err) = decoder.shutdown().await {
                             return Err(DownloadError::DeflateError(err))
                         }
@@ -385,12 +378,7 @@ impl Downloader {
             .collect::<Vec<_>>()
             .await;
 
-        failed_files
-            .iter()
-            .filter(|&unit| unit.is_some())
-            // Unwrap is safe here because we know the unit is Some(_)
-            .map(|unit| unit.clone().unwrap().clone())
-            .collect::<Vec<_>>()
+        failed_files.into_iter().flatten().collect()
     }
 
     /// Returns the files that failed, each with the length it had on disk
@@ -558,11 +546,7 @@ impl Downloader {
             .collect::<Vec<_>>()
             .await;
 
-        units
-            .iter()
-            .filter(|&unit| unit.is_some())
-            .map(|unit| unit.clone().unwrap().clone())
-            .collect::<Vec<_>>()
+        units.into_iter().flatten().collect()
     }
 }
 

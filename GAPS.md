@@ -672,7 +672,7 @@ in `v1.3.0` (once planned as the patches `v1.2.4` and `v1.2.5`).
   still a `pub` field of the unexported `Depot`. Make them `pub(crate)` and add
   `#![warn(unreachable_pub)]` to `lib.rs` so it stays that way.
 
-- [ ] **The download hot path allocates and locks once per network read.** To share `stream_chunk`
+- [x] **The download hot path allocates and locks once per network read.** To share `stream_chunk`
   with the Proton downloader, `f4d7388` changed its callback from `AsyncFnMut(Bytes)` to
   `FnMut(Bytes) -> BoxFuture`, which can't hold a `&mut` to the decoder across the returned future.
   The decoder therefore lives in a `tokio::sync::Mutex` (`engine.rs:276,307-313`), and every read
@@ -680,11 +680,13 @@ in `v1.3.0` (once planned as the patches `v1.2.4` and `v1.2.5`).
   repeats it with the duplex writer). The cost is small next to zlib and MD5, but it's paid
   thousands of times per second. A generic `AsyncWrite` sink parameter on `stream_chunk`, instead of
   a callback, would remove both the box and the lock.
+  Fixed in `v1.4.2`: `stream_url` takes an `AsyncWrite` sink and a plain `FnMut(usize)` progress hook.
 
-- [ ] **`.map(|unit| unit.clone().unwrap().clone())` clones every surviving item twice.**
+- [x] **`.map(|unit| unit.clone().unwrap().clone())` clones every surviving item twice.**
   `engine.rs:457,546,631`, right after taking the `Vec` by value. For `DepotFile` each clone
   copies a `Vec<Chunk>`. `.into_iter().flatten().collect()` does the filter and the unwrap with
   zero clones.
+  Fixed in `v1.4.2`.
 
 - [x] **`HttpClient::stream_chunk` is a misnamed generic "GET a URL and stream it", and
   `2457bad` copied it instead of extending it.** `stream_chunk` (`http.rs:79-110`) has nothing

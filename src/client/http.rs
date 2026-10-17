@@ -2,10 +2,11 @@ use std::{io::Read, sync::Arc};
 
 use bytes::Bytes;
 use flate2::read::ZlibDecoder;
-use futures_util::{StreamExt, future::BoxFuture};
+use futures_util::StreamExt;
 use reqwest::header::HeaderMap;
 use reqwest::{Client, RequestBuilder, Response};
 use serde::de::DeserializeOwned;
+use tokio::io::{AsyncWrite, AsyncWriteExt};
 
 use crate::{
     client::retry::{MAX_ATTEMPTS, retry_or_return},
@@ -96,17 +97,20 @@ impl HttpClient {
         let text = response.text().await.map_err(network)?;
         serde_json::from_str(&text).map_err(TokenFailure::Decode)
     }
-    /// GETs `url` (with `headers`, if any), passes each body chunk to `f` as
-    /// it arrives, and hands back the response headers once the body has been
-    /// fully streamed. Not retried.
+    /// GETs `url` (with `headers`, if any), writes each body chunk to `sink`
+    /// as it arrives, and hands back the response headers once the body has
+    /// been fully streamed. `on_chunk` is called with each chunk's length
+    /// just before it is written. The sink is neither flushed nor shut down;
+    /// that is the caller's. Not retried.
     ///
     /// # Errors
-    /// [`ClientError::ChunkStreamCallbackError`] if `f` fails.
-    pub async fn stream_url<'a>(
-        &'a self,
+    /// [`ClientError::ChunkStreamCallbackError`] if writing to `sink` fails.
+    pub async fn stream_url<W: AsyncWrite + Unpin + ?Sized>(
+        &self,
         url: &str,
         headers: Option<&[(&str, &str)]>,
-        mut f: impl FnMut(Bytes) -> BoxFuture<'a, std::io::Result<()>>,
+        sink: &mut W,
+        mut on_chunk: impl FnMut(usize),
     ) -> Result<HeaderMap, ClientError> {
         let url = reqwest::Url::parse(url)?;
         let mut response = send_checked(apply_headers(self.client.get(url), headers)).await?;
@@ -119,7 +123,8 @@ impl HttpClient {
                 Ok(chunk) => chunk,
                 Err(e) => return Err(ClientError::NetworkError(e)),
             };
-            if let Err(e) = f(chunk).await {
+            on_chunk(chunk.len());
+            if let Err(e) = sink.write_all(&chunk).await {
                 return Err(ClientError::ChunkStreamCallbackError(e));
             }
         }
