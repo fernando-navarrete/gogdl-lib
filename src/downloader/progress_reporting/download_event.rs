@@ -19,27 +19,7 @@
 /// ```
 #[non_exhaustive]
 pub enum DownloadEvent {
-    /// Emitted once, immediately before the transfer stage begins.
-    ///
-    /// Deprecated: it is still sent, back-to-back with `Prepared` and just
-    /// before [`Started`](Self::Started), which carries the same "the transfer
-    /// stage begins" signal plus the compressed total. Removed in `v1.4.0`.
-    #[deprecated(
-        since = "1.2.3",
-        note = "use `DownloadEvent::Started`; removed in 1.4.0"
-    )]
-    Preparing,
-    /// Emitted once, immediately after `Preparing` with no work in between —
-    /// a stage marker, not evidence that any preparation actually happened.
-    ///
-    /// Deprecated: still sent, just before [`Started`](Self::Started). Removed
-    /// in `v1.4.0`.
-    #[deprecated(
-        since = "1.2.3",
-        note = "use `DownloadEvent::Started`; removed in 1.4.0"
-    )]
-    Prepared,
-    /// Emitted once per transfer stage, after `Prepared` and before the first
+    /// Emitted once per transfer stage, as its first event and before the first
     /// `Downloading`.
     ///
     /// `compressed_total` is the sum of the manifest's compressed chunk sizes

@@ -13,12 +13,9 @@ use crate::{
 };
 
 #[allow(dead_code)]
-#[allow(deprecated)]
 fn download_event(e: &DownloadEvent) {
     match e {
-        DownloadEvent::Preparing
-        | DownloadEvent::Prepared
-        | DownloadEvent::Started { .. }
+        DownloadEvent::Started { .. }
         | DownloadEvent::Downloading
         | DownloadEvent::Progress(..)
         | DownloadEvent::ProgressRegression(..) => {}

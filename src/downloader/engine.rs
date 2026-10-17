@@ -207,11 +207,6 @@ impl Downloader {
         path_resolver: &PathResolver,
         tx: mpsc::UnboundedSender<DownloadEvent>,
     ) -> Result<(), DownloadError> {
-        #[allow(deprecated)]
-        {
-            tx.send(DownloadEvent::Preparing).ok();
-            tx.send(DownloadEvent::Prepared).ok();
-        }
         tx.send(DownloadEvent::Started {
             compressed_total: download_units.iter().map(|u| u.compressed_size).sum(),
         })
@@ -1127,10 +1122,6 @@ mod tests {
             },
             DownloadStageEvent::FileAllocationError() => "alloc:Error".to_string(),
             DownloadStageEvent::DownloadStage(e) => match e {
-                #[allow(deprecated)]
-                DownloadEvent::Preparing => "dl:Preparing".to_string(),
-                #[allow(deprecated)]
-                DownloadEvent::Prepared => "dl:Prepared".to_string(),
                 DownloadEvent::Started { .. } => "dl:Started".to_string(),
                 DownloadEvent::Downloading => "dl:Downloading".to_string(),
                 DownloadEvent::Progress(_) => "dl:Progress".to_string(),
@@ -1214,8 +1205,6 @@ mod tests {
                 "verify:Mismatch c.bin",
                 "verify:Verified a.bin",
                 "verify:Verified c.bin",
-                "dl:Preparing",
-                "dl:Prepared",
                 "dl:Started",
                 "dl:Downloading",
                 "dl:Progress",
