@@ -10,8 +10,8 @@ numbered.
 - **Patch** (`1.x.y`): one tag per small, self-contained fix or addition.
 - **Minor** (`1.x.0`): a big update, meaning a feature set or cross-cutting refactor. Patches then
   continue from `.1` under that minor.
-- Tags use the existing `vX.Y.Z` format. `v1.1.0`–`v1.1.6`, `v1.2.0`–`v1.2.3` and `v1.3.0`–`v1.3.2` shipped. Next is
-  the stage **`v1.4.0`**. There is no `v1.2.4` or `v1.2.5` (`clear_cache` and `remove_products` rode `v1.3.0`). The old `-restart`/`-debug` tags stay, but nothing new is tagged that way.
+- Tags use the existing `vX.Y.Z` format. `v1.1.0`–`v1.1.6`, `v1.2.0`–`v1.2.3`, `v1.3.0`–`v1.3.2` and `v1.4.0`–`v1.4.3` shipped. Next is
+  the stage **`v1.5.0`**. There is no `v1.2.4` or `v1.2.5` (`clear_cache` and `remove_products` rode `v1.3.0`). The old `-restart`/`-debug` tags stay, but nothing new is tagged that way.
 - For each release, on a release branch: bump `version` in `Cargo.toml` to match the tag (the
   `v1.0.1` mismatch in GAPS "Low — style / clippy" must not happen again), tick the item(s) in
   `GAPS.md`, add a `CHANGELOG.md` entry. Open an MR titled `vX.Y.Z: ...`, merge it once green, then
@@ -48,7 +48,7 @@ later as its own patch.
 | (none, internal) | `v1.2.0` ✅ | Test-constructible types (§7.1) | `v1.1.0` ✅ |
 | `v1.3.0` Download management | `v1.3.0` | Cancel-safe contract (§7.2), download error kinds (§7.3), free-space query and mount fix (§7.4, D4, D5), no save truncation (§7.6 part), per-product sizes (§7.10), Proton cleanup on failure (D6) | `v1.2.0` ✅ |
 | `v1.4.0` Library and account | `v1.4.0` ✅ | `clear_cache` (§7.12, D3), `remove_products` (§7.13, D1); also absorbs, without a Dart change, owned games that don't silently shrink, `download_game` skipping verified chunks, cheaper lookups | `v1.3.0` ✅ |
-| `v1.5.0` UI polish and packaging | `v1.5.0` | Login error kinds (§7.3 auth part), breaking error and API cleanup | `v1.4.0` |
+| `v1.5.0` UI polish and packaging | `v1.5.0` | Login error kinds (§7.3 auth part), breaking error and API cleanup | `v1.4.0` ✅ |
 | `v1.6.0` Extras | — | Nothing | — |
 | Not on Lumen's roadmap yet (cloud saves) | `v1.6.0` | Save sync metadata, `cloudStorage.enabled`, file subsets (§7.6) | `v1.5.0` |
 | Not on Lumen's roadmap yet | `v1.7.0` | Language/OS selection (§7.7), Proton integrity (§7.8), `i64` ids (§7.9), stream retries and upload timeout (§7.11) | `v1.6.0` |
@@ -225,7 +225,9 @@ Follow-up patches (`v1.3.1+`), one per tag:
 2. `v1.3.2`: populate `GameDetails.id`. `GameBuilds.game_title` can't be had without a second
    request, so its removal is in `v1.4.0`.
 
-## v1.4.0 — Errors and API cleanup (for bridge `v1.5.0` / Lumen `v1.5.0`)
+## v1.4.0 — Errors and API cleanup (for bridge `v1.5.0` / Lumen `v1.5.0`) ✅
+
+Decisions and pitfalls: [devlog/v1.4.0-errors-and-cleanup.md](devlog/v1.4.0-errors-and-cleanup.md). Shipped as `v1.4.0`–`v1.4.3`.
 
 The bridge's `v1.5.0` is its breaking cleanup, so the breaking error changes here ship with it and
 the bridge migrates once.

@@ -1,16 +1,20 @@
 # GAPS.md
 
-Open findings for `gogdl-lib`. Current tree: **`main`**, `Cargo.toml` at `1.3.2`. The newest tag is **`v1.3.2`**. `v1.1.6` and
+Open findings for `gogdl-lib`. Current tree: **`main`**, `Cargo.toml` at `1.4.3`. The newest tag is **`v1.4.3`**. `v1.1.6` and
 `v1.2.0`–`v1.2.3` were cut on `feat/v1.2.0-download-management`, which has been fast-forwarded into
 `main`. Their decisions are in `devlog/v1.2.0-download-management.md` (`v1.1.x`: `devlog/v1.1.0-foundation.md`; CI/CD:
-`devlog/v1.2.x-ci-cd.md`; `v1.3.0`–`v1.3.2`: `devlog/v1.3.0-library.md`). `v1.0.11` (`d5b43e6`) includes the owned-products
+`devlog/v1.2.x-ci-cd.md`; `v1.3.0`–`v1.3.2`: `devlog/v1.3.0-library.md`; `v1.4.0`–`v1.4.3`: `devlog/v1.4.0-errors-and-cleanup.md`). `v1.0.11` (`d5b43e6`) includes the owned-products
 rename (`d6dbdc5`) and the owned-games filter (`e032b7d`). `feature/saves` was merged into `main`, so
-every tag is reachable from `main`. Consumer pins: the bridge (`gogdl_flutter`) is on `v1.3.2` (its `v1.4.0` is done; its `v1.5.0` takes `v1.4.0`), and
+every tag is reachable from `main`. Consumer pins: the bridge (`gogdl_flutter`) is on `v1.3.2` (its `v1.5.0` takes `v1.4.x`), and
 **`lumen-cli`** is on **`v1.0.10`** (`feature/remote-config`; its `main` is on `v1.0.4`), so its next bump
 needs the `_ => {}` arms recorded in the `v1.3.0` devlog.
 
 `v1.3.0`–`v1.3.2` shipped: `get_owned_games` reports failed lookups in `OwnedGames.unresolved`, and
 `clear_cache` and `remove_products` exist. See `devlog/v1.3.0-library.md`.
+
+`v1.4.0`–`v1.4.3` shipped: a status-aware `AuthError`, `GogDlError::SavesError`, `#[non_exhaustive]` on every
+error enum, the dead variants and items removed, `repair_game` deprecated, then two internal `HttpClient`
+cleanups and a dependency trim. See `devlog/v1.4.0-errors-and-cleanup.md`.
 
 **What changed since the last full pass of this document (`e4596b6`, `v1.0.4`), 13 commits in all:**
 
@@ -507,7 +511,7 @@ in `v1.3.0` (once planned as the patches `v1.2.4` and `v1.2.5`).
   status-aware `AuthError` variant, or at minimum deleting the dead arm.
   Fixed in `v1.4.0`: `InvalidLoginCode`, `SessionRevoked`, `NetworkError`, `Rejected` and
   `InvalidResponse` replace `ClientError { inner }`, classified by grant in one place; the dead arm
-  is gone. The saves grant follows in step 4.
+  is gone. The saves grant uses the same classifier.
 
 - [x] **Five dead variants per error enum.**
   *(Fixed in `v1.4.0`: all removed, with `FileSystemError`'s `FileMetadataError` and
@@ -573,7 +577,7 @@ in `v1.3.0` (once planned as the patches `v1.2.4` and `v1.2.5`).
 
   Fixed in `v1.3.2`: `GameDetails.id` is set from the requested id before caching.
   `GameBuilds.game_title` can't be had: the builds listing has no title and a second request isn't
-  worth it, so its removal is scheduled in ROADMAP's `v1.4.0`.
+  worth it, so it was removed in `v1.4.0`.
 
 ## Medium — missing coverage
 
@@ -666,7 +670,7 @@ in `v1.3.0` (once planned as the patches `v1.2.4` and `v1.2.5`).
   `#[cfg(test)]`.
 
 - [ ] **`pub` items in private modules that nothing re-exports.** `-W unreachable_pub` flags 139
-  sites after `v1.4.0` step 8 (mostly the managers' methods in `games_manager.rs`,
+  sites after `v1.4.0` (mostly the managers' methods in `games_manager.rs`,
   `download_manager.rs`, `saves_manager.rs`, `auth_manager.rs`, `depot_manager.rs`, plus `secure_links`,
   `constants`, `downloader/util`, `engine.rs`). It is visibility only. `DownloadableProduct.depots` is
   still a `pub` field of the unexported `Depot`. Make them `pub(crate)` and add
